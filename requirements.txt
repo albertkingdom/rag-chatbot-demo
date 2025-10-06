@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+jinja2
+# Added for Production-Grade RAG
+langchain
+langchain-openai
+langchain-pinecone
+pinecone-client
+pypdf

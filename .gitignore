@@ -1,0 +1,25 @@
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environments
+.env
+
+# Temporary files
+temp_files/
+
+# OS-generated files
+.DS_Store
+
+# Data and document files
+*.xlsx
+*.csv
+*.docx
+*.pdf
+
+# IDE / Editor specific
+.vscode/
+.idea/

@@ -1,0 +1,48 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carbon Management Assistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Carbon Management Assistant</h1>
+            <p>Your intelligent assistant for carbon management tasks.</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Chatbot Section -->
+            <div class="widget" id="chatbot-widget">
+                <h2>Chat with our Assistant</h2>
+                <div id="chat-window">
+                    <div class="message assistant-message">
+                        <p>Hello! How can I help you today? You can ask me about your account or password.</p>
+                    </div>
+                </div>
+                <div id="chat-input">
+                    <input type="text" id="message-input" placeholder="Type your message here...">
+                    <button id="send-button">Send</button>
+                </div>
+            </div>
+
+            <!-- BOM Mapper Section -->
+            <div class="widget" id="bom-mapper-widget">
+                <h2>BOM Header Mapper</h2>
+                <p>Upload your BOM file (.csv) to automatically map its headers to our system fields.</p>
+                <input type="file" id="file-input" accept=".csv">
+                <button id="upload-button">Map Headers</button>
+                <div id="bom-results">
+                    <h3>Mapping Results:</h3>
+                    <pre id="results-content">Results will be displayed here...</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
