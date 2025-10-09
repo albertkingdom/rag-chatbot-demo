@@ -42,13 +42,28 @@ graph TD
 
 **Prerequisites:**
 - You must have Docker and Docker Compose installed and running on your system.
+- You must have a `.env` file in the project root containing your `OPENAI_API_KEY` and `PINECONE_API_KEY`.
 
-**Step 1: Start the Application**
+This project uses a two-step process to ensure the knowledge base is ready before the main application starts.
 
-Open your terminal or command prompt, navigate to the project directory (`C:\Users\User\Downloads\homework\homework`), and run the following command. This command will automatically build the Docker image and start the application container.
+**Step 1: Build the Knowledge Base (One-time setup)**
+
+Open your terminal, navigate to the project directory, and run the following command. This will start a temporary container to execute the `build_vector_store.py` script, which creates the Pinecone index and populates it with your user manual data.
 
 ```bash
-docker-compose up --build
+# First, build the main docker image
+docker-compose build
+
+# Then, run the one-time script to setup the vector store
+docker-compose run --rm web python build_vector_store.py
+```
+
+**Step 2: Start the Application**
+
+Once Step 1 is complete and the knowledge base is built, you can start the main web application with the following command:
+
+```bash
+docker-compose up
 ```
 
 **Step 2: Access the Application**

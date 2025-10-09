@@ -1,8 +1,10 @@
 
-version: '3.8'
 services:
   web:
     build: .
     container_name: carbon-assistant-app
     ports:
       - "8000:80"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PINECONE_API_KEY=${PINECONE_API_KEY}

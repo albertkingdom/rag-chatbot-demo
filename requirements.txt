@@ -4,6 +4,7 @@ python-multipart
 jinja2
 # Added for Production-Grade RAG
 langchain
+langchain-community
 langchain-openai
 langchain-pinecone
 pinecone-client
