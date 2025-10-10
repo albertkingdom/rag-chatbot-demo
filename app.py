@@ -1,24 +1,27 @@
 import os
 import json
 import shutil
-import uvicorn
-from fastapi import FastAPI, Request, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+# --- Third-party Imports ---
+import uvicorn
+from fastapi import FastAPI, Request, UploadFile, File, BackgroundTasks, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pinecone import Pinecone
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
-from langchain.prompts import PromptTemplate
-from langchain.schema import StrOutputParser
-from langchain.schema.runnable import RunnablePassthrough
+from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 
-# Import the classifier function from our other script
+# --- Local Application Imports ---
 from bom_mapper import classify_bom_headers
 from build_vector_store import sync_vector_store
+from config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
 
-# --- Base Directory --- #
+# --- Base Directory ---
 # This helps in creating absolute paths for templates and static files
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -28,18 +31,22 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
-# --- Production-Grade RAG Setup --- #
-PINECONE_INDEX_NAME = "carbon-assistant-qa-index"
+# --- RAG Setup ---
+# Initialize Pinecone client
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
+if not PINECONE_API_KEY:
+    raise ValueError("PINECONE_API_KEY environment variable must be set")
+pc = Pinecone(api_key=PINECONE_API_KEY)
 
-# 1. Initialize Embeddings and LLM
+# Initialize OpenAI Embeddings & LLM
 embeddings = OpenAIEmbeddings()
 llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
 
-# 2. Initialize Pinecone Vector Store as Retriever
+# Initialize Pinecone Vector Store as Retriever
 vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=embeddings)
 retriever = vectorstore.as_retriever()
 
-# 3. Define a custom prompt to guide the LLM
+# Define a custom prompt to guide the LLM
 prompt_template = """You are a professional assistant for a carbon management system. 
 Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
 If the context is not relevant, just say that you don't know, don't try to make up an answer.
@@ -56,7 +63,7 @@ QA_PROMPT = PromptTemplate(
     template=prompt_template, input_variables=["context", "question"]
 )
 
-# 4. Create a custom RAG chain to format the context correctly
+# Create a custom RAG chain to format the context correctly
 def format_docs(docs):
     return "\n\n".join(doc.metadata.get('answer', '') for doc in docs)
 
@@ -76,7 +83,7 @@ rag_chain = (
     | StrOutputParser()
 )
 
-# --- API Endpoints --- #
+# --- API Endpoints ---
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -104,8 +111,7 @@ async def chat(request: Request):
 async def map_bom(file: UploadFile = File(...)):
     """Accepts a file upload, saves it temporarily, and uses the bom_mapper to classify it."""
     temp_dir = BASE_DIR / "temp_files"
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
+    os.makedirs(temp_dir, exist_ok=True)
 
     temp_file_path = temp_dir / file.filename
 
@@ -135,6 +141,43 @@ async def sync_kb():
         return JSONResponse(content=result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/upload-manual")
+async def upload_manual_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """
+    Accepts a user manual file (csv, xlsx, pdf), saves it to the data directory,
+    and triggers a background task to sync the vector store.
+    """
+    allowed_extensions = { ".csv", ".xlsx", ".pdf"}
+    file_extension = Path(file.filename).suffix
+    if file_extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid file type. Allowed types are: {', '.join(allowed_extensions)}"
+        )
+
+    # Define the path to save the file
+    save_dir = Path(DATA_SOURCE_DIR)
+    os.makedirs(save_dir, exist_ok=True) # Ensure the directory exists
+    save_path = save_dir / file.filename
+
+    # Save the uploaded file
+    try:
+        with save_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not save file: {e}")
+    finally:
+        file.file.close()
+
+    # Add the sync task to be run in the background
+    print(f"File '{file.filename}' uploaded. Triggering background sync...")
+    background_tasks.add_task(sync_vector_store)
+
+    return {"status": "success", 
+            "filename": file.filename, 
+            "message": "File uploaded successfully. Knowledge base synchronization has started in the background."}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

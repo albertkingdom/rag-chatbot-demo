@@ -1,11 +1,14 @@
 fastapi
-uvicorn[standard]
-python-multipart
-jinja2
-# Added for Production-Grade RAG
+uvicorn
+python-dotenv
+requests
+pinecone-client
 langchain
-langchain-community
 langchain-openai
 langchain-pinecone
-pinecone-client
-pypdf
+langchain-community
+pandas
+openpyxl
+PyMuPDF
+jinja2
+python-multipart
