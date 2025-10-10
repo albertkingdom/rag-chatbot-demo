@@ -16,6 +16,7 @@ from langchain.schema.runnable import RunnablePassthrough
 
 # Import the classifier function from our other script
 from bom_mapper import classify_bom_headers
+from build_vector_store import sync_vector_store
 
 # --- Base Directory --- #
 # This helps in creating absolute paths for templates and static files
@@ -122,6 +123,18 @@ async def map_bom(file: UploadFile = File(...)):
         return JSONResponse(content=result, status_code=400)
         
     return JSONResponse(content=result)
+
+
+@app.post("/admin/sync-knowledge-base")
+async def sync_kb():
+    """Triggers the synchronization of the knowledge base with Pinecone."""
+    try:
+        result = sync_vector_store()
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("message"))
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

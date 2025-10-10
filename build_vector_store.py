@@ -10,7 +10,7 @@ PINECONE_INDEX_NAME = "carbon-assistant-qa-index"
 USER_MANUAL_CSV = "generated_user_manual.xlsx.csv"
 
 
-def build_vector_store():
+def sync_vector_store():
     # 1. Initialize OpenAI Embeddings
     print("Initializing OpenAI Embeddings...")
     embeddings = OpenAIEmbeddings()
@@ -40,7 +40,7 @@ def build_vector_store():
     print(f"Loading Q&A from {USER_MANUAL_CSV}...")
     if not os.path.exists(USER_MANUAL_CSV):
         print(f"Error: '{USER_MANUAL_CSV}' not found. Please ensure it's in the project root.")
-        return
+        return {"status": "error", "message": f"'{USER_MANUAL_CSV}' not found."}
 
     documents = []
     with open(USER_MANUAL_CSV, mode='r', encoding='utf-8-sig') as infile:
@@ -53,19 +53,26 @@ def build_vector_store():
 
     if not documents:
         print(f"No valid Q&A data found in '{USER_MANUAL_CSV}'.")
-        return
+        return {"status": "error", "message": "No valid Q&A data found."}
 
     print(f"Loaded and processed {len(documents)} Q&A pairs.")
 
     # 5. Upsert into Pinecone
     print(f"Upserting {len(documents)} documents into Pinecone index '{PINECONE_INDEX_NAME}'...")
+    # Delete all existing vectors before upserting.
+    index = pc.Index(PINECONE_INDEX_NAME)
+    index.delete(delete_all=True)
+    print("Cleared existing vectors from the index.")
+
     PineconeVectorStore.from_documents(documents, embeddings, index_name=PINECONE_INDEX_NAME)
     print("Vector store built and documents upserted to Pinecone.")
+    return {"status": "success", "message": f"Successfully synced {len(documents)} documents."}
 
 
 if __name__ == '__main__':
     try:
-        build_vector_store()
+        result = sync_vector_store()
+        print(result)
     except ValueError as e:
         print(f"Configuration Error: {e}")
     except Exception as e:
