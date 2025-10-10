@@ -20,15 +20,14 @@ def sync_vector_store():
     api_key = os.environ.get("PINECONE_API_KEY")
     if not api_key:
         raise ValueError("PINECONE_API_KEY environment variable must be set.")
-
     pc = Pinecone(api_key=api_key)
 
-    # 3. Check if index already exists, if not, create it
+    # 3. Check if index exists, if not, create it
     if PINECONE_INDEX_NAME not in pc.list_indexes().names():
         print(f"Creating Pinecone index: {PINECONE_INDEX_NAME}...")
         pc.create_index(
             name=PINECONE_INDEX_NAME,
-            dimension=1536,  # OpenAI embeddings dimension
+            dimension=1536,
             metric="cosine",
             spec=ServerlessSpec(cloud='aws', region='us-east-1')
         )
@@ -36,37 +35,74 @@ def sync_vector_store():
     else:
         print(f"Pinecone index '{PINECONE_INDEX_NAME}' already exists.")
 
-    # 4. Load documents from CSV manually for precise control
-    print(f"Loading Q&A from {USER_MANUAL_CSV}...")
+    # 4. Load local documents and create a dictionary with deterministic IDs
+    print(f"Loading local Q&A from {USER_MANUAL_CSV}...")
     if not os.path.exists(USER_MANUAL_CSV):
-        print(f"Error: '{USER_MANUAL_CSV}' not found. Please ensure it's in the project root.")
-        return {"status": "error", "message": f"'{USER_MANUAL_CSV}' not found."}
+        message = f"Error: '{USER_MANUAL_CSV}' not found. Please ensure it's in the project root."
+        print(message)
+        return {"status": "error", "message": message}
 
-    documents = []
+    local_docs = {}
     with open(USER_MANUAL_CSV, mode='r', encoding='utf-8-sig') as infile:
         reader = csv.DictReader(infile)
-        for row in reader:
+        for i, row in enumerate(reader):
             question = row.get('question', '').split('問：')[-1].strip()
             answer = row.get('answer', '').split('答：')[-1].strip()
             if question and answer:
-                documents.append(Document(page_content=question, metadata={"answer": answer}))
+                doc_id = f"qa_{abs(hash(question))}_{i}"
+                local_docs[doc_id] = Document(page_content=question, metadata={"answer": answer})
 
-    if not documents:
-        print(f"No valid Q&A data found in '{USER_MANUAL_CSV}'.")
-        return {"status": "error", "message": "No valid Q&A data found."}
+    if not local_docs:
+        message = f"No valid Q&A data found in '{USER_MANUAL_CSV}'."
+        print(message)
+        return {"status": "error", "message": message}
 
-    print(f"Loaded and processed {len(documents)} Q&A pairs.")
+    print(f"Loaded {len(local_docs)} Q&A pairs from local file.")
 
-    # 5. Upsert into Pinecone
-    print(f"Upserting {len(documents)} documents into Pinecone index '{PINECONE_INDEX_NAME}'...")
-    # Delete all existing vectors before upserting.
+    # 5. Get existing IDs from Pinecone
     index = pc.Index(PINECONE_INDEX_NAME)
-    index.delete(delete_all=True)
-    print("Cleared existing vectors from the index.")
+    print("Fetching existing vector IDs from Pinecone...")
+    try:
+        # The official list() method returns an iterator of ID batches.
+        # We need to iterate through it to build the full set of IDs.
+        existing_ids = set()
+        for ids_batch in index.list():
+            existing_ids.update(ids_batch)
+    except Exception as e:
+        print(f"Could not fetch existing IDs, assuming index is empty. Error: {e}")
+        existing_ids = set()
+    print(f"Found {len(existing_ids)} existing vectors in Pinecone.")
 
-    PineconeVectorStore.from_documents(documents, embeddings, index_name=PINECONE_INDEX_NAME)
-    print("Vector store built and documents upserted to Pinecone.")
-    return {"status": "success", "message": f"Successfully synced {len(documents)} documents."}
+    # 6. Determine which docs to upsert and which to delete
+    local_ids = set(local_docs.keys())
+    ids_to_upsert = list(local_ids)
+    ids_to_delete = list(existing_ids - local_ids)
+
+    # 7. Perform upsert and delete operations
+    if ids_to_upsert:
+        print(f"Upserting {len(ids_to_upsert)} documents...")
+        for i in range(0, len(ids_to_upsert), 100):
+            batch_ids = ids_to_upsert[i:i+100]
+            batch_docs = [local_docs[doc_id] for doc_id in batch_ids]
+            # Note: from_documents is not ideal for upserting with specific IDs in this flow.
+            # A more direct approach using index.upsert is better.
+            vectors_to_upsert = []
+            for doc_id, doc in zip(batch_ids, batch_docs):
+                embedding = embeddings.embed_query(doc.page_content)
+                vectors_to_upsert.append({"id": doc_id, "values": embedding, "metadata": doc.metadata})
+            index.upsert(vectors=vectors_to_upsert)
+    else:
+        print("No new or modified documents to upsert.")
+
+    if ids_to_delete:
+        print(f"Deleting {len(ids_to_delete)} outdated documents...")
+        index.delete(ids=ids_to_delete)
+    else:
+        print("No documents to delete.")
+
+    final_count = len(local_docs)
+    print(f"Synchronization complete. Index now contains {final_count} vectors.")
+    return {"status": "success", "message": f"Synchronization complete. Upserted: {len(ids_to_upsert)}, Deleted: {len(ids_to_delete)}. Total vectors: {final_count}."}
 
 
 if __name__ == '__main__':
