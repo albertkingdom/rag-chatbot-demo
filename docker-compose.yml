@@ -1,4 +1,3 @@
-
 services:
   web:
     build: .
@@ -10,3 +9,23 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: carbon-assistant-redis
+
+  worker:
+    build: .
+    container_name: carbon-assistant-worker
+    command: rq worker --with-scheduler -u redis://redis:6379/0
+    volumes:
+      - .:/app
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis

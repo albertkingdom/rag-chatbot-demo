@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-python-dotenv
 requests
 pinecone-client
 langchain
@@ -14,3 +13,5 @@ jinja2
 python-multipart
 gradio
 python-dotenv
+rq
+redis

@@ -5,6 +5,8 @@ import uvicorn
 import gradio as gr
 from fastapi import FastAPI
 from typing import AsyncGenerator
+import redis
+from rq import Queue
 
 # Third-party Imports for RAG and BOM
 from pinecone import Pinecone
@@ -19,13 +21,16 @@ from bom_mapper import classify_bom_headers
 from build_vector_store import sync_vector_store
 from config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
 
+# --- RQ and Redis Connection ---
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+conn = redis.from_url(redis_url)
+q = Queue(connection=conn)
+
 # --- Gradio Interface Functions ---
 
 async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
     """Handles the entire RAG chain lifecycle for a single chat request."""
     
-    # 1. Initialize all clients and chains within the request function
-    # This ensures that each request has its own fresh session.
     PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
@@ -61,10 +66,8 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
         retrieval_chain = retriever | format_docs
         generation_chain = QA_PROMPT | llm | StrOutputParser()
 
-        # 2. First, retrieve the context
         context = await retrieval_chain.ainvoke(message)
 
-        # 3. Now, stream the generation part and accumulate the response
         full_response = ""
         async for chunk in generation_chain.astream({"context": context, "question": message}):
             full_response += chunk
@@ -73,7 +76,6 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
     except Exception as e:
         print(f"An error occurred during chat stream: {e}")
         yield f"An error occurred: {e}"
-
 
 def bom_mapper_func(file):
     """Wrapper function for BOM mapping to be used in Gradio."""
@@ -86,7 +88,7 @@ def bom_mapper_func(file):
         return {"error": str(e)}
 
 def upload_manual_func(file):
-    """Wrapper function for manual uploading."""
+    """Saves the file and enqueues a sync job using RQ."""
     if file is None:
         return "No file uploaded."
     
@@ -96,8 +98,9 @@ def upload_manual_func(file):
 
     try:
         shutil.copy(file.name, save_path)
-        sync_vector_store() # Calling it directly for simplicity, might block UI
-        return f"File '{Path(file.name).name}' uploaded and sync completed."
+        # Enqueue the sync_vector_store function to be run by an RQ worker
+        q.enqueue(sync_vector_store)
+        return f"File '{Path(file.name).name}' uploaded. Sync job has been enqueued."
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -128,7 +131,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
         with gr.Row():
             manual_input = gr.File(label="Upload User Manual (.pdf, .xlsx, .csv)")
             manual_output = gr.Textbox(label="Upload Status")
-        manual_button = gr.Button("Upload and Sync")
+        manual_button = gr.Button("Upload and Enqueue Sync")
         manual_button.click(upload_manual_func, inputs=manual_input, outputs=manual_output)
 
 # --- FastAPI Mounting ---
