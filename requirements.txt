@@ -12,3 +12,4 @@ openpyxl
 PyMuPDF
 jinja2
 python-multipart
+fuzzywuzzy
