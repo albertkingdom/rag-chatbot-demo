@@ -1,14 +1,12 @@
 import os
-import json
 import shutil
 from pathlib import Path
-
-# --- Third-party Imports ---
 import uvicorn
-from fastapi import FastAPI, Request, UploadFile, File, BackgroundTasks, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+import gradio as gr
+from fastapi import FastAPI
+from typing import AsyncGenerator
+
+# Third-party Imports for RAG and BOM
 from pinecone import Pinecone
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
@@ -16,168 +14,129 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
-# --- Local Application Imports ---
+# Local Application Imports
 from bom_mapper import classify_bom_headers
 from build_vector_store import sync_vector_store
 from config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
 
-# --- Base Directory ---
-# This helps in creating absolute paths for templates and static files
-BASE_DIR = Path(__file__).resolve().parent
+# --- Gradio Interface Functions ---
+
+async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
+    """Handles the entire RAG chain lifecycle for a single chat request."""
+    
+    # 1. Initialize all clients and chains within the request function
+    # This ensures that each request has its own fresh session.
+    PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+    if not (PINECONE_API_KEY and OPENAI_API_KEY):
+        yield "Error: API keys are not configured on the server."
+        return
+
+    try:
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+        llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0, streaming=True, openai_api_key=OPENAI_API_KEY)
+        
+        vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=embeddings)
+        retriever = vectorstore.as_retriever()
+
+        prompt_template = """You are a professional assistant for a carbon management system. 
+        Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
+        If the context is not relevant, just say that you don't know, don't try to make up an answer.
+        Keep the answer concise and helpful.
+
+        Context:
+        {context}
+
+        Question:
+        {question}
+
+        Helpful Answer:"""
+        QA_PROMPT = PromptTemplate.from_template(prompt_template)
+
+        def format_docs(docs):
+            return "\n\n".join(doc.metadata.get('answer', '') for doc in docs)
+
+        retrieval_chain = retriever | format_docs
+        generation_chain = QA_PROMPT | llm | StrOutputParser()
+
+        # 2. First, retrieve the context
+        context = await retrieval_chain.ainvoke(message)
+
+        # 3. Now, stream the generation part and accumulate the response
+        full_response = ""
+        async for chunk in generation_chain.astream({"context": context, "question": message}):
+            full_response += chunk
+            yield full_response
+            
+    except Exception as e:
+        print(f"An error occurred during chat stream: {e}")
+        yield f"An error occurred: {e}"
+
+
+def bom_mapper_func(file):
+    """Wrapper function for BOM mapping to be used in Gradio."""
+    if file is None:
+        return None
+    try:
+        result = classify_bom_headers(file.name)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+def upload_manual_func(file):
+    """Wrapper function for manual uploading."""
+    if file is None:
+        return "No file uploaded."
+    
+    save_dir = Path(DATA_SOURCE_DIR)
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = save_dir / Path(file.name).name
+
+    try:
+        shutil.copy(file.name, save_path)
+        sync_vector_store() # Calling it directly for simplicity, might block UI
+        return f"File '{Path(file.name).name}' uploaded and sync completed."
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# --- Gradio UI Layout ---
+
+with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
+    gr.Markdown("<h1>Carbon Assistant & BOM Mapping Tool</h1>")
+
+    with gr.Tab("RAG Chatbot"):
+        gr.ChatInterface(
+            chat_stream,
+            chatbot=gr.Chatbot(height=500, type='messages'),
+            type='messages',
+            textbox=gr.Textbox(placeholder="Ask me about the user manual...", container=False, scale=7),
+            title="User Manual Q&A",
+            description="Ask questions about the carbon management system.",
+            examples=["What is the purpose of this system?", "How do I calculate carbon emissions?"],
+        )
+
+    with gr.Tab("BOM Header Mapper"):
+        with gr.Row():
+            bom_input = gr.File(label="Upload BOM file (.csv)")
+            bom_output = gr.JSON(label="Mapping Result")
+        bom_button = gr.Button("Map Headers")
+        bom_button.click(bom_mapper_func, inputs=bom_input, outputs=bom_output)
+
+    with gr.Tab("Admin: Upload Manual"):
+        with gr.Row():
+            manual_input = gr.File(label="Upload User Manual (.pdf, .xlsx, .csv)")
+            manual_output = gr.Textbox(label="Upload Status")
+        manual_button = gr.Button("Upload and Sync")
+        manual_button.click(upload_manual_func, inputs=manual_input, outputs=manual_output)
+
+# --- FastAPI Mounting ---
 
 app = FastAPI()
 
-# Mount static files and templates using absolute paths
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=BASE_DIR / "templates")
-
-# --- RAG Setup ---
-# Initialize Pinecone client
-PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-if not PINECONE_API_KEY:
-    raise ValueError("PINECONE_API_KEY environment variable must be set")
-pc = Pinecone(api_key=PINECONE_API_KEY)
-
-# Initialize OpenAI Embeddings & LLM
-embeddings = OpenAIEmbeddings()
-llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
-
-# Initialize Pinecone Vector Store as Retriever
-vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=embeddings)
-retriever = vectorstore.as_retriever()
-
-# Define a custom prompt to guide the LLM
-prompt_template = """You are a professional assistant for a carbon management system. 
-Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
-If the context is not relevant, just say that you don't know, don't try to make up an answer.
-Keep the answer concise and helpful.
-
-Context:
-{context}
-
-Question:
-{question}
-
-Helpful Answer:"""
-QA_PROMPT = PromptTemplate(
-    template=prompt_template, input_variables=["context", "question"]
-)
-
-# Create a custom RAG chain to format the context correctly
-def format_docs(docs):
-    return "\n\n".join(doc.metadata.get('answer', '') for doc in docs)
-
-# A new function to print documents for debugging
-def log_docs(docs):
-    print("--- Retrieved Documents ---")
-    for doc in docs:
-        print(f"  - Question: {doc.page_content}")
-        print(f"    Answer: {doc.metadata.get('answer', 'N/A')[:50]}...") # Print first 50 chars of answer
-    print("---------------------------")
-    return docs
-
-rag_chain = (
-    {"context": retriever | RunnablePassthrough(log_docs) | format_docs, "question": RunnablePassthrough()}
-    | QA_PROMPT
-    | llm
-    | StrOutputParser()
-)
-
-# --- API Endpoints ---
-
-@app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
-    """Serves the main HTML page."""
-    return templates.TemplateResponse("index.html", {"request": request})
-
-@app.post("/chat")
-async def chat(request: Request):
-    """Handles chat logic using a production-grade RAG pipeline."""
-    data = await request.json()
-    user_message = data.get("message", "").strip()
-
-    if not user_message:
-        return JSONResponse(content={"response": "Please ask a question."}, status_code=400)
-
-    try:
-        response_text = rag_chain.invoke(user_message)
-    except Exception as e:
-        print(f"Error during RAG chain invocation: {e}")
-        response_text = "An error occurred while processing your question. Please ensure your API keys and environment variables are set correctly."
-
-    return JSONResponse(content={"response": response_text})
-
-@app.post("/map_bom")
-async def map_bom(file: UploadFile = File(...)):
-    """Accepts a file upload, saves it temporarily, and uses the bom_mapper to classify it."""
-    temp_dir = BASE_DIR / "temp_files"
-    os.makedirs(temp_dir, exist_ok=True)
-
-    temp_file_path = temp_dir / file.filename
-
-    try:
-        with open(temp_file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        result = classify_bom_headers(str(temp_file_path))
-    except Exception as e:
-        return JSONResponse(content={"error": f"An error occurred: {e}"}, status_code=500)
-    finally:
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-
-    if "error" in result:
-        return JSONResponse(content=result, status_code=400)
-        
-    return JSONResponse(content=result)
-
-
-@app.post("/admin/sync-knowledge-base")
-async def sync_kb():
-    """Triggers the synchronization of the knowledge base with Pinecone."""
-    try:
-        result = sync_vector_store()
-        if result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=result.get("message"))
-        return JSONResponse(content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/upload-manual")
-async def upload_manual_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    """
-    Accepts a user manual file (csv, xlsx, pdf), saves it to the data directory,
-    and triggers a background task to sync the vector store.
-    """
-    allowed_extensions = { ".csv", ".xlsx", ".pdf"}
-    file_extension = Path(file.filename).suffix
-    if file_extension not in allowed_extensions:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid file type. Allowed types are: {', '.join(allowed_extensions)}"
-        )
-
-    # Define the path to save the file
-    save_dir = Path(DATA_SOURCE_DIR)
-    os.makedirs(save_dir, exist_ok=True) # Ensure the directory exists
-    save_path = save_dir / file.filename
-
-    # Save the uploaded file
-    try:
-        with save_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not save file: {e}")
-    finally:
-        file.file.close()
-
-    # Add the sync task to be run in the background
-    print(f"File '{file.filename}' uploaded. Triggering background sync...")
-    background_tasks.add_task(sync_vector_store)
-
-    return {"status": "success", 
-            "filename": file.filename, 
-            "message": "File uploaded successfully. Knowledge base synchronization has started in the background."}
+# Mount the Gradio app
+app = gr.mount_gradio_app(app, demo, path="/")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

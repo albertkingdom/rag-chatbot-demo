@@ -12,3 +12,5 @@ openpyxl
 PyMuPDF
 jinja2
 python-multipart
+gradio
+python-dotenv
