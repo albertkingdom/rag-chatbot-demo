@@ -66,13 +66,25 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
         yield f"An error occurred: {e}"
 
 def bom_mapper_func(file):
-    """Wrapper function for BOM mapping to be used in Gradio."""
-    if file is None: return None
+    """
+    Wrapper function for BOM mapping.
+    Disables the button during execution and re-enables it upon completion.
+    """
+    if file is None:
+        # Return updates for both outputs: a message for the JSON and no change for the button
+        return {"error": "Please upload a file first."}, gr.update(interactive=True)
+    
+    # Disable button immediately
+    yield {"status": "Processing..."}, gr.update(interactive=False)
+    
     try:
+        # Perform the actual mapping
         result = classify_bom_headers(file.name)
-        return result
+        # Return final result and re-enable the button
+        yield result, gr.update(interactive=True)
     except Exception as e:
-        return {"error": str(e)}
+        # Return error and re-enable the button
+        yield {"error": str(e)}, gr.update(interactive=True)
 
 def upload_manual_func(file):
     """Saves the file and enqueues a sync job, returning the job ID."""
@@ -110,7 +122,13 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
             bom_input = gr.File(label="Upload BOM file (.csv)")
             bom_output = gr.JSON(label="Mapping Result")
         bom_button = gr.Button("Map Headers")
-        bom_button.click(bom_mapper_func, inputs=bom_input, outputs=bom_output)
+        
+        # The click event now updates both the JSON output and the button itself
+        bom_button.click(
+            bom_mapper_func, 
+            inputs=bom_input, 
+            outputs=[bom_output, bom_button]
+        )
 
     with gr.Tab("Admin: Upload Manual"):
         job_id_state = gr.State(None)
