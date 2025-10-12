@@ -1,89 +1,86 @@
+# Carbon Assistant & BOM Mapping Tool
 
-# Carbon Management Assistant Chatbot
-
-This project is a web-based intelligent assistant designed for a carbon management system, fulfilling the requirements of the interview homework. It features a RAG-based chatbot for answering user manual questions and a utility to automatically map Bill of Materials (BOM) file headers to predefined system fields.
-
-This application is built with Python, FastAPI, and a simple HTML/JavaScript frontend. The entire environment is containerized with Docker for consistency and ease of deployment.
+A containerized web app with a RAG chatbot for Q&A and a smart BOM header mapping tool, built with FastAPI, Gradio, and Docker.
 
 ---
 
-## System Architecture
+## ✨ Features
 
-Below is the architecture diagram for the application. You can copy the code into a Mermaid-compatible viewer (like the Mermaid Live Editor) to see the visual diagram.
+- **Conversational AI**: An advanced RAG chatbot that answers questions about a carbon management system, based on a knowledge base built from user manuals.
+- **Streaming Responses**: The chatbot provides answers token-by-token, offering a real-time, interactive user experience.
+- **Intelligent BOM Mapping**: A hybrid tool that uses a combination of rule-based matching, fuzzy string matching, and Large Language Models (LLM) to map BOM file headers to a standardized format.
+- **Asynchronous Task Processing**: Utilizes **Redis Queue (RQ)** to manage heavy background tasks (like knowledge base synchronization), ensuring the web UI remains responsive at all times.
+- **Multi-Format File Handling**: The knowledge base can be updated by uploading various file formats, including `.pdf`, `.xlsx`, and `.csv`.
+- **Modern Web UI**: A clean, user-friendly, and responsive interface built with **Gradio**.
 
-```mermaid
-graph TD
-    subgraph User Browser
-        A[index.html] -- HTTP Request --> B{FastAPI Backend}
-    end
+---
 
-    subgraph Docker Container
-        B -- Serves --> A
-        B -- Calls function --> C[bom_mapper.py]
-        B -- Accesses --> D[Knowledge Base]
+## 💡 Key Technical Highlights
 
-        subgraph FastAPI Backend
-            B_ROOT["/" GET] --> B_HTML(Serve index.html)
-            B_CHAT["/chat" POST] --> B_RAG(Simulated RAG Logic)
-            B_MAP["/map_bom" POST] --> B_SAVE(Save Temp File)
-        end
+- **Asynchronous Task Queue**: Uses **Redis Queue (RQ)** to run heavy tasks (e.g., knowledge base sync) in a background `worker` process, ensuring a responsive UI.
+- **Hybrid BOM Mapping**: A 3-stage process (rules, fuzzy matching, and LLM-based classification) provides highly accurate header mapping.
+- **Efficient Vector Sync**: Performs an incremental sync with **Pinecone**, only updating new or changed data instead of full rebuilds.
+- **Dual AI Model Strategy**: Uses **OpenAI** for high-quality embeddings and **Google Gemini 2.5 Flash** for fast, versatile chat and data analysis.
 
-        B_SAVE --> C
-        B_RAG --> D
-    end
+---
 
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style B fill:#bbf,stroke:#333,stroke-width:2px
+## 🛠️ Core Technology Stack
+
+- **Backend**: FastAPI
+- **Web UI**: Gradio
+- **Vector Database**: Pinecone
+- **AI Models**: OpenAI, Google Gemini
+- **Task Queue**: Redis Queue (RQ)
+- **Message Broker**: Redis
+- **Containerization**: Docker & Docker Compose
+
+---
+
+## 🏗️ System Architecture
+
+The system uses a decoupled architecture orchestrated by Docker Compose:
+
+![System Architecture Diagram](assets/system_architecture.svg)
+
+- **`web`**: FastAPI/Gradio UI. Enqueues jobs to Redis.
+- **`redis`**: Message broker holding the task queue.
+- **`worker`**: Background RQ worker that executes heavy tasks.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Docker and Docker Compose
+- Git
+
+### 1. Environment Setup
+
+Clone the repository and create a `.env` file in the project root:
+
+```
+OPENAI_API_KEY="your_openai_api_key_here"
+PINECONE_API_KEY="your_pinecone_api_key_here"
+GOOGLE_API_KEY="your_google_api_key_here"
 ```
 
----
-
-## How to Run the Application
-
-**Prerequisites:**
-- You must have Docker and Docker Compose installed and running on your system.
-- You must have a `.env` file in the project root containing your `OPENAI_API_KEY` and `PINECONE_API_KEY`.
-
-This project uses a two-step process to ensure the knowledge base is ready before the main application starts.
-
-**Step 1: Build the Knowledge Base (One-time setup)**
-
-Open your terminal, navigate to the project directory, and run the following command. This will start a temporary container to execute the `build_vector_store.py` script, which creates the Pinecone index and populates it with your user manual data.
+### 2. Launch the Application
 
 ```bash
-# First, build the main docker image
-docker-compose build
-
-# Then, run the one-time script to setup the vector store
-docker-compose run --rm web python build_vector_store.py
+docker-compose up --build
 ```
 
-**Step 2: Start the Application**
+### 3. Access the UI
 
-Once Step 1 is complete and the knowledge base is built, you can start the main web application with the following command:
-
-```bash
-docker-compose up
-```
-
-**Step 2: Access the Application**
-
-Open your web browser and navigate to:
-
-[http://localhost:8000](http://localhost:8000)
-
-You should now see and be able to interact with the Carbon Management Assistant web application.
+Navigate to **http://localhost:8000**
 
 ---
 
-## How to Use
+## 🕹️ UI Demo
 
-1.  **Chat Assistant**:
-    - Type a question in English or Chinese into the chat input box (e.g., "How do I log in?" or "如何重設密碼?").
-    - Click "Send" or press Enter.
-    - The assistant will respond based on its knowledge base.
+The UI has three tabs: RAG Chatbot, BOM Header Mapper, and Admin: Upload Manual.
 
-2.  **BOM Header Mapper**:
-    - Click the "Choose File" button and select a BOM file in `.csv` format (you can use the provided `test_bom.xlsx.csv`).
-    - Click the "Map Headers" button.
-    - The mapping results will be displayed in the results box below, showing how your file's headers correspond to the system's fields.
+![Chatbot UI Demo](assets/chatbot_screenshot.jpeg)
+![BOM Mapper UI Demo](assets/Bom_mapper.jpeg)
+![Admin Upload UI Demo](assets/user_manual_upload.jpeg)
