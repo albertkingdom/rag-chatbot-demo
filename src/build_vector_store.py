@@ -6,7 +6,7 @@ from langchain.schema import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
-from config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
+from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
 
 # --- Data Extraction Functions ---
 

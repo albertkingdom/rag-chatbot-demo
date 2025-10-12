@@ -19,9 +19,9 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
-from bom_mapper import classify_bom_headers
-from build_vector_store import sync_vector_store
-from config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
+from .bom_mapper import classify_bom_headers
+from .build_vector_store import sync_vector_store
+from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 conn = redis.from_url(redis_url)
