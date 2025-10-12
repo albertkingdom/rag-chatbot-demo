@@ -8,6 +8,7 @@ from typing import Dict, List, Union
 from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage
 from fuzzywuzzy import fuzz
+import pandas as pd
 
 # 初始化 LangChain LLM
 API_KEY = os.getenv("OPENAI_API_KEY")
@@ -29,6 +30,9 @@ HEADER_MAPPING = {
     "Comp_item": "Company Part No.",
     "Part Number": "Company Part No.",
     "Part No.": "Company Part No.",
+    "serial number": "Company Part No.",
+    "子件代碼": "Company Part No.",
+    "物料型號": "Company Part No.",
     "Description": "Part Description",
     "Size/Dimension": "Part Description",
     "Comment": "Part Description",
@@ -60,6 +64,8 @@ HEADER_MAPPING = {
     "重量單位": "Net/Gross Unit",
     "淨毛重單位": "Net/Gross Unit",
 }
+
+
 
 def fuzzy_match_header(header: str, mapping: dict, threshold=80) -> Union[str, None]:
     """使用模糊匹配找到最相似的 header"""
@@ -121,23 +127,33 @@ def verify_matched_headers(llm_matched: dict) -> Dict[str, List[str]]:
 
     return dict(wrong_headers)
 
+def get_headers_from_file(file_path: str) -> List[str]:
+    """Reads headers from a CSV or XLSX file."""
+    if file_path.lower().endswith('.csv'):
+        with open(file_path, mode='r', encoding='utf-8-sig') as infile:
+            reader = csv.reader(infile)
+            try:
+                return next(reader)
+            except StopIteration:
+                raise ValueError("File is empty or not a valid CSV.")
+    elif file_path.lower().endswith('.xlsx'):
+        df = pd.read_excel(file_path, nrows=0) # Efficiently read only the header row
+        return df.columns.tolist()
+    else:
+        raise ValueError("Unsupported file type. Please upload a .csv or .xlsx file.")
+
 def classify_bom_headers(file_path: str) -> Dict:
     """
-    讀取 CSV 檔案，分析其欄位，並將其分類到預定義的系統類別中。
+    Reads a file, analyzes its headers, and classifies them into predefined system categories.
 
     Args:
-        file_path (str): The absolute path to the CSV file.
+        file_path (str): The absolute path to the CSV or XLSX file.
 
     Returns:
         dict: A dictionary containing the classification results.
     """
     try:
-        with open(file_path, mode='r', encoding='utf-8-sig') as infile:
-            reader = csv.reader(infile)
-            try:
-                headers = next(reader)
-            except StopIteration:
-                return {"error": "File is empty or not a valid CSV."}
+        headers = get_headers_from_file(file_path)
     except FileNotFoundError:
         return {"error": f"File not found at {file_path}"}
     except Exception as e:
