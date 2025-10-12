@@ -6,6 +6,7 @@ langchain
 langchain-openai
 langchain-pinecone
 langchain-community
+langchain_google_genai
 pandas
 openpyxl
 PyMuPDF

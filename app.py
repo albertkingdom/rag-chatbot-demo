@@ -9,9 +9,11 @@ import redis
 from rq import Queue
 from rq.job import Job
 import time
+import traceback
 
 from pinecone import Pinecone
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_openai import OpenAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -29,14 +31,15 @@ q = Queue(connection=conn)
 async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
     """Handles the entire RAG chain lifecycle for a single chat request."""
     PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-    if not (PINECONE_API_KEY and OPENAI_API_KEY):
-        yield "Error: API keys are not configured on the server."
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") # For OpenAI Embeddings
+    GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") # For Gemini Chat Model
+    if not (PINECONE_API_KEY and OPENAI_API_KEY and GOOGLE_API_KEY):
+        yield "Error: All required API keys are not configured on the server."
         return
     try:
         pc = Pinecone(api_key=PINECONE_API_KEY)
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-        llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0, streaming=True, openai_api_key=OPENAI_API_KEY)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, streaming=True, google_api_key=GOOGLE_API_KEY)
         vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=embeddings)
         retriever = vectorstore.as_retriever()
         prompt_template = """You are a professional assistant for a carbon management system. 
@@ -83,7 +86,7 @@ def bom_mapper_func(file):
         # Return final result and re-enable the button
         yield result, gr.update(interactive=True)
     except Exception as e:
-        # Return error and re-enable the button
+        traceback.print_exc()
         yield {"error": str(e)}, gr.update(interactive=True)
 
 def upload_manual_func(file):

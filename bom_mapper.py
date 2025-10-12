@@ -3,15 +3,17 @@ import json
 import os
 from collections import defaultdict
 from typing import Dict, List, Union
-
+import traceback
 # 新增 LLM 和模糊匹配的 imports
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage
 from fuzzywuzzy import fuzz
+import pandas as pd
+from pydantic import BaseModel, Field
 
 # 初始化 LangChain LLM
-API_KEY = os.getenv("OPENAI_API_KEY")
-llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=API_KEY) if API_KEY else None
+API_KEY = os.getenv("GOOGLE_API_KEY")
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=API_KEY) if API_KEY else None
 
 # 根據 Product Requirements Document.docx.pdf 定義系統的五個標準欄位
 SYSTEM_CATEGORIES = {
@@ -23,12 +25,14 @@ SYSTEM_CATEGORIES = {
 }
 
 # 建立一個關鍵字映射字典，用於規則比對
-# 包含了 bom1.xlsx, bom2.xlsx, test_bom.xlsx 中出現的以及其他可能的欄位名稱
 HEADER_MAPPING = {
     # English Headers
     "Comp_item": "Company Part No.",
     "Part Number": "Company Part No.",
     "Part No.": "Company Part No.",
+    "serial number": "Company Part No.",
+    "子件代碼": "Company Part No.",
+    "物料型號": "Company Part No.",
     "Description": "Part Description",
     "Size/Dimension": "Part Description",
     "Comment": "Part Description",
@@ -61,6 +65,24 @@ HEADER_MAPPING = {
     "淨毛重單位": "Net/Gross Unit",
 }
 
+# --- Pydantic Models for Structured LLM Output ---
+class ClassifiedHeader(BaseModel):
+    header: str = Field(description="The original header text.")
+    category: str = Field(description="The classified category (or 'None' if no fit).")
+
+class ClassificationResponse(BaseModel):
+    classifications: List[ClassifiedHeader] = Field(default_factory=list, description="A list of classified headers.")
+
+class VerificationResult(BaseModel):
+    header: str = Field(description="The original header text.")
+    category: str = Field(description="The category it was matched with.")
+    correct: bool = Field(description="A boolean value indicating if the match is correct.")
+
+class VerificationResponse(BaseModel):
+    verifications: List[VerificationResult] = Field(description="A list of verification results.")
+
+# -----------------------------------------------------
+
 def fuzzy_match_header(header: str, mapping: dict, threshold=80) -> Union[str, None]:
     """使用模糊匹配找到最相似的 header"""
     best_match = None
@@ -76,136 +98,216 @@ def fuzzy_match_header(header: str, mapping: dict, threshold=80) -> Union[str, N
         return mapping[best_match]
     return None
 
-def llm_classify_header(header: str, categories: list[str]) -> Union[str, None]:
-    """使用 LLM 分類 header"""
-    if not llm:
-        return None
+def llm_batch_classify_headers(headers: List[str], categories: List[str]) -> Dict[str, str]:
+    """使用 LLM 批次分類 headers，並強制使用定義好的 Pydantic Schema。"""
+    print(f"--- DEBUG: llm object status at start of llm_batch_classify_headers: {llm is None} ---")
+    if not llm or not headers:
+        return {}
 
-    prompt = f"Classify the following BOM header to the best fitting category. Categories: {', '.join(categories)}. If no good fit, respond 'None'. Header: {header}"
+    prompt = (
+        f"You are an expert in BOM (Bill of Materials) data processing. "
+        f"Classify each of the following BOM headers into the most fitting category. "
+        f"The available categories are: {', '.join(categories)}. "
+        f"If a header does not fit any category, classify it as 'None'. **Crucially, ensure that every header provided in the input list is present in your output 'classifications' list. "
+        f"Return your response as a single JSON object with a key named 'classifications'. The value of 'classifications' should be a list of objects, where each object has a 'header' field (the original header) and a 'category' field (the matched category or 'None'). "
+        f"Ensure the JSON is well-formed.\n\n"
+        f"Here is an example:\n"
+        f"Input Headers: [\"Part Number\", \"Description\", \"Item Code\", \"Product Spec\"]\n"
+        f"Output: {{ \"classifications\": [{{ \"header\": \"Part Number\", \"category\": \"Company Part No.\" }}, {{ \"header\": \"Description\", \"category\": \"Part Description\" }}, {{ \"header\": \"Item Code\", \"category\": \"Company Part No.\" }}, {{ \"header\": \"Product Spec\", \"category\": \"Part Description\" }}] }}\n\n"
+        f"Headers to classify: {json.dumps(headers, ensure_ascii=False)}"
+    )
 
     try:
-        response = llm.invoke([HumanMessage(content=prompt)]).content.strip().lower()
-        # print(f"LLM response for {header}: {response}")  # Debug print
-        if response in [cat.lower() for cat in categories]:
-            return next(cat for cat in categories if cat.lower() == response)
-        elif "none" in response:
-            return None
-        else:
-            # Try to find best fit
-            for cat in categories:
-                if cat.lower() in response:
-                    return cat
-        return None
+        print(f"--- LLM BATCH CLASSIFICATION PROMPT ---")
+        print(prompt)
+        print(f"---------------------------------------")
+        
+        try:
+            structured_llm = llm.with_structured_output(ClassificationResponse, method="function_calling")
+        except Exception as e:
+            print(f"--- ERROR: Failed to create structured_llm instance: {e} ---")
+            return {}
+
+        try:
+            response = structured_llm.invoke([HumanMessage(content=prompt)])
+        except Exception as e:
+            print(f"--- ERROR: Failed during structured_llm.invoke: {e} ---")
+            return {}
+
+        print(f"--- LLM BATCH CLASSIFICATION RAW RESPONSE ---")
+        print(f"Response object: {response}")
+        print(f"Response.classifications: {response.classifications is None}") # Check if classifications is None
+        print(f"-------------------------------------------")
+        # Convert list of ClassifiedHeader objects to Dict[str, str] for consistency with previous logic
+        return {item.header: item.category for item in response.classifications if item.category and item.category.lower() != 'none'}
     except Exception as e:
-        print(f"LLM error: {e}")
-        return None
+        print(f"--- LLM BATCH CLASSIFICATION ERROR (Outer) ---")
+        print(f"Full Exception: {e}")
+        print(f"--------------------------------------")
+        return {}
 
-def verify_matched_headers(llm_matched: dict) -> Dict[str, List[str]]:
-    """使用 LLM 驗證匹配是否正確，找出錯誤匹配 - 只驗證 LLM 分類的 headers"""
+def llm_batch_verify_headers(llm_matched: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    """使用 LLM 批次驗證匹配是否正確，並強制使用定義好的 Pydantic Schema。"""
     wrong_headers = defaultdict(list)
-
-    if not llm:
+    print(f"--- DEBUG: llm object status at start of llm_batch_verify_headers: {llm is None} ---")
+    if not llm or not llm_matched:
+        print(f"--- DEBUG: llm_batch_verify_headers returning empty dict due to no llm or no matched headers ---")
         return dict(wrong_headers)
 
-    for chinese_cat, headers in llm_matched.items():
+    verification_batch = []
+    for english_cat, headers in llm_matched.items(): # Changed chinese_cat to english_cat
         for header in headers:
-            prompt = f"零部件表頭部 '{header}' 正確表示類別 '{chinese_cat}' 嗎？回答 '是' 或 '否'。"
+            verification_batch.append({"header": header, "category": english_cat}) # Use english_cat
 
-            try:
-                response = llm.invoke([HumanMessage(content=prompt)]).content.strip().lower()
-                print(f"Verification for {header} in {chinese_cat}: {response}")  # Debug
-                if '否' in response or 'no' in response:
-                    wrong_headers[chinese_cat].append(header)
-            except Exception as e:
-                print(f"Verification error for {header}: {e}")
+    if not verification_batch:
+        print(f"--- DEBUG: llm_batch_verify_headers returning empty dict due to empty verification_batch ---")
+        return dict(wrong_headers)
 
-    return dict(wrong_headers)
+    prompt = (
+        f"You are a quality assurance expert for BOM data. "
+        f"For each item in the following list, determine if the 'header' accurately represents the 'category'. "
+        f"Provide a boolean 'correct' field for each item.\n\n"
+        f"Here is an example:\n"
+        f"Input Items: [{{ \"header\": \"Part Number\", \"category\": \"Company Part No.\" }}, {{ \"header\": \"Description\", \"category\": \"Part Description\" }}]\n"
+        f"Output: {{ \"verifications\": [{{ \"header\": \"Part Number\", \"category\": \"Company Part No.\", \"correct\": true }}, {{ \"header\": \"Description\", \"category\": \"Part Description\", \"correct\": true }}] }}\n\n"
+        f"Items to verify: {json.dumps(verification_batch, ensure_ascii=False)}"
+    )
 
-def classify_bom_headers(file_path: str) -> Dict:
-    """
-    讀取 CSV 檔案，分析其欄位，並將其分類到預定義的系統類別中。
-
-    Args:
-        file_path (str): The absolute path to the CSV file.
-
-    Returns:
-        dict: A dictionary containing the classification results.
-    """
     try:
+        print(f"--- LLM BATCH VERIFICATION PROMPT ---")
+        print(prompt)
+        print(f"---------------------------------------")
+        structured_llm = llm.with_structured_output(VerificationResponse, method="function_calling")
+        response = structured_llm.invoke([HumanMessage(content=prompt)])
+        print(f"--- LLM BATCH VERIFICATION RAW RESPONSE ---")
+        print(f"Response object: {response}")
+        print(f"-------------------------------------------")
+        
+        for result in response.verifications:
+            if not result.correct:
+                wrong_headers[result.category].append(result.header)
+        print(f"--- DEBUG: llm_batch_verify_headers returning final wrong_headers: {dict(wrong_headers)} ---")
+        return dict(wrong_headers)
+
+    except Exception as e:
+        print(f"--- LLM BATCH VERIFICATION ERROR ---")
+        print(f"Full Exception: {e}")
+        print(f"--------------------------------------")
+        print(f"--- DEBUG: llm_batch_verify_headers returning empty dict due to exception ---")
+        return dict(wrong_headers)
+
+def get_headers_from_file(file_path: str) -> List[str]:
+    """Reads headers from a CSV or XLSX file."""
+    if file_path.lower().endswith('.csv'):
         with open(file_path, mode='r', encoding='utf-8-sig') as infile:
             reader = csv.reader(infile)
             try:
-                headers = next(reader)
+                return next(reader)
             except StopIteration:
-                return {"error": "File is empty or not a valid CSV."}
+                raise ValueError("File is empty or not a valid CSV.")
+    elif file_path.lower().endswith('.xlsx'):
+        df = pd.read_excel(file_path, nrows=0) # Efficiently read only the header row
+        return df.columns.tolist()
+    else:
+        raise ValueError("Unsupported file type. Please upload a .csv or .xlsx file.")
+
+
+def get_headers_from_file(file_path: str) -> List[str]:
+    """Reads headers from a CSV or XLSX file."""
+    if file_path.lower().endswith('.csv'):
+        with open(file_path, mode='r', encoding='utf-8-sig') as infile:
+            reader = csv.reader(infile)
+            try:
+                return next(reader)
+            except StopIteration:
+                raise ValueError("File is empty or not a valid CSV.")
+    elif file_path.lower().endswith('.xlsx'):
+        df = pd.read_excel(file_path, nrows=0) # Efficiently read only the header row
+        return df.columns.tolist()
+    else:
+        raise ValueError("Unsupported file type. Please upload a .csv or .xlsx file.")
+
+def classify_bom_headers(file_path: str) -> Dict:
+    """
+    Reads a file, analyzes its headers, and classifies them into predefined system categories using a batched approach.
+    """
+    try:
+        headers = get_headers_from_file(file_path)
     except FileNotFoundError:
         return {"error": f"File not found at {file_path}"}
     except Exception as e:
         return {"error": f"An error occurred while reading the file: {e}"}
 
-    matched_categories = defaultdict(list)
-    unrecognized_headers = []
+    try:
+        matched_categories = defaultdict(list)
+        unrecognized_headers = []
+        headers_to_llm = []
 
-    # 將系統欄位名稱轉換為英文用於 LLM
-    english_categories = list(SYSTEM_CATEGORIES.keys())
-    system_categories_chinese = list(SYSTEM_CATEGORIES.values())
+        # Stage 1 & 2: Exact and Fuzzy Matching
+        for header in headers:
+            normalized_header = header.strip()
+            if not normalized_header:
+                continue
 
-    # 記錄 LLM 分類的 headers，以後驗證
-    llm_matched_categories = defaultdict(list)
+            category = HEADER_MAPPING.get(normalized_header, HEADER_MAPPING.get(normalized_header.capitalize()))
 
-    for header in headers:
-        # 正規化 header
-        normalized_header = header.strip()
-
-        # 1. 首先嘗試完全匹配的關鍵字字典
-        category = HEADER_MAPPING.get(normalized_header)
-        if not category:
-            capitalized = normalized_header.capitalize()
-            category = HEADER_MAPPING.get(capitalized)
-
-        if category:
-            # 找到了對應的系統類別
-            chinese_category = SYSTEM_CATEGORIES.get(category)
-            if chinese_category:
-                matched_categories[chinese_category].append(normalized_header)
-        else:
-            # 2. 如果沒有匹配，使用模糊匹配
-            fuzzy_category = fuzzy_match_header(normalized_header, HEADER_MAPPING)
-            if fuzzy_category:
-                chinese_category = SYSTEM_CATEGORIES.get(fuzzy_category)
+            if category:
+                chinese_category = SYSTEM_CATEGORIES.get(category)
                 if chinese_category:
                     matched_categories[chinese_category].append(normalized_header)
             else:
-                # 3. 如果還是沒有，使用 LLM 分類
-                llm_category = llm_classify_header(normalized_header, english_categories)
-                if llm_category:
-                    chinese_category = SYSTEM_CATEGORIES.get(llm_category)
+                fuzzy_category = fuzzy_match_header(normalized_header, HEADER_MAPPING)
+                if fuzzy_category:
+                    chinese_category = SYSTEM_CATEGORIES.get(fuzzy_category)
                     if chinese_category:
                         matched_categories[chinese_category].append(normalized_header)
-                        llm_matched_categories[chinese_category].append(normalized_header)  # 記錄 LLM 分類的
-                    else:
-                        unrecognized_headers.append(normalized_header)
                 else:
-                    unrecognized_headers.append(normalized_header)
+                    headers_to_llm.append(normalized_header)
 
-    # 4. 驗證 matched headers 是否正確 (只驗證 LLM 分類的)
-    wrong_headers = verify_matched_headers(llm_matched_categories)
+        # Stage 3: Batch LLM Classification
+        english_categories = list(SYSTEM_CATEGORIES.keys())
+        llm_classifications = llm_batch_classify_headers(headers_to_llm, english_categories)
+        print(f"--- DEBUG: llm_classifications after batch classify: {llm_classifications} ---")
+        
+        llm_matched_categories = defaultdict(list)
+        for header, llm_category in llm_classifications.items():
+            chinese_category = SYSTEM_CATEGORIES.get(llm_category)
+            if chinese_category:
+                matched_categories[chinese_category].append(header)
+                llm_matched_categories[llm_category].append(header) # Use English category as key for verification
+            else:
+                unrecognized_headers.append(header)
 
-    # 移除錯誤匹配的 headers 並記錄下來
-    for cat, wrongs in wrong_headers.items():
-        if cat in matched_categories:
-            matched_categories[cat] = [h for h in matched_categories[cat] if h not in wrongs]
+        # Add remaining headers that LLM didn't classify to unrecognized
+        classified_by_llm = set(llm_classifications.keys())
+        for header in headers_to_llm:
+            if header not in classified_by_llm:
+                unrecognized_headers.append(header)
 
-    # 找出哪些系統要求的欄位沒有被匹配到
-    found_system_categories = set(matched_categories.keys())
-    unmatched_categories = [cat for cat in system_categories_chinese if cat not in found_system_categories]
+        # Stage 4: Batch LLM Verification
+        wrong_headers = llm_batch_verify_headers(llm_matched_categories)
 
-    # 根據需求文件格式化輸出
-    result = {
-        "Matched categories with its headers": dict(matched_categories),
-        "Unmatched categories": unmatched_categories,
-        "Matched categories with wrong headers": wrong_headers,
-        "Unmatched bom headers": unrecognized_headers
-    }
+        # Final processing: remove wrong headers and find unmatched system categories
+        for cat, wrongs in wrong_headers.items():
+            if cat in matched_categories:
+                matched_categories[cat] = [h for h in matched_categories[cat] if h not in wrongs]
+                # Add wrongly matched headers to the final unrecognized list
+                unrecognized_headers.extend(wrongs)
 
-    return result
+        system_categories_chinese = list(SYSTEM_CATEGORIES.values())
+        found_system_categories = set(matched_categories.keys())
+        unmatched_categories = [cat for cat in system_categories_chinese if cat not in found_system_categories]
+
+        result = {
+            "Matched categories with its headers": {k: v for k, v in matched_categories.items() if v},
+            "Unmatched categories": unmatched_categories,
+            "Matched categories with wrong headers": wrong_headers,
+            "Unmatched bom headers": sorted(list(set(unrecognized_headers)))
+        }
+
+        return result
+    except Exception as e:
+        print(f"--- CRITICAL ERROR IN CLASSIFY_BOM_HEADERS ---")
+        print(f"Full Traceback: {traceback.format_exc()}")
+        print(f"----------------------------------------------")
+        return {"error": f"A critical error occurred: {e}"}
