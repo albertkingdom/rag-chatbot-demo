@@ -17,3 +17,5 @@ gradio
 python-dotenv
 rq
 redis
+numpy
+pytest

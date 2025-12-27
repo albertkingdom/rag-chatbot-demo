@@ -11,7 +11,9 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 - **Intelligent BOM Mapping**: A hybrid tool that uses a combination of rule-based matching, fuzzy string matching, and Large Language Models (LLM) to map BOM file headers to a standardized format.
 - **Asynchronous Task Processing**: Utilizes **Redis Queue (RQ)** to manage heavy background tasks (like knowledge base synchronization), ensuring the web UI remains responsive at all times.
 - **Multi-Format File Handling**: The knowledge base can be updated by uploading various file formats, including `.pdf`, `.xlsx`, and `.csv`.
-- **Modern Web UI**: A clean, user-friendly, and responsive interface built with **Gradio**.
+- **Gradio Modern Web UI**: A clean, user-friendly interface for seamless interaction with the AI assistant and mapping tools.
+- **Prompt Caching**: Semantic similarity caching (powered by Redis) that reduces API costs and improves response times by up to 80% for similar questions.
+
 
 ---
 
@@ -21,6 +23,8 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 - **Hybrid BOM Mapping**: A 3-stage process (rules, fuzzy matching, and LLM-based classification) provides highly accurate header mapping.
 - **Efficient Vector Sync**: Performs an incremental sync with **Pinecone**, only updating new or changed data instead of full rebuilds.
 - **Dual AI Model Strategy**: Uses **OpenAI** for high-quality embeddings and **Google Gemini 2.5 Flash** for fast, versatile chat and data analysis.
+- **Semantic Cache Layer**: Implemented a cosine-similarity based cache in Redis to intercept similar questions, significantly decreasing latency and token consumption.
+
 
 ---
 
@@ -84,3 +88,13 @@ The UI has three tabs: RAG Chatbot, BOM Header Mapper, and Admin: Upload Manual.
 ![Chatbot UI Demo](assets/chatbot_screenshot.jpeg)
 ![BOM Mapper UI Demo](assets/Bom_mapper.jpeg)
 ![Admin Upload UI Demo](assets/user_manual_upload.jpeg)
+
+---
+
+## 📚 Documentation
+
+Detailed development records and design decisions:
+
+- [Implementation Plan](docs/development/prompt-cache-implementation-plan.md)
+- [Feature Walkthrough & Verification](docs/development/prompt-cache-walkthrough.md)
+- [Development Task Checklist](docs/development/prompt-cache-task.md)

@@ -21,7 +21,8 @@ from langchain_core.output_parsers import StrOutputParser
 
 from .bom_mapper import classify_bom_headers
 from .build_vector_store import sync_vector_store
-from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
+from .cache_service import PromptCacheService
+from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR, CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 conn = redis.from_url(redis_url)
@@ -29,20 +30,38 @@ q = Queue(connection=conn)
 
 
 async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
-    """Handles the entire RAG chain lifecycle for a single chat request."""
-    # TODO: 可以加入 prompt cache 機制
-    # 如果 user 問類似問題，可以快取之前的回答，減少 API 調用次數
-    # Future enhancement: Implement prompt caching mechanism
-    # Cache similar questions to reduce API calls and improve response time
+    """Handles the entire RAG chain lifecycle for a single chat request with caching."""
     PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") # For OpenAI Embeddings
     GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") # For Gemini Chat Model
     if not (PINECONE_API_KEY and OPENAI_API_KEY and GOOGLE_API_KEY):
         yield "Error: All required API keys are not configured on the server."
         return
+    
     try:
-        pc = Pinecone(api_key=PINECONE_API_KEY)
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+        
+        # Generate embedding for the incoming question (needed for both cache and RAG)
+        question_embedding = embeddings.embed_query(message)
+        
+        # Try to get cached response if cache is enabled
+        if CACHE_ENABLED:
+            cache_service = PromptCacheService(conn)
+            cached_response = cache_service.get_cached_response(
+                question_embedding, 
+                threshold=CACHE_SIMILARITY_THRESHOLD
+            )
+            
+            if cached_response:
+                # Cache hit - return cached answer with indicator
+                print(f"Cache hit! Similarity: {cached_response['similarity']:.3f}, Hit count: {cached_response['hit_count']}")
+                cached_answer = cached_response["answer"]
+                # Stream the cached response for consistent UI experience
+                yield cached_answer
+                return
+        
+        # Cache miss or cache disabled - proceed with normal RAG pipeline
+        pc = Pinecone(api_key=PINECONE_API_KEY)
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, streaming=True, google_api_key=GOOGLE_API_KEY)
         vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=embeddings)
         retriever = vectorstore.as_retriever()
@@ -68,6 +87,16 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
         async for chunk in generation_chain.astream({"context": context, "question": message}):
             full_response += chunk
             yield full_response
+        
+        # Store the generated response in cache
+        if CACHE_ENABLED and full_response:
+            cache_service.set_cached_response(
+                question_embedding,
+                message,
+                full_response
+            )
+            print(f"Response cached for question: {message[:50]}...")
+            
     except Exception as e:
         print(f"An error occurred during chat stream: {e}")
         yield f"An error occurred: {e}"
