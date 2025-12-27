@@ -6,7 +6,7 @@ from typing import Dict, List, Union
 import traceback
 # 新增 LLM 和模糊匹配的 imports
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage
+from langchain_core.messages import HumanMessage
 from fuzzywuzzy import fuzz
 import pandas as pd
 from pydantic import BaseModel, Field
