@@ -2,7 +2,7 @@ import os
 import csv
 import pandas as pd
 import fitz  # PyMuPDF
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
