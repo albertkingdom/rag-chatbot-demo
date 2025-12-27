@@ -153,7 +153,7 @@ class PromptCacheService:
             self.redis.setex(
                 cache_key,
                 ttl,
-                json.dumps(cache_data)
+                json.dumps(cache_data, ensure_ascii=False)
             )
             
             # Add to index
@@ -181,7 +181,7 @@ class PromptCacheService:
                 # Get remaining TTL
                 ttl = self.redis.ttl(cache_key)
                 if ttl > 0:
-                    self.redis.setex(cache_key, ttl, json.dumps(cached_data))
+                    self.redis.setex(cache_key, ttl, json.dumps(cached_data, ensure_ascii=False))
         except Exception as e:
             print(f"Error incrementing hit count: {e}")
     
