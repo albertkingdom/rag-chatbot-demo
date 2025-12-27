@@ -78,7 +78,7 @@ docker-compose up --build
 ### 3. Access the Tools
 
 - **Main Application**: [http://localhost:8000](http://localhost:8000)
-- **Redis GUI (Commander)**: [http://localhost:8081](http://localhost:8081) - Use this to inspect the prompt cache.
+- **Redis GUI (RedisInsight)**: [http://localhost:8001](http://localhost:8001) - Use this to inspect the prompt cache.
 
 ---
 

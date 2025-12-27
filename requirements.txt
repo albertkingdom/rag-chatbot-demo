@@ -19,3 +19,4 @@ rq
 redis
 numpy
 pytest
+python-Levenshtein
