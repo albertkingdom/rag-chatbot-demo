@@ -20,3 +20,8 @@ redis
 numpy
 pytest
 python-Levenshtein
+flashrank
+langchain-community
+sentence-transformers
+huggingface_hub
+langchain-huggingface

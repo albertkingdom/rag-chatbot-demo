@@ -16,8 +16,10 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from langchain_classic.retrievers import ContextualCompressionRetriever
+from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 
 from .bom_mapper import classify_bom_headers
 from .build_vector_store import sync_vector_store
@@ -27,6 +29,26 @@ from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR, CACHE_ENABLED, CACHE_S
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 conn = redis.from_url(redis_url)
 q = Queue(connection=conn)
+
+# Singleton for BGE-Reranker to avoid reloading 1.1GB model per request
+_reranker = None
+
+def get_reranker():
+    global _reranker
+    if _reranker is None:
+        print("Initializing BGE-Reranker (BAAI/bge-reranker-v2-m3)...")
+        model_dir = os.path.join(os.getcwd(), "models")
+        os.makedirs(model_dir, exist_ok=True)
+        
+        # Load the CrossEncoder model
+        model = HuggingFaceCrossEncoder(
+            model_name="BAAI/bge-reranker-v2-m3",
+            model_kwargs={"device": "cpu", "cache_folder": model_dir}
+        )
+        # Wrap it in a Reranker compressor
+        _reranker = CrossEncoderReranker(model=model, top_n=3)
+        print("BGE-Reranker initialized successfully.")
+    return _reranker
 
 
 async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
@@ -64,7 +86,18 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
         pc = Pinecone(api_key=PINECONE_API_KEY)
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, streaming=True, google_api_key=GOOGLE_API_KEY)
         vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=embeddings)
-        retriever = vectorstore.as_retriever()
+        
+        # Base retriever to fetch more candidates (e.g., top 10) for reranking
+        base_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
+        
+        # Get the global reranker instance
+        compressor = get_reranker()
+        
+        # Create ContextualCompressionRetriever which handles the reranking
+        retriever = ContextualCompressionRetriever(
+            base_compressor=compressor, 
+            base_retriever=base_retriever
+        )
         prompt_template = """You are a professional assistant for a carbon management system. 
         Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
         If the context is not relevant, just say that you don't know, don't try to make up an answer.

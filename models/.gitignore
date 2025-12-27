@@ -1,0 +1,4 @@
+# Ignore all model weights and files in this directory
+*
+# But do not ignore this .gitignore file itself
+!.gitignore
