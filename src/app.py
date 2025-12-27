@@ -145,8 +145,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
     with gr.Tab("RAG Chatbot"):
         gr.ChatInterface(
             chat_stream,
-            chatbot=gr.Chatbot(height=500, type='messages'),
-            type='messages',
+            chatbot=gr.Chatbot(height=500),
             textbox=gr.Textbox(placeholder="Ask me about the user manual...", container=False, scale=7),
             title="User Manual Q&A",
             description="Ask questions about the carbon management system.",
