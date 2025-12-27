@@ -17,6 +17,7 @@ services:
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: carbon-assistant-redis-gui
+    platform: linux/amd64
     environment:
       - REDIS_HOSTS=local:redis:6379
     ports:
