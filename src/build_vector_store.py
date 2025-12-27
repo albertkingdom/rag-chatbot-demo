@@ -129,6 +129,10 @@ def sync_vector_store():
     else:
         print("No new or modified documents to upsert.", flush=True)
 
+    # TODO: 未來可能需要調整此策略
+    # 目前當 Pinecone 有但本地沒有時會直接刪除，可能需要改為保留或歸檔
+    # Current strategy: Delete vectors in Pinecone that don't exist locally
+    # Future consideration: May need to preserve or archive instead of deleting
     if ids_to_delete:
         print(f"Deleting {len(ids_to_delete)} outdated documents...", flush=True)
         index.delete(ids=ids_to_delete)

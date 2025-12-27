@@ -30,6 +30,10 @@ q = Queue(connection=conn)
 
 async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
     """Handles the entire RAG chain lifecycle for a single chat request."""
+    # TODO: 可以加入 prompt cache 機制
+    # 如果 user 問類似問題，可以快取之前的回答，減少 API 調用次數
+    # Future enhancement: Implement prompt caching mechanism
+    # Cache similar questions to reduce API calls and improve response time
     PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") # For OpenAI Embeddings
     GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") # For Gemini Chat Model
