@@ -75,9 +75,10 @@ GOOGLE_API_KEY="your_google_api_key_here"
 docker-compose up --build
 ```
 
-### 3. Access the UI
+### 3. Access the Tools
 
-Navigate to **http://localhost:8000**
+- **Main Application**: [http://localhost:8000](http://localhost:8000)
+- **Redis GUI (Commander)**: [http://localhost:8081](http://localhost:8081) - Use this to inspect the prompt cache.
 
 ---
 

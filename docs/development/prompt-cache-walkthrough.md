@@ -230,6 +230,22 @@ stats = cache_service.get_cache_stats()
 
 ---
 
+## Redis Commander GUI
+
+To help visualize and manage the cache data, **Redis Commander** has been integrated into the Docker environment.
+
+### How to access:
+1.  Ensure the containers are running: `docker-compose up -d`
+2.  Open your browser and navigate to: **[http://localhost:8081](http://localhost:8081)**
+3.  You will see a interface where you can browse all keys, including `prompt_cache:*`.
+
+### Key Features:
+- 🔍 **Browse all keys**: Explore the cache index and individual prompt hashes.
+- 📝 **View Field Data**: See the question, answer, embedding, and hit count for each entry.
+- 🗑️ **Direct Editing/Deletion**: Test cache behavior by manually modifying or deleting entries.
+
+---
+
 ## Files Changed
 
 ### New Files
