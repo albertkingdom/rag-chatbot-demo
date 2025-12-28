@@ -10,6 +10,7 @@ from rq import Queue
 from rq.job import Job
 import time
 import traceback
+from langsmith import traceable
 
 from pinecone import Pinecone
 from langchain_openai import OpenAIEmbeddings
@@ -51,6 +52,7 @@ def get_reranker():
     return _reranker
 
 
+@traceable(name="Carbon Assistant Chat")
 async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
     """Handles the entire RAG chain lifecycle for a single chat request with caching."""
     PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")

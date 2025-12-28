@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage
 from fuzzywuzzy import fuzz
 import pandas as pd
 from pydantic import BaseModel, Field
+from langsmith import traceable
 
 # 初始化 LangChain LLM
 API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -227,6 +228,7 @@ def get_headers_from_file(file_path: str) -> List[str]:
     else:
         raise ValueError("Unsupported file type. Please upload a .csv or .xlsx file.")
 
+@traceable(name="BOM Header Classification")
 def classify_bom_headers(file_path: str) -> Dict:
     """
     Reads a file, analyzes its headers, and classifies them into predefined system categories using a batched approach.

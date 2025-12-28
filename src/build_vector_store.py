@@ -7,6 +7,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
 from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
+from langsmith import traceable
 
 # --- Data Extraction Functions ---
 
@@ -55,6 +56,7 @@ def extract_from_pdf(file_path: str) -> list[dict]:
 
 # --- Main Sync Function --- #
 
+@traceable(name="Knowledge Base Sync")
 def sync_vector_store():
     os.makedirs(DATA_SOURCE_DIR, exist_ok=True)
 
