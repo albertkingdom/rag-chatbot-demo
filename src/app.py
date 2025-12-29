@@ -17,6 +17,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
@@ -31,25 +32,57 @@ redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 conn = redis.from_url(redis_url)
 q = Queue(connection=conn)
 
-# Singleton for BGE-Reranker to avoid reloading 1.1GB model per request
+# Singleton for BGE-Reranker model
 _reranker = None
 
-def get_reranker():
+def get_reranker_model():
+    """取得底層的 CrossEncoder 模型實體。"""
     global _reranker
     if _reranker is None:
-        print("Initializing BGE-Reranker (BAAI/bge-reranker-v2-m3)...")
+        print("Initializing BGE-Reranker model (BAAI/bge-reranker-v2-m3)...")
         model_dir = os.path.join(os.getcwd(), "models")
         os.makedirs(model_dir, exist_ok=True)
         
         # Load the CrossEncoder model
-        model = HuggingFaceCrossEncoder(
+        _reranker = HuggingFaceCrossEncoder(
             model_name="BAAI/bge-reranker-v2-m3",
             model_kwargs={"device": "cpu", "cache_folder": model_dir}
         )
-        # Wrap it in a Reranker compressor
-        _reranker = CrossEncoderReranker(model=model, top_n=3)
-        print("BGE-Reranker initialized successfully.")
+        print("BGE-Reranker model initialized successfully.")
     return _reranker
+
+@traceable(name="Rerank Analysis")
+def rerank_analysis(docs_and_query):
+    """手動執行重排序並將分數寫入 Metadata，解決套件版本不支援顯示分數的問題。"""
+    docs = docs_and_query["docs"]
+    query = docs_and_query["query"]
+    
+    if not docs:
+        return {"docs": [], "rerank_scores": []}
+
+    model = get_reranker_model()
+    
+    # 手動計算每個文件的分數
+    scores = model.score([(query, doc.page_content) for doc in docs])
+    
+    # 將分數寫回 metadata 並排序
+    for doc, score in zip(docs, scores):
+        doc.metadata["relevance_score"] = float(score)
+    
+    # 根據分數排序並取 Top 3
+    sorted_docs = sorted(docs, key=lambda x: x.metadata["relevance_score"], reverse=True)[:3]
+    
+    # 準備 LangSmith 摘要
+    summary = []
+    for i, doc in enumerate(sorted_docs):
+        score = doc.metadata["relevance_score"]
+        summary.append({
+            "rank": i + 1,
+            "score": f"{score:.4f}",
+            "content": doc.page_content[:100] + "..."
+        })
+    
+    return {"docs": sorted_docs, "rerank_scores": summary}
 
 
 @traceable(name="Carbon Assistant Chat")
@@ -92,14 +125,6 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
         # Base retriever to fetch more candidates (e.g., top 10) for reranking
         base_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
         
-        # Get the global reranker instance
-        compressor = get_reranker()
-        
-        # Create ContextualCompressionRetriever which handles the reranking
-        retriever = ContextualCompressionRetriever(
-            base_compressor=compressor, 
-            base_retriever=base_retriever
-        )
         prompt_template = """You are a professional assistant for a carbon management system. 
         Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
         If the context is not relevant, just say that you don't know, don't try to make up an answer.
@@ -113,9 +138,18 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
 
         Helpful Answer:"""
         QA_PROMPT = PromptTemplate.from_template(prompt_template)
-        def format_docs(docs):
+        @traceable(name="Prepare Context")
+        def format_docs(outputs):
+            # 從 rerank_analysis 的輸出字典中提取文件列表
+            docs = outputs["docs"]
             return "\n\n".join(doc.metadata.get('answer', '') for doc in docs)
-        retrieval_chain = retriever | format_docs
+        
+        # 建立檢索鏈：這會傳回 {"docs": [...], "query": "..."} 到下一個步驟
+        retrieval_chain = (
+            {"docs": base_retriever, "query": lambda x: x}
+            | RunnableLambda(rerank_analysis) 
+            | RunnableLambda(format_docs)
+        )
         generation_chain = QA_PROMPT | llm | StrOutputParser()
         context = await retrieval_chain.ainvoke(message)
         full_response = ""
