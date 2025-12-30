@@ -44,11 +44,11 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 
 The system uses a decoupled architecture orchestrated by Docker Compose:
 
-![System Architecture Diagram](assets/system_architecture.svg)
-
 - **`web`**: FastAPI/Gradio UI. Enqueues jobs to Redis.
 - **`redis`**: Message broker holding the task queue.
 - **`worker`**: Background RQ worker that executes heavy tasks.
+
+👉 **[查看完整 RAG 架構圖](architecture.md)**
 
 ---
 
