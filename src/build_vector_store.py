@@ -89,19 +89,37 @@ def sync_vector_store():
         print("No valid documents found to process.", flush=True)
         return {"status": "error", "message": "No valid documents found to process."}
 
+    # Deduplicate Q&A pairs based on both question AND answer
     local_docs = {}
+    seen_qa_pairs = set()
+    duplicates_skipped = 0
+
     for i, doc_data in enumerate(all_docs_data):
         question = doc_data['question']
         answer = doc_data['answer']
-        doc_id = f"qa_{abs(hash(question))}_{i}"
+
+        # Create a unique key combining question and answer
+        qa_pair_key = (question, answer)
+
+        # Skip exact duplicates (same question + same answer)
+        if qa_pair_key in seen_qa_pairs:
+            duplicates_skipped += 1
+            continue
+
+        seen_qa_pairs.add(qa_pair_key)
+
+        # Use hash of both question and answer for ID
+        combined_hash = abs(hash(qa_pair_key))
+        doc_id = f"qa_{combined_hash}"
+
         # Create a metadata dict that includes both the answer and the original question text
         metadata = {
             "answer": answer,
-            "text": question 
+            "text": question
         }
         local_docs[doc_id] = Document(page_content=question, metadata=metadata)
-    
-    print(f"Loaded {len(local_docs)} Q&A pairs from all sources.", flush=True)
+
+    print(f"Loaded {len(local_docs)} unique Q&A pairs from all sources (skipped {duplicates_skipped} duplicates).", flush=True)
 
     index = pc.Index(PINECONE_INDEX_NAME)
     print("Fetching existing vector IDs from Pinecone...", flush=True)
