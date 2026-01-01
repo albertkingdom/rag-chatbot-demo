@@ -122,12 +122,20 @@ def sync_vector_store():
         print(f"Upserting {len(ids_to_upsert)} new/modified documents...", flush=True)
         for i in range(0, len(ids_to_upsert), 100):
             batch_ids = ids_to_upsert[i:i+100]
+            print(f"Progress: {i}/{len(ids_to_upsert)} ({i*100//len(ids_to_upsert)}%) - Processing batch of {len(batch_ids)} documents...", flush=True)
+
+            # Batch embed all documents at once instead of one-by-one
+            batch_texts = [local_docs[doc_id].page_content for doc_id in batch_ids]
+            batch_embeddings = embeddings.embed_documents(batch_texts)
+
             vectors_to_upsert = []
-            for doc_id in batch_ids:
+            for doc_id, embedding in zip(batch_ids, batch_embeddings):
                 doc = local_docs[doc_id]
-                embedding = embeddings.embed_query(doc.page_content)
                 vectors_to_upsert.append({"id": doc_id, "values": embedding, "metadata": doc.metadata})
+
             index.upsert(vectors=vectors_to_upsert)
+
+        print(f"Progress: {len(ids_to_upsert)}/{len(ids_to_upsert)} (100%) - All documents upserted!", flush=True)
     else:
         print("No new or modified documents to upsert.", flush=True)
 
