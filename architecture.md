@@ -43,47 +43,54 @@ flowchart TB
     Worker -.-> LangSmith
 ```
 
-## RAG Pipeline
+## RAG 核心流程 (Presentation Slides)
+
+此架構採用 **雙層檢索 (Two-Stage Retrieval)** 與 **語義快取 (Semantic Cache)** 技術，確保回應的高精準度與低延遲。
+
+### 1. **快速響應層 (Fast Path)**
+*   **語義快取 (Semantic Cache)**: 使用 **Redis** 儲存過往問答，當新問題相似度 **> 0.85** 時直接回傳，響應時間 **< 50ms**。
+
+### 2. **深度檢索層 (Deep Path)**
+*   **向量檢索 (Recall)**: 從 **Pinecone** 提取前 **10 筆** 最相關候選文件 (OpenAI Embeddings)。
+*   **精準重排 (Reranking)**: 導入 **`BGE Reranker v2-m3`** 對 10 筆文件進行二次評分，篩選最精準的 **Top 3**。
+
+### 3. **多模態生成層 (Generation)**
+*   **上下文合成**: 將 Top 3 文本作為 Context 輸入 LLM。
+*   **生成模型**: 採用 **Gemini 2.5 Flash**，具備高效能與長上下文處理能力。
 
 ```mermaid
 flowchart LR
-    Query[User Query]
-
-    subgraph Embedding
-        Embed[OpenAI Embedding<br/>1536-dim]
+    %% 方向與元件定義
+    Q([使用者提問]) --> Cache{語義快取<br/>命中?}
+    Redis[(Redis<br/>Semantic Cache)] <--> Cache
+    
+    subgraph RAG ["深度檢索與生成流程"]
+        direction LR
+        Search[向量檢索<br/>k=10] --> Rerank[BGE 重排<br/>篩選 Top 3]
+        Rerank --> Gen[Gemini 2.5<br/>生成回答]
     end
+    
+    Cache -- Miss --> Search
+    Cache -- Hit ----> Ans([串流回傳答案])
+    
+    %% 回寫快取路徑
+    Gen --> Store[更新快取]
+    Store --> Redis
+    Store --> Ans
 
-    subgraph Cache["Semantic Cache"]
-        CacheCheck{Cache Hit?<br/>similarity > 0.85}
-        CacheStore[(Store)]
-    end
-
-    subgraph Retrieval["Vector Retrieval"]
-        Pinecone[(Pinecone<br/>k=10)]
-    end
-
-    subgraph Reranking
-        BGE[BGE Reranker v2-m3]
-        Top3[Top 3 Documents]
-    end
-
-    subgraph Generation
-        Context[Format Context]
-        Gemini[Gemini 2.5 Flash]
-    end
-
-    Response[Stream Response]
-
-    Query --> Embed
-    Embed --> CacheCheck
-    CacheCheck -->|HIT| Response
-    CacheCheck -->|MISS| Pinecone
-    Pinecone --> BGE
-    BGE --> Top3
-    Top3 --> Context
-    Context --> Gemini
-    Gemini --> CacheStore
-    CacheStore --> Response
+    %% 樣式美化 (增強對比度以利簡報呈現)
+    classDef input fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#01579b
+    classDef logic fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#333
+    classDef core fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c
+    classDef storage fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c
+    
+    class Q,Ans input
+    class Cache,Store logic
+    class Search,Rerank,Gen core
+    class Redis storage
+    
+    %% 子圖樣式
+    style RAG fill:#f9f9f9,stroke:#333,stroke-width:1px,color:#333
 ```
 
 ## Document Ingestion
