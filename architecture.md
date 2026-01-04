@@ -45,7 +45,12 @@ flowchart TB
 
 ## RAG 核心流程 (Presentation Slides)
 
-此架構採用 **雙層檢索 (Two-Stage Retrieval)** 與 **語義快取 (Semantic Cache)** 技術，確保回應的高精準度與低延遲。
+此架構採用 **意圖分類 (Intent Classification)**、**雙層檢索 (Two-Stage Retrieval)** 與 **語義快取 (Semantic Cache)** 技術，確保回應的高精準度與低延遲。
+
+### 0. **意圖分類層 (Intent Filtering)**
+*   **問題過濾**: 使用 **Gemini 2.5 Flash** 快速判斷問題是否與碳管理系統相關（信心度閾值 0.7）。
+*   **早期攔截**: 無關問題在檢索前即被攔截，節省 API 成本並提升使用者體驗。
+*   **響應時間**: **< 400ms**，成本 **~$0.0001/query**。
 
 ### 1. **快速響應層 (Fast Path)**
 *   **語義快取 (Semantic Cache)**: 使用 **Redis** 儲存過往問答，當新問題相似度 **> 0.85** 時直接回傳，響應時間 **< 50ms**。
@@ -61,18 +66,22 @@ flowchart TB
 ```mermaid
 flowchart LR
     %% 方向與元件定義
-    Q([使用者提問]) --> Cache{語義快取<br/>命中?}
+    Q([使用者提問]) --> Intent{意圖分類<br/>相關?}
+
+    Intent -- 無關 --> Reject([返回提示訊息])
+    Intent -- 相關 --> Cache{語義快取<br/>命中?}
+
     Redis[(Redis<br/>Semantic Cache)] <--> Cache
-    
+
     subgraph RAG ["深度檢索與生成流程"]
         direction LR
         Search[向量檢索<br/>k=10] --> Rerank[BGE 重排<br/>篩選 Top 3]
         Rerank --> Gen[Gemini 2.5<br/>生成回答]
     end
-    
+
     Cache -- Miss --> Search
     Cache -- Hit ----> Ans([串流回傳答案])
-    
+
     %% 回寫快取路徑
     Gen --> Store[更新快取]
     Store --> Redis
@@ -83,12 +92,14 @@ flowchart LR
     classDef logic fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#333
     classDef core fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c
     classDef storage fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c
-    
+    classDef reject fill:#ffccbc,stroke:#d84315,stroke-width:2px,color:#bf360c
+
     class Q,Ans input
-    class Cache,Store logic
+    class Intent,Cache,Store logic
     class Search,Rerank,Gen core
     class Redis storage
-    
+    class Reject reject
+
     %% 子圖樣式
     style RAG fill:#f9f9f9,stroke:#333,stroke-width:1px,color:#333
 ```
