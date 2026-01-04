@@ -26,6 +26,7 @@ from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 from .bom_mapper import classify_bom_headers
 from .build_vector_store import sync_vector_store
 from .cache_service import PromptCacheService
+from .intent_classifier import IntentClassifier
 from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR, CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -42,7 +43,7 @@ def get_reranker_model():
         print("Initializing BGE-Reranker model (BAAI/bge-reranker-v2-m3)...")
         model_dir = os.path.join(os.getcwd(), "models")
         os.makedirs(model_dir, exist_ok=True)
-        
+
         # Load the CrossEncoder model
         _reranker = HuggingFaceCrossEncoder(
             model_name="BAAI/bge-reranker-v2-m3",
@@ -50,6 +51,22 @@ def get_reranker_model():
         )
         print("BGE-Reranker model initialized successfully.")
     return _reranker
+
+# Singleton for Intent Classifier
+_intent_classifier = None
+
+def get_intent_classifier():
+    """取得 Intent Classifier 實例。"""
+    global _intent_classifier
+    if _intent_classifier is None:
+        print("Initializing Intent Classifier...")
+        GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+        if not GOOGLE_API_KEY:
+            print("Warning: GOOGLE_API_KEY not found. Intent classification will be disabled.")
+            return None
+        _intent_classifier = IntentClassifier(google_api_key=GOOGLE_API_KEY)
+        print("Intent Classifier initialized successfully.")
+    return _intent_classifier
 
 @traceable(name="Rerank Analysis")
 def rerank_analysis(docs_and_query):
@@ -94,8 +111,19 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
     if not (PINECONE_API_KEY and OPENAI_API_KEY and GOOGLE_API_KEY):
         yield "Error: All required API keys are not configured on the server."
         return
-    
+
     try:
+        # Step 0: Intent Classification - Filter out off-topic questions
+        intent_classifier = get_intent_classifier()
+        if intent_classifier:
+            intent_result = await intent_classifier.classify(message)
+            print(f"Intent classification: {intent_result}")
+
+            # If question is not relevant, return early with helpful message
+            if not intent_result["relevant"] or intent_result["confidence"] < 0.7:
+                off_topic_message = intent_classifier.get_off_topic_message()
+                yield off_topic_message
+                return
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
         
         # Generate embedding for the incoming question (needed for both cache and RAG)
