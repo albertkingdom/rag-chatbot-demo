@@ -24,3 +24,5 @@ sentence-transformers
 huggingface_hub
 langchain-huggingface
 langsmith
+pymongo
+tabulate

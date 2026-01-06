@@ -15,8 +15,10 @@ services:
       - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
       - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
       - REDIS_URL=redis://redis:6379/0
+      - MONGODB_URL=mongodb://mongodb:27017/chatbot
     depends_on:
       - redis
+      - mongodb
 
   redis-insight:
     image: redis/redisinsight:latest
@@ -29,6 +31,28 @@ services:
   redis:
     image: redis:7-alpine
     container_name: carbon-assistant-redis
+
+  mongodb:
+    image: mongo:7
+    container_name: carbon-assistant-mongodb
+    environment:
+      - MONGO_INITDB_DATABASE=chatbot
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "27017:27017"
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: carbon-assistant-mongo-express
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_URL=mongodb://mongodb:27017/
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=pass
+    depends_on:
+      - mongodb
 
   worker:
     build: .
@@ -45,5 +69,10 @@ services:
       - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
       - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
       - REDIS_URL=redis://redis:6379/0
+      - MONGODB_URL=mongodb://mongodb:27017/chatbot
     depends_on:
       - redis
+      - mongodb
+
+volumes:
+  mongodb_data:

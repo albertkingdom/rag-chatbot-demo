@@ -27,6 +27,7 @@ from .bom_mapper import classify_bom_headers
 from .build_vector_store import sync_vector_store
 from .cache_service import PromptCacheService
 from .intent_classifier import IntentClassifier
+from .conversation_db import get_conversation_db
 from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR, CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -103,8 +104,10 @@ def rerank_analysis(docs_and_query):
 
 
 @traceable(name="Carbon Assistant Chat")
-async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
+async def chat_stream(message: str, history: list, request: gr.Request = None) -> AsyncGenerator[str, None]:
     """Handles the entire RAG chain lifecycle for a single chat request with caching."""
+    session_id = request.session_hash if request else None
+    
     PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") # For OpenAI Embeddings
     GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") # For Gemini Chat Model
@@ -141,6 +144,19 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
                 # Cache hit - return cached answer with indicator
                 print(f"Cache hit! Similarity: {cached_response['similarity']:.3f}, Hit count: {cached_response['hit_count']}")
                 cached_answer = cached_response["answer"]
+                
+                # Record the CACHED conversation to MongoDB
+                db = get_conversation_db()
+                db.save_conversation(
+                    user_question=message,
+                    assistant_response=cached_answer,
+                    session_id=session_id,
+                    response_source="cache",
+                    intent_classification=intent_result if 'intent_result' in locals() else None,
+                    cache_hit=True,
+                    cache_similarity=cached_response['similarity']
+                )
+                
                 # Stream the cached response for consistent UI experience
                 yield cached_answer
                 return
@@ -193,6 +209,17 @@ async def chat_stream(message: str, history: list) -> AsyncGenerator[str, None]:
                 full_response
             )
             print(f"Response cached for question: {message[:50]}...")
+            
+        # Record the RAG conversation to MongoDB
+        db = get_conversation_db()
+        db.save_conversation(
+            user_question=message,
+            assistant_response=full_response,
+            session_id=session_id,
+            response_source="rag",
+            intent_classification=intent_result if 'intent_result' in locals() else None,
+            cache_hit=False
+        )
             
     except Exception as e:
         print(f"An error occurred during chat stream: {e}")
