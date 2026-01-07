@@ -29,6 +29,12 @@ from .build_vector_store import sync_vector_store
 from .cache_service import PromptCacheService
 from .intent_classifier import IntentClassifier
 from .conversation_db import get_conversation_db
+from .guardrails import (
+    check_context_similarity,
+    detect_pii,
+    detect_prompt_injection,
+    get_guardrail_message,
+)
 from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR, CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -157,6 +163,38 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 # Cache hit - return cached answer with indicator
                 print(f"Cache hit! Similarity: {cached_response['similarity']:.3f}, Hit count: {cached_response['hit_count']}")
                 cached_answer = cached_response["answer"]
+
+                pii_hit, pii_type = detect_pii(cached_answer)
+                injection_hit, injection_pattern = detect_prompt_injection(cached_answer)
+                if pii_hit or injection_hit:
+                    guardrail_message = get_guardrail_message()
+                    print(
+                        "[Guardrail] Blocked cached response:",
+                        {
+                            "pii": pii_type if pii_hit else None,
+                            "injection": injection_pattern if injection_hit else None,
+                            "cache_similarity": cached_response.get("similarity"),
+                        },
+                    )
+                    db = get_conversation_db()
+                    db.save_conversation(
+                        user_question=message,
+                        assistant_response=guardrail_message,
+                        session_id=session_id,
+                        response_source="guardrail",
+                        intent_classification=intent_result if 'intent_result' in locals() else None,
+                        cache_hit=False,
+                        metadata={
+                            "pii_type": pii_type if pii_hit else None,
+                            "injection_pattern": injection_pattern if injection_hit else None,
+                            "cache_candidate": True,
+                            "cache_similarity": cached_response.get("similarity"),
+                        },
+                    )
+                    for i in range(1, len(guardrail_message) + 1):
+                        yield guardrail_message[:i]
+                        await asyncio.sleep(0.005)
+                    return
                 
                 # Record the CACHED conversation to MongoDB
                 db = get_conversation_db()
@@ -201,7 +239,11 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         def format_docs(outputs):
             # 從 rerank_analysis 的輸出字典中提取文件列表
             docs = outputs["docs"]
-            return "\n\n".join(doc.metadata.get('answer', '') for doc in docs)
+            contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
+            return {
+                "context": "\n\n".join(contexts),
+                "contexts": contexts,
+            }
         
         # 建立檢索鏈：這會傳回 {"docs": [...], "query": "..."} 到下一個步驟
         retrieval_chain = (
@@ -212,12 +254,54 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         generation_chain = QA_PROMPT | llm | StrOutputParser()
         
         yield "正在優化檢索結果 (Reranking)..."
-        context = await retrieval_chain.ainvoke(message)
+        context_bundle = await retrieval_chain.ainvoke(message)
+        context = context_bundle.get("context", "")
+        contexts = context_bundle.get("contexts", [])
         
         yield "正在生成回答..."
         async for chunk in generation_chain.astream({"context": context, "question": message}):
             full_response += chunk
-            yield full_response
+
+        pii_hit, pii_type = detect_pii(full_response)
+        injection_hit, injection_pattern = detect_prompt_injection(full_response)
+        supported, similarity = await check_context_similarity(
+            full_response,
+            contexts,
+            embeddings,
+        )
+
+        if pii_hit or injection_hit or not supported:
+            guardrail_message = get_guardrail_message()
+            print(
+                "[Guardrail] Blocked response:",
+                {
+                    "pii": pii_type if pii_hit else None,
+                    "injection": injection_pattern if injection_hit else None,
+                    "context_similarity": similarity,
+                },
+            )
+            db = get_conversation_db()
+            db.save_conversation(
+                user_question=message,
+                assistant_response=guardrail_message,
+                session_id=session_id,
+                response_source="guardrail",
+                intent_classification=intent_result if 'intent_result' in locals() else None,
+                cache_hit=False,
+                metadata={
+                    "pii_type": pii_type if pii_hit else None,
+                    "injection_pattern": injection_pattern if injection_hit else None,
+                    "context_similarity": similarity,
+                },
+            )
+            for i in range(1, len(guardrail_message) + 1):
+                yield guardrail_message[:i]
+                await asyncio.sleep(0.005)
+            return
+
+        for i in range(1, len(full_response) + 1):
+            yield full_response[:i]
+            await asyncio.sleep(0.005)
         
         # Store the generated response in cache
         if CACHE_ENABLED and full_response:
