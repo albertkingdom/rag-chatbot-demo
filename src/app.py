@@ -10,6 +10,7 @@ from rq import Queue
 from rq.job import Job
 import time
 import traceback
+import asyncio
 from langsmith import traceable
 
 from pinecone import Pinecone
@@ -115,8 +116,15 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         yield "Error: All required API keys are not configured on the server."
         return
 
+    full_response = ""
+    intent_result = None
     try:
         # Step 0: Intent Classification - Filter out off-topic questions
+        status_msg = "正在分析您的問題..."
+        for i in range(1, len(status_msg) + 1):
+            yield status_msg[:i]
+            await asyncio.sleep(0.02)
+            
         intent_classifier = get_intent_classifier()
         if intent_classifier:
             intent_result = await intent_classifier.classify(message)
@@ -125,12 +133,17 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             # If question is not relevant, return early with helpful message
             if not intent_result["relevant"] or intent_result["confidence"] < 0.7:
                 off_topic_message = intent_classifier.get_off_topic_message()
-                yield off_topic_message
+                for i in range(1, len(off_topic_message) + 1):
+                    yield off_topic_message[:i]
+                    await asyncio.sleep(0.01)
                 return
+        
+        status_msg = "正在從知識庫檢索相關資訊..."
+        yield status_msg
         embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
         
         # Generate embedding for the incoming question (needed for both cache and RAG)
-        question_embedding = embeddings.embed_query(message)
+        question_embedding = await embeddings.aembed_query(message)
         
         # Try to get cached response if cache is enabled
         if CACHE_ENABLED:
@@ -158,7 +171,9 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 )
                 
                 # Stream the cached response for consistent UI experience
-                yield cached_answer
+                for i in range(1, len(cached_answer) + 1):
+                    yield cached_answer[:i]
+                    await asyncio.sleep(0.005)
                 return
         
         # Cache miss or cache disabled - proceed with normal RAG pipeline
@@ -195,8 +210,11 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             | RunnableLambda(format_docs)
         )
         generation_chain = QA_PROMPT | llm | StrOutputParser()
+        
+        yield "正在優化檢索結果 (Reranking)..."
         context = await retrieval_chain.ainvoke(message)
-        full_response = ""
+        
+        yield "正在生成回答..."
         async for chunk in generation_chain.astream({"context": context, "question": message}):
             full_response += chunk
             yield full_response
@@ -300,7 +318,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
         
         manual_button = gr.Button("Upload and Enqueue Sync")
 
-        def poll_status(job_id):
+        async def poll_status(job_id):
             """A generator function that polls the job status and yields updates."""
             if not job_id:
                 yield "Job ID not found. Please upload again."
@@ -324,7 +342,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
                     if status in ['finished', 'failed', 'canceled', 'stopped']:
                         break
                     
-                    time.sleep(2)
+                    await asyncio.sleep(1)
 
                 except Exception as e:
                     yield f"無法獲取任務狀態 {job_id}: {e}"

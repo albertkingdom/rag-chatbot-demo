@@ -92,10 +92,6 @@ class IntentClassifier:
             response = await self.llm.ainvoke(prompt)
             response_text = response.content.strip()
 
-            # Debug logging
-            print(f"[Intent Classifier] Question: {question}")
-            print(f"[Intent Classifier] Raw response: {response_text}")
-
             # Handle empty response
             if not response_text:
                 print(f"[Intent Classifier] ERROR: Empty response from LLM")
@@ -122,7 +118,6 @@ class IntentClassifier:
             result["confidence"] = float(result["confidence"])
             result["reason"] = result.get("reason", "")
 
-            print(f"[Intent Classifier] Result: {result}")
             return result
 
         except json.JSONDecodeError as e:
@@ -169,10 +164,10 @@ class IntentClassifier:
         return """抱歉，我是碳管理系統（CarbonM）專屬助手，無法回答此問題。
 
 我可以協助您：
-• 📊 系統操作指南（登入、密碼、權限、資料輸入）
-• 🏭 盤查相關問題（活動數據、類別排放、廠區管理）
-• 🧮 碳排放計算（排放係數、碳足跡、排放源定義）
-• 📋 環境法規（溫室氣體盤查、登錄表單、許可證）
-• 📈 報表與數據（匯出、查詢、統計）
+• 系統操作指南（登入、密碼、權限、資料輸入）
+• 盤查相關問題（活動數據、類別排放、廠區管理）
+• 碳排放計算（排放係數、碳足跡、排放源定義）
+• 環境法規（溫室氣體盤查、登錄表單、許可證）
+• 報表與數據（匯出、查詢、統計）
 
 請問您是否有系統相關問題需要協助？"""
