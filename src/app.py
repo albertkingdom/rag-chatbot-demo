@@ -125,7 +125,13 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
     full_response = ""
     intent_result = None
     try:
-        # Step 0: Intent Classification - Filter out off-topic questions
+        # Step 0a: Input guardrail - block prompt injection before hitting LLM
+        injection_hit, _ = detect_prompt_injection(message)
+        if injection_hit:
+            yield get_guardrail_message()
+            return
+
+        # Step 0b: Intent Classification - Filter out off-topic questions
         status_msg = "正在分析您的問題..."
         for i in range(1, len(status_msg) + 1):
             yield status_msg[:i]
