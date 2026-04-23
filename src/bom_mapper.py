@@ -4,7 +4,6 @@ import os
 from collections import defaultdict
 from typing import Dict, List, Union
 import traceback
-# 新增 LLM 和模糊匹配的 imports
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from fuzzywuzzy import fuzz
@@ -101,7 +100,6 @@ def fuzzy_match_header(header: str, mapping: dict, threshold=80) -> Union[str, N
 
 def llm_batch_classify_headers(headers: List[str], categories: List[str]) -> Dict[str, str]:
     """使用 LLM 批次分類 headers，並強制使用定義好的 Pydantic Schema。"""
-    print(f"--- DEBUG: llm object status at start of llm_batch_classify_headers: {llm is None} ---")
     if not llm or not headers:
         return {}
 
@@ -119,27 +117,8 @@ def llm_batch_classify_headers(headers: List[str], categories: List[str]) -> Dic
     )
 
     try:
-        print(f"--- LLM BATCH CLASSIFICATION PROMPT ---")
-        print(prompt)
-        print(f"---------------------------------------")
-        
-        try:
-            structured_llm = llm.with_structured_output(ClassificationResponse, method="function_calling")
-        except Exception as e:
-            print(f"--- ERROR: Failed to create structured_llm instance: {e} ---")
-            return {}
-
-        try:
-            response = structured_llm.invoke([HumanMessage(content=prompt)])
-        except Exception as e:
-            print(f"--- ERROR: Failed during structured_llm.invoke: {e} ---")
-            return {}
-
-        print(f"--- LLM BATCH CLASSIFICATION RAW RESPONSE ---")
-        print(f"Response object: {response}")
-        print(f"Response.classifications: {response.classifications is None}") # Check if classifications is None
-        print(f"-------------------------------------------")
-        # Convert list of ClassifiedHeader objects to Dict[str, str] for consistency with previous logic
+        structured_llm = llm.with_structured_output(ClassificationResponse, method="function_calling")
+        response = structured_llm.invoke([HumanMessage(content=prompt)])
         return {item.header: item.category for item in response.classifications if item.category and item.category.lower() != 'none'}
     except Exception as e:
         print(f"--- LLM BATCH CLASSIFICATION ERROR (Outer) ---")
@@ -150,9 +129,7 @@ def llm_batch_classify_headers(headers: List[str], categories: List[str]) -> Dic
 def llm_batch_verify_headers(llm_matched: Dict[str, List[str]]) -> Dict[str, List[str]]:
     """使用 LLM 批次驗證匹配是否正確，並強制使用定義好的 Pydantic Schema。"""
     wrong_headers = defaultdict(list)
-    print(f"--- DEBUG: llm object status at start of llm_batch_verify_headers: {llm is None} ---")
     if not llm or not llm_matched:
-        print(f"--- DEBUG: llm_batch_verify_headers returning empty dict due to no llm or no matched headers ---")
         return dict(wrong_headers)
 
     verification_batch = []
@@ -175,19 +152,11 @@ def llm_batch_verify_headers(llm_matched: Dict[str, List[str]]) -> Dict[str, Lis
     )
 
     try:
-        print(f"--- LLM BATCH VERIFICATION PROMPT ---")
-        print(prompt)
-        print(f"---------------------------------------")
         structured_llm = llm.with_structured_output(VerificationResponse, method="function_calling")
         response = structured_llm.invoke([HumanMessage(content=prompt)])
-        print(f"--- LLM BATCH VERIFICATION RAW RESPONSE ---")
-        print(f"Response object: {response}")
-        print(f"-------------------------------------------")
-        
         for result in response.verifications:
             if not result.correct:
                 wrong_headers[result.category].append(result.header)
-        print(f"--- DEBUG: llm_batch_verify_headers returning final wrong_headers: {dict(wrong_headers)} ---")
         return dict(wrong_headers)
 
     except Exception as e:
@@ -269,14 +238,13 @@ def classify_bom_headers(file_path: str) -> Dict:
         # Stage 3: Batch LLM Classification
         english_categories = list(SYSTEM_CATEGORIES.keys())
         llm_classifications = llm_batch_classify_headers(headers_to_llm, english_categories)
-        print(f"--- DEBUG: llm_classifications after batch classify: {llm_classifications} ---")
         
         llm_matched_categories = defaultdict(list)
         for header, llm_category in llm_classifications.items():
             chinese_category = SYSTEM_CATEGORIES.get(llm_category)
             if chinese_category:
                 matched_categories[chinese_category].append(header)
-                llm_matched_categories[llm_category].append(header) # Use English category as key for verification
+                llm_matched_categories[llm_category].append(header)
             else:
                 unrecognized_headers.append(header)
 
