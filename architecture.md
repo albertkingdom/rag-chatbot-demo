@@ -12,6 +12,7 @@ flowchart TB
     subgraph Web["Web Service (FastAPI)"]
         ChatStream[chat_stream]
         SyncJob[sync_vector_store]
+        Guardrail[response_guardrail]
     end
 
     subgraph Infra["Infrastructure"]
@@ -35,6 +36,7 @@ flowchart TB
     ChatStream --> Pinecone
     ChatStream --> HuggingFace
     ChatStream --> Gemini
+    ChatStream --> Guardrail
     ChatStream -.-> LangSmith
 
     SyncJob --> Worker
@@ -63,6 +65,11 @@ flowchart TB
 *   **上下文合成**: 將 Top 3 文本作為 Context 輸入 LLM。
 *   **生成模型**: 採用 **Gemini 2.5 Flash**，具備高效能與長上下文處理能力。
 
+### 4. **回覆防護層 (Response Guardrail)**
+*   **Context 支持度**: 比對「回答 vs. 每篇 Context」的向量相似度，低於門檻則阻擋。
+*   **PII / 注入掃描**: 偵測回覆是否包含個資或提示注入內容，命中即阻擋。
+*   **安全回覆**: 回覆統一的安全訊息，並記錄 guardrail metadata 以供追蹤。
+
 ```mermaid
 flowchart LR
     %% 方向與元件定義
@@ -77,15 +84,17 @@ flowchart LR
         direction LR
         Search[向量檢索<br/>k=10] --> Rerank[BGE 重排<br/>篩選 Top 3]
         Rerank --> Gen[Gemini 2.5<br/>生成回答]
+        Gen --> GuardDeep[Guardrail<br/>Context 相似度 + PII/注入]
     end
 
     Cache -- Miss --> Search
-    Cache -- Hit ----> Ans([串流回傳答案])
+    Cache -- Hit ----> GuardCache[Guardrail<br/>PII/注入檢查]
 
     %% 回寫快取路徑
-    Gen --> Store[更新快取]
+    GuardDeep --> Store[更新快取]
     Store --> Redis
     Store --> Ans
+    GuardCache --> Ans
 
     %% 樣式美化 (增強對比度以利簡報呈現)
     classDef input fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#01579b
@@ -96,7 +105,7 @@ flowchart LR
 
     class Q,Ans input
     class Intent,Cache,Store logic
-    class Search,Rerank,Gen core
+    class Search,Rerank,Gen,GuardDeep,GuardCache core
     class Redis storage
     class Reject reject
 
@@ -157,6 +166,7 @@ sequenceDiagram
     participant P as Pinecone
     participant B as BGE Reranker
     participant G as Gemini
+    participant GR as Guardrail
 
     U->>F: Submit Question
     F->>O: Generate Embedding
@@ -165,6 +175,8 @@ sequenceDiagram
 
     alt Cache Hit
         R-->>F: Cached Response
+        F->>GR: PII/Injection Scan
+        GR-->>F: Allow/Block
         F-->>U: Return Answer
     else Cache Miss
         F->>P: Query (k=10)
@@ -173,6 +185,8 @@ sequenceDiagram
         B-->>F: Top 3 Docs
         F->>G: Generate Answer
         G-->>F: Streaming Response
+        F->>GR: Context Similarity + PII/Injection
+        GR-->>F: Allow/Block
         F->>R: Store in Cache
         F-->>U: Stream Answer
     end
@@ -186,6 +200,7 @@ sequenceDiagram
 | Reranking | Top N | 3 |
 | Semantic Cache | Threshold | 0.85 |
 | Semantic Cache | TTL | 24 hours |
+| Guardrail | Context Similarity (per-context max) | 0.72 |
 | Embedding | Dimensions | 1536 |
 | Embedding | Batch Size | 100 docs/call |
 | Vector Upsert | Batch Size | 100 vectors/batch |
