@@ -3,10 +3,16 @@ Intent Classifier for Carbon Management System.
 Filters out off-topic questions before entering the RAG pipeline.
 """
 import os
-import json
 from typing import Dict, Any
+from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langsmith import traceable
+
+
+class IntentResult(BaseModel):
+    relevant: bool = Field(description="Whether the question is related to the carbon management system")
+    confidence: float = Field(description="Confidence score from 0.0 to 1.0")
+    reason: str = Field(description="Brief explanation of the classification")
 
 
 class IntentClassifier:
@@ -37,108 +43,37 @@ class IntentClassifier:
 """
 
     def __init__(self, google_api_key: str = None):
-        """
-        Initialize the intent classifier.
-
-        Args:
-            google_api_key: Google API key for Gemini. If None, reads from environment.
-        """
         api_key = google_api_key or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise ValueError("GOOGLE_API_KEY must be provided or set in environment")
 
-        self.llm = ChatGoogleGenerativeAI(
+        llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
-            temperature=0,  # Deterministic for classification
+            temperature=0,
             google_api_key=api_key,
-            model_kwargs={
-                "response_mime_type": "application/json"  # Force JSON output
-            }
         )
+        self.structured_llm = llm.with_structured_output(IntentResult)
 
     @traceable(name="Intent Classification")
     async def classify(self, question: str) -> Dict[str, Any]:
-        """
-        Classify whether a question is related to the carbon management system.
-
-        Args:
-            question: User's input question
-
-        Returns:
-            Dict containing:
-                - relevant (bool): True if question is system-related
-                - confidence (float): Confidence score 0.0-1.0
-                - reason (str): Brief explanation of the classification
-
-        Example:
-            >>> classifier = IntentClassifier()
-            >>> result = await classifier.classify("如何重設密碼？")
-            >>> print(result)
-            {'relevant': True, 'confidence': 0.98, 'reason': '詢問系統帳號管理功能'}
-        """
         prompt = f"""{self.SYSTEM_TOPICS}
 
 你是碳管理系統的問題分類器。判斷以下問題是否與碳管理系統相關。
 
 分類範例：
-- 「今天天氣如何？」→ {{"relevant": false, "confidence": 0.95, "reason": "詢問天氣資訊"}}
-- 「如何重設密碼？」→ {{"relevant": true, "confidence": 0.98, "reason": "詢問帳號管理功能"}}
-- 「忘記密碼」→ {{"relevant": true, "confidence": 0.98, "reason": "詢問密碼重設功能"}}
+- 「今天天氣如何？」→ relevant=false, confidence=0.95, reason="詢問天氣資訊"
+- 「如何重設密碼？」→ relevant=true, confidence=0.98, reason="詢問帳號管理功能"
+- 「忘記密碼」→ relevant=true, confidence=0.98, reason="詢問密碼重設功能"
 
-請分類以下問題，回答 JSON 格式（包含 relevant, confidence, reason 三個欄位）：
+請分類以下問題：
 {question}"""
 
         try:
-            response = await self.llm.ainvoke(prompt)
-            response_text = response.content.strip()
-
-            # Handle empty response
-            if not response_text:
-                print(f"[Intent Classifier] ERROR: Empty response from LLM")
-                return {
-                    "relevant": True,
-                    "confidence": 0.5,
-                    "reason": "分類器返回空回應"
-                }
-
-            # Try to extract JSON if wrapped in markdown code blocks
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0].strip()
-
-            result = json.loads(response_text)
-
-            # Validate result structure
-            if not all(key in result for key in ["relevant", "confidence"]):
-                raise ValueError("Invalid response format from LLM")
-
-            # Ensure types
-            result["relevant"] = bool(result["relevant"])
-            result["confidence"] = float(result["confidence"])
-            result["reason"] = result.get("reason", "")
-
-            return result
-
-        except json.JSONDecodeError as e:
-            print(f"[Intent Classifier] ERROR: Failed to parse JSON: {e}")
-            print(f"[Intent Classifier] Raw response: {response_text if 'response_text' in locals() else 'N/A'}")
-            # Fallback: conservatively classify as relevant to avoid false negatives
-            return {
-                "relevant": True,
-                "confidence": 0.5,
-                "reason": "分類器解析失敗，預設為相關"
-            }
+            result: IntentResult = await self.structured_llm.ainvoke(prompt)
+            return {"relevant": result.relevant, "confidence": result.confidence, "reason": result.reason}
         except Exception as e:
             print(f"[Intent Classifier] ERROR: {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            # Fail open: let question through to RAG pipeline
-            return {
-                "relevant": True,
-                "confidence": 0.5,
-                "reason": f"分類器錯誤：{str(e)}"
-            }
+            return {"relevant": True, "confidence": 0.5, "reason": f"分類器錯誤：{str(e)}"}
 
     async def is_relevant(self, question: str, confidence_threshold: float = 0.7) -> bool:
         """

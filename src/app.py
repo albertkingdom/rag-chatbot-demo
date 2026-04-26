@@ -8,20 +8,16 @@ from typing import AsyncGenerator
 import redis
 from rq import Queue
 from rq.job import Job
-import time
 import traceback
 import asyncio
 from langsmith import traceable
 
-from pinecone import Pinecone
 from langchain_openai import OpenAIEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
-from langchain_classic.retrievers import ContextualCompressionRetriever
-from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
 from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 
 from .bom_mapper import classify_bom_headers
@@ -76,6 +72,78 @@ def get_intent_classifier():
         print("Intent Classifier initialized successfully.")
     return _intent_classifier
 
+# Singletons for core RAG components
+_embeddings = None
+_llm = None
+_vectorstore = None
+_retrieval_chain = None
+_generation_chain = None
+
+def get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+        if not OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY not configured")
+        _embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    return _embeddings
+
+def get_llm():
+    global _llm
+    if _llm is None:
+        GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+        if not GOOGLE_API_KEY:
+            raise ValueError("GOOGLE_API_KEY not configured")
+        _llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash", temperature=0, streaming=True, google_api_key=GOOGLE_API_KEY
+        )
+    return _llm
+
+def get_vectorstore():
+    global _vectorstore
+    if _vectorstore is None:
+        _vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=get_embeddings())
+    return _vectorstore
+
+def get_retrieval_chain():
+    global _retrieval_chain
+    if _retrieval_chain is None:
+        base_retriever = get_vectorstore().as_retriever(search_kwargs={"k": 10})
+        _retrieval_chain = (
+            {"docs": base_retriever, "query": lambda x: x}
+            | RunnableLambda(rerank_analysis)
+            | RunnableLambda(_format_docs)
+        )
+    return _retrieval_chain
+
+def get_generation_chain():
+    global _generation_chain
+    if _generation_chain is None:
+        _generation_chain = _QA_PROMPT | get_llm() | StrOutputParser()
+    return _generation_chain
+
+_QA_PROMPT = PromptTemplate.from_template(
+    """You are a professional assistant for a carbon management system.
+        Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
+        If the context is not relevant, just say that you don't know, don't try to make up an answer.
+        Keep the answer concise and helpful.
+
+        Context:
+        {context}
+
+        Question:
+        {question}
+
+        Helpful Answer:"""
+)
+
+@traceable(name="Prepare Context")
+def _format_docs(outputs):
+    docs = outputs["docs"]
+    contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
+    return {"context": "\n\n".join(contexts), "contexts": contexts}
+
+
 @traceable(name="Rerank Analysis")
 def rerank_analysis(docs_and_query):
     """手動執行重排序並將分數寫入 Metadata，解決套件版本不支援顯示分數的問題。"""
@@ -114,14 +182,6 @@ def rerank_analysis(docs_and_query):
 async def chat_stream(message: str, history: list, request: gr.Request = None) -> AsyncGenerator[str, None]:
     """Handles the entire RAG chain lifecycle for a single chat request with caching."""
     session_id = request.session_hash if request else None
-    
-    PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") # For OpenAI Embeddings
-    GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") # For Gemini Chat Model
-    if not (PINECONE_API_KEY and OPENAI_API_KEY and GOOGLE_API_KEY):
-        yield "Error: All required API keys are not configured on the server."
-        return
-
     full_response = ""
     intent_result = None
     try:
@@ -150,9 +210,8 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                     await asyncio.sleep(0.01)
                 return
         
-        status_msg = "正在從知識庫檢索相關資訊..."
-        yield status_msg
-        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+        yield "正在從知識庫檢索相關資訊..."
+        embeddings = get_embeddings()
         
         # Generate embedding for the incoming question (needed for both cache and RAG)
         question_embedding = await embeddings.aembed_query(message)
@@ -188,7 +247,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                         assistant_response=guardrail_message,
                         session_id=session_id,
                         response_source="guardrail",
-                        intent_classification=intent_result if 'intent_result' in locals() else None,
+                        intent_classification=intent_result,
                         cache_hit=False,
                         metadata={
                             "pii_type": pii_type if pii_hit else None,
@@ -209,7 +268,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                     assistant_response=cached_answer,
                     session_id=session_id,
                     response_source="cache",
-                    intent_classification=intent_result if 'intent_result' in locals() else None,
+                    intent_classification=intent_result,
                     cache_hit=True,
                     cache_similarity=cached_response['similarity']
                 )
@@ -221,51 +280,13 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 return
         
         # Cache miss or cache disabled - proceed with normal RAG pipeline
-        pc = Pinecone(api_key=PINECONE_API_KEY)
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, streaming=True, google_api_key=GOOGLE_API_KEY)
-        vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=embeddings)
-        
-        # Base retriever to fetch more candidates (e.g., top 10) for reranking
-        base_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
-        
-        prompt_template = """You are a professional assistant for a carbon management system. 
-        Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
-        If the context is not relevant, just say that you don't know, don't try to make up an answer.
-        Keep the answer concise and helpful.
-
-        Context:
-        {context}
-
-        Question:
-        {question}
-
-        Helpful Answer:"""
-        QA_PROMPT = PromptTemplate.from_template(prompt_template)
-        @traceable(name="Prepare Context")
-        def format_docs(outputs):
-            # 從 rerank_analysis 的輸出字典中提取文件列表
-            docs = outputs["docs"]
-            contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
-            return {
-                "context": "\n\n".join(contexts),
-                "contexts": contexts,
-            }
-        
-        # 建立檢索鏈：這會傳回 {"docs": [...], "query": "..."} 到下一個步驟
-        retrieval_chain = (
-            {"docs": base_retriever, "query": lambda x: x}
-            | RunnableLambda(rerank_analysis) 
-            | RunnableLambda(format_docs)
-        )
-        generation_chain = QA_PROMPT | llm | StrOutputParser()
-        
         yield "正在優化檢索結果 (Reranking)..."
-        context_bundle = await retrieval_chain.ainvoke(message)
+        context_bundle = await get_retrieval_chain().ainvoke(message)
         context = context_bundle.get("context", "")
         contexts = context_bundle.get("contexts", [])
-        
+
         yield "正在生成回答..."
-        async for chunk in generation_chain.astream({"context": context, "question": message}):
+        async for chunk in get_generation_chain().astream({"context": context, "question": message}):
             full_response += chunk
 
         pii_hit, pii_type = detect_pii(full_response)
@@ -292,7 +313,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 assistant_response=guardrail_message,
                 session_id=session_id,
                 response_source="guardrail",
-                intent_classification=intent_result if 'intent_result' in locals() else None,
+                intent_classification=intent_result,
                 cache_hit=False,
                 metadata={
                     "pii_type": pii_type if pii_hit else None,
@@ -325,7 +346,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             assistant_response=full_response,
             session_id=session_id,
             response_source="rag",
-            intent_classification=intent_result if 'intent_result' in locals() else None,
+            intent_classification=intent_result,
             cache_hit=False
         )
             
