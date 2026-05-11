@@ -1,4 +1,3 @@
-import math
 import re
 from typing import List, Tuple
 
@@ -53,31 +52,18 @@ def detect_prompt_injection(text: str) -> Tuple[bool, str]:
     return False, ""
 
 
-def _cosine_similarity(a: List[float], b: List[float]) -> float:
-    if not a or not b:
-        return 0.0
-    denom = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
-    if denom == 0:
-        return 0.0
-    return sum(x * y for x, y in zip(a, b)) / denom
-
-
-async def check_context_similarity(
+def check_context_similarity(
     response: str,
     contexts: List[str],
-    embeddings,
-    min_similarity: float = 0.72
+    reranker,
+    min_similarity: float = 0.3
 ) -> Tuple[bool, float]:
     if not response or not contexts:
         return False, 0.0
 
-    response_embedding = await embeddings.aembed_query(response)
-    context_embeddings = await embeddings.aembed_documents(contexts)
-    best_similarity = 0.0
-    for context_embedding in context_embeddings:
-        similarity = _cosine_similarity(response_embedding, context_embedding)
-        if similarity > best_similarity:
-            best_similarity = similarity
+    pairs = [(response, ctx) for ctx in contexts]
+    scores = reranker.score(pairs)
+    best_similarity = float(max(scores))
 
     return best_similarity >= min_similarity, best_similarity
 

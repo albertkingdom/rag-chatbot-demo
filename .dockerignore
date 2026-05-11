@@ -1,0 +1,13 @@
+.git
+.gitignore
+.vscode
+.pytest_cache
+__pycache__
+venv
+.env
+models/
+uploaded_files/
+tests/
+docs/
+*.md
+generated_user_manual.xlsx

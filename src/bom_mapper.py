@@ -176,23 +176,7 @@ def get_headers_from_file(file_path: str) -> List[str]:
             except StopIteration:
                 raise ValueError("File is empty or not a valid CSV.")
     elif file_path.lower().endswith('.xlsx'):
-        df = pd.read_excel(file_path, nrows=0) # Efficiently read only the header row
-        return df.columns.tolist()
-    else:
-        raise ValueError("Unsupported file type. Please upload a .csv or .xlsx file.")
-
-
-def get_headers_from_file(file_path: str) -> List[str]:
-    """Reads headers from a CSV or XLSX file."""
-    if file_path.lower().endswith('.csv'):
-        with open(file_path, mode='r', encoding='utf-8-sig') as infile:
-            reader = csv.reader(infile)
-            try:
-                return next(reader)
-            except StopIteration:
-                raise ValueError("File is empty or not a valid CSV.")
-    elif file_path.lower().endswith('.xlsx'):
-        df = pd.read_excel(file_path, nrows=0) # Efficiently read only the header row
+        df = pd.read_excel(file_path, nrows=0)
         return df.columns.tolist()
     else:
         raise ValueError("Unsupported file type. Please upload a .csv or .xlsx file.")
