@@ -291,10 +291,11 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
 
         pii_hit, pii_type = detect_pii(full_response)
         injection_hit, injection_pattern = detect_prompt_injection(full_response)
-        supported, similarity = await check_context_similarity(
+        reranker = get_reranker_model()
+        supported, similarity = check_context_similarity(
             full_response,
             contexts,
-            embeddings,
+            reranker,
         )
 
         if pii_hit or injection_hit or not supported:
