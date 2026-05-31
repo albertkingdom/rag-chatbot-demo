@@ -127,6 +127,7 @@ _QA_PROMPT = PromptTemplate.from_template(
         Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
         If the context is not relevant, just say that you don't know, don't try to make up an answer.
         Keep the answer concise and helpful.
+        {history}
 
         Context:
         {context}
@@ -142,6 +143,75 @@ def _format_docs(outputs):
     docs = outputs["docs"]
     contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
     return {"context": "\n\n".join(contexts), "contexts": contexts}
+
+
+def format_history(history: list, max_turns: int = 3) -> str:
+    if not history:
+        return ""
+    turns = []
+    i = 0
+    while i < len(history) - 1:
+        msg = history[i]
+        next_msg = history[i + 1]
+        if isinstance(msg, dict) and isinstance(next_msg, dict):
+            if msg.get("role") == "user" and next_msg.get("role") == "assistant":
+                turns.append((msg["content"], next_msg["content"]))
+                i += 2
+                continue
+        i += 1
+    if not turns:
+        return ""
+    recent = turns[-max_turns:]
+    lines = ["\n\n        Previous conversation:"]
+    for user_msg, bot_msg in recent:
+        lines.append(f"        User: {user_msg}")
+        lines.append(f"        Assistant: {bot_msg}")
+    return "\n".join(lines)
+
+
+@traceable(name="Query Rewriting")
+async def rewrite_query(message: str, history: list, max_turns: int = 3) -> str:
+    if not history:
+        return message
+    
+    turns = []
+    i = 0
+    while i < len(history) - 1:
+        msg = history[i]
+        next_msg = history[i + 1]
+        if isinstance(msg, dict) and isinstance(next_msg, dict):
+            if msg.get("role") == "user" and next_msg.get("role") == "assistant":
+                turns.append((msg["content"], next_msg["content"]))
+                i += 2
+                continue
+        i += 1
+    
+    if not turns:
+        return message
+    
+    recent = turns[-max_turns:]
+    history_text = "\n".join([f"User: {u}\nAssistant: {a}" for u, a in recent])
+    
+    prompt = f"""Given the conversation history and the follow-up question, rewrite the question into a standalone question that can be understood without the conversation context.
+If the question is already complete and self-contained, return it as-is.
+
+Conversation history:
+{history_text}
+
+Follow-up question: {message}
+
+Rewritten standalone question:"""
+    
+    try:
+        llm = get_llm()
+        response = await llm.ainvoke(prompt)
+        rewritten = response.content.strip()
+        print(f"[Query Rewriting] Original: {message}")
+        print(f"[Query Rewriting] Rewritten: {rewritten}")
+        return rewritten
+    except Exception as e:
+        print(f"[Query Rewriting] ERROR: {e}")
+        return message
 
 
 @traceable(name="Rerank Analysis")
@@ -191,7 +261,10 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             yield get_guardrail_message()
             return
 
-        # Step 0b: Intent Classification - Filter out off-topic questions
+        # Step 0b: Query Rewriting - rewrite follow-up questions into standalone queries
+        rewritten_query = await rewrite_query(message, history)
+
+        # Step 0c: Intent Classification - Filter out off-topic questions
         status_msg = "正在分析您的問題..."
         for i in range(1, len(status_msg) + 1):
             yield status_msg[:i]
@@ -199,7 +272,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             
         intent_classifier = get_intent_classifier()
         if intent_classifier:
-            intent_result = await intent_classifier.classify(message)
+            intent_result = await intent_classifier.classify(rewritten_query)
             print(f"Intent classification: {intent_result}")
 
             # If question is not relevant, return early with helpful message
@@ -213,8 +286,8 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         yield "正在從知識庫檢索相關資訊..."
         embeddings = get_embeddings()
         
-        # Generate embedding for the incoming question (needed for both cache and RAG)
-        question_embedding = await embeddings.aembed_query(message)
+        # Generate embedding for the rewritten query (needed for both cache and RAG)
+        question_embedding = await embeddings.aembed_query(rewritten_query)
         
         # Try to get cached response if cache is enabled
         if CACHE_ENABLED:
@@ -281,12 +354,13 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         
         # Cache miss or cache disabled - proceed with normal RAG pipeline
         yield "正在優化檢索結果 (Reranking)..."
-        context_bundle = await get_retrieval_chain().ainvoke(message)
+        context_bundle = await get_retrieval_chain().ainvoke(rewritten_query)
         context = context_bundle.get("context", "")
         contexts = context_bundle.get("contexts", [])
 
         yield "正在生成回答..."
-        async for chunk in get_generation_chain().astream({"context": context, "question": message}):
+        history_text = format_history(history)
+        async for chunk in get_generation_chain().astream({"context": context, "question": message, "history": history_text}):
             full_response += chunk
 
         pii_hit, pii_type = detect_pii(full_response)
