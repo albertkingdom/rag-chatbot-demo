@@ -39,6 +39,20 @@ q = Queue(connection=conn)
 # Singleton for BGE-Reranker model
 _reranker = None
 
+def _get_optimal_device():
+    """自動偵測最佳運算裝置（CUDA > MPS > CPU）。"""
+    import torch
+    if torch.cuda.is_available():
+        device = "cuda"
+        print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+        print("Using Apple Silicon MPS acceleration")
+    else:
+        device = "cpu"
+        print("Using CPU")
+    return device
+
 def get_reranker_model():
     """取得底層的 CrossEncoder 模型實體。"""
     global _reranker
@@ -47,12 +61,14 @@ def get_reranker_model():
         model_dir = os.path.join(os.getcwd(), "models")
         os.makedirs(model_dir, exist_ok=True)
 
+        device = _get_optimal_device()
+        
         # Load the CrossEncoder model
         _reranker = HuggingFaceCrossEncoder(
             model_name="BAAI/bge-reranker-v2-m3",
-            model_kwargs={"device": "cpu", "cache_folder": model_dir}
+            model_kwargs={"device": device, "cache_folder": model_dir}
         )
-        print("BGE-Reranker model initialized successfully.")
+        print(f"BGE-Reranker model initialized successfully on {device}.")
     return _reranker
 
 # Singleton for Intent Classifier
