@@ -23,7 +23,7 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 
 - **Intent Classification Layer**: Uses **Gemini 2.5 Flash** to filter off-topic questions before retrieval (95%+ accuracy, <400ms latency, ~$0.0001/query).
 - **Query Rewriting**: Automatically rewrites follow-up questions into standalone queries using LLM, enabling accurate retrieval for contextual multi-turn conversations.
-- **Response Guardrail**: Multi-layer protection including input injection detection, BGE Reranker-based context similarity validation, and PII/injection scanning on responses.
+- **Response Guardrail**: Multi-layer protection including input injection detection and PII/injection scanning on responses.
 - **Asynchronous Task Queue**: Uses **Redis Queue (RQ)** to run heavy tasks (e.g., knowledge base sync) in a background `worker` process, ensuring a responsive UI.
 - **Hybrid BOM Mapping**: A 3-stage process (rules, fuzzy matching, and LLM-based classification) provides highly accurate header mapping.
 - **Efficient Vector Sync**: Performs an incremental sync with **Pinecone**, only updating new or changed data instead of full rebuilds.

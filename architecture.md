@@ -69,7 +69,6 @@ flowchart TB
 *   **生成模型**: 採用 **Gemini 2.5 Flash (via OpenRouter)**，具備高效能與長上下文處理能力。
 
 ### 4. **回覆防護層 (Response Guardrail)**
-*   **Context 支持度**: 比對「回答 vs. 每篇 Context」的向量相似度，低於門檻則阻擋。
 *   **PII / 注入掃描**: 偵測回覆是否包含個資或提示注入內容，命中即阻擋。
 *   **安全回覆**: 回覆統一的安全訊息，並記錄 guardrail metadata 以供追蹤。
 
@@ -92,7 +91,7 @@ flowchart LR
         direction LR
         Search[向量檢索<br/>k=10] --> Rerank[BGE 重排<br/>篩選 Top 3]
         Rerank --> Gen[Gemini 2.5<br/>via OpenRouter<br/>生成回答]
-        Gen --> GuardDeep[Guardrail<br/>Context 相似度 + PII/注入]
+        Gen --> GuardDeep[Guardrail<br/>PII/注入]
     end
 
     Cache -- Miss --> Search
@@ -205,7 +204,7 @@ sequenceDiagram
                 B-->>F: Top 3 Docs
                 F->>G: Generate Answer (with History Context)
                 G-->>F: Streaming Response
-                F->>GR: Context Similarity + PII/Injection
+                F->>GR: PII/Injection
                 GR-->>F: Allow/Block
                 F->>R: Store in Cache
                 F-->>U: Stream Answer
@@ -222,7 +221,6 @@ sequenceDiagram
 | Reranking | Top N | 3 |
 | Semantic Cache | Threshold | 0.95 |
 | Semantic Cache | TTL | 24 hours |
-| Guardrail | Context Similarity (per-context max) | 0.3 |
 | Embedding | Dimensions | 1536 |
 | Embedding | Batch Size | 100 docs/call |
 | Vector Upsert | Batch Size | 100 vectors/batch |
