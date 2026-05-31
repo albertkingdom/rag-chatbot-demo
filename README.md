@@ -7,6 +7,7 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 ## ✨ Features
 
 - **Conversational AI**: An advanced RAG chatbot that answers questions about a carbon management system, based on a knowledge base built from user manuals.
+- **Multi-Turn Conversation**: Intelligent query rewriting and conversation history context, enabling natural follow-up questions like "4.2 呢？" after discussing "類別 4.1 排放".
 - **Intent Classification**: Intelligent filtering that identifies off-topic questions before retrieval, saving costs and improving user experience with helpful guidance.
 - **Streaming Responses**: The chatbot provides answers token-by-token, offering a real-time, interactive user experience.
 - **Intelligent BOM Mapping**: A hybrid tool that uses a combination of rule-based matching, fuzzy string matching, and Large Language Models (LLM) to map BOM file headers to a standardized format.
@@ -21,6 +22,7 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 ## 💡 Key Technical Highlights
 
 - **Intent Classification Layer**: Uses **Gemini 2.5 Flash** to filter off-topic questions before retrieval (95%+ accuracy, <400ms latency, ~$0.0001/query).
+- **Query Rewriting**: Automatically rewrites follow-up questions into standalone queries using LLM, enabling accurate retrieval for contextual multi-turn conversations.
 - **Response Guardrail**: Multi-layer protection including input injection detection, BGE Reranker-based context similarity validation, and PII/injection scanning on responses.
 - **Asynchronous Task Queue**: Uses **Redis Queue (RQ)** to run heavy tasks (e.g., knowledge base sync) in a background `worker` process, ensuring a responsive UI.
 - **Hybrid BOM Mapping**: A 3-stage process (rules, fuzzy matching, and LLM-based classification) provides highly accurate header mapping.

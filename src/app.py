@@ -258,6 +258,14 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         # Step 0a: Input guardrail - block prompt injection before hitting LLM
         injection_hit, _ = detect_prompt_injection(message)
         if injection_hit:
+            db = get_conversation_db()
+            db.save_conversation(
+                user_question=message,
+                assistant_response=get_guardrail_message(),
+                session_id=session_id,
+                response_source="guardrail",
+                metadata={"injection_pattern": "input_injection"}
+            )
             yield get_guardrail_message()
             return
 
@@ -278,6 +286,14 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             # If question is not relevant, return early with helpful message
             if not intent_result["relevant"] or intent_result["confidence"] < 0.7:
                 off_topic_message = intent_classifier.get_off_topic_message()
+                db = get_conversation_db()
+                db.save_conversation(
+                    user_question=message,
+                    assistant_response=off_topic_message,
+                    session_id=session_id,
+                    response_source="off_topic",
+                    intent_classification=intent_result,
+                )
                 for i in range(1, len(off_topic_message) + 1):
                     yield off_topic_message[:i]
                     await asyncio.sleep(0.01)

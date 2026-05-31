@@ -49,8 +49,9 @@ flowchart TB
 
 此架構採用 **意圖分類 (Intent Classification)**、**雙層檢索 (Two-Stage Retrieval)** 與 **語義快取 (Semantic Cache)** 技術，確保回應的高精準度與低延遲。
 
-### 0. **輸入防護與意圖分類層 (Input Guard & Intent Filtering)**
+### 0. **輸入防護與查詢理解層 (Input Guard & Query Understanding)**
 *   **輸入端注入偵測**: 在進入任何 LLM 流程前，先對使用者輸入進行 Prompt Injection 掃描，命中即直接阻擋。
+*   **查詢改寫 (Query Rewriting)**: 使用 **Gemini 2.5 Flash** 將多輪對話中的追問（如「4.2 呢？」）改寫為獨立問題（如「類別 4.2 排放是什麼？」），提升檢索準確度。
 *   **問題過濾**: 使用 **Gemini 2.5 Flash** 快速判斷問題是否與碳管理系統相關（信心度閾值 0.7）。
 *   **早期攔截**: 無關問題在檢索前即被攔截，節省 API 成本並提升使用者體驗。
 *   **響應時間**: **< 400ms**，成本 **~$0.0001/query**。
@@ -64,6 +65,7 @@ flowchart TB
 
 ### 3. **多模態生成層 (Generation)**
 *   **上下文合成**: 將 Top 3 文本作為 Context 輸入 LLM。
+*   **對話歷史**: 將最近 3 輪對話加入 prompt，讓 LLM 理解上下文脈絡。
 *   **生成模型**: 採用 **Gemini 2.5 Flash**，具備高效能與長上下文處理能力。
 
 ### 4. **回覆防護層 (Response Guardrail)**
@@ -77,7 +79,9 @@ flowchart LR
     Q([使用者提問]) --> InputGuard{輸入防護<br/>注入偵測}
 
     InputGuard -- 命中 --> Reject([返回提示訊息])
-    InputGuard -- 通過 --> Intent{意圖分類<br/>相關?}
+    InputGuard -- 通過 --> Rewrite[查詢改寫<br/>追問轉獨立問題]
+
+    Rewrite --> Intent{意圖分類<br/>相關?}
 
     Intent -- 無關 --> Reject
     Intent -- 相關 --> Cache{語義快取<br/>命中?}
@@ -108,7 +112,7 @@ flowchart LR
     classDef reject fill:#ffccbc,stroke:#d84315,stroke-width:2px,color:#bf360c
 
     class Q,Ans input
-    class InputGuard,Intent,Cache,Store logic
+    class InputGuard,Rewrite,Intent,Cache,Store logic
     class Search,Rerank,Gen,GuardDeep,GuardCache core
     class Redis storage
     class Reject reject
@@ -179,6 +183,8 @@ sequenceDiagram
     alt Injection Detected
         F-->>U: Return Guardrail Message
     else Passed
+        F->>G: Query Rewriting (Gemini)
+        G-->>F: Standalone Query
         F->>F: Intent Classification (Gemini)
         F-->>U: Off-topic → Return Guidance
 
@@ -197,7 +203,7 @@ sequenceDiagram
                 P-->>F: 10 Candidates
                 F->>B: Rerank
                 B-->>F: Top 3 Docs
-                F->>G: Generate Answer
+                F->>G: Generate Answer (with History Context)
                 G-->>F: Streaming Response
                 F->>GR: Context Similarity + PII/Injection
                 GR-->>F: Allow/Block
@@ -222,6 +228,7 @@ sequenceDiagram
 | Vector Upsert | Batch Size | 100 vectors/batch |
 | LLM | Model | gemini-2.5-flash |
 | LLM | Temperature | 0 |
+| Conversation History | Max Turns | 3 |
 
 ## Performance Optimizations
 
