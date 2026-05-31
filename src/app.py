@@ -492,10 +492,17 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
         gr.ChatInterface(
             chat_stream,
             chatbot=gr.Chatbot(height=500),
-            textbox=gr.Textbox(placeholder="Ask me about the user manual...", container=False, scale=7),
-            title="User Manual Q&A",
-            description="Ask questions about the carbon management system.",
-            examples=["What is the purpose of this system?", "How do I calculate carbon emissions?"],
+            textbox=gr.Textbox(placeholder="詢問碳管理系統相關問題...", container=False, scale=7),
+            title="碳管理系統智慧助手",
+            description="基於操作手冊的 RAG 問答系統，支援多輪對話",
+            examples=[
+                "忘記密碼怎麼辦？",
+                "如何在多廠區管理中切換邊界？",
+                "什麼是固定式燃料源排放？",
+                "報告和清冊的格式是什麼？",
+                "系統有哪些角色？",
+                "門檻值設定該如何填寫？",
+            ],
         )
 
     with gr.Tab("BOM Header Mapper"):
