@@ -383,7 +383,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         injection_hit, injection_pattern = detect_prompt_injection(full_response)
         reranker = get_reranker_model()
         supported, similarity = check_context_similarity(
-            full_response,
+            rewritten_query,
             contexts,
             reranker,
         )
