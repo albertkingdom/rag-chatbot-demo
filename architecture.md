@@ -49,7 +49,8 @@ flowchart TB
 
 此架構採用 **意圖分類 (Intent Classification)**、**雙層檢索 (Two-Stage Retrieval)** 與 **語義快取 (Semantic Cache)** 技術，確保回應的高精準度與低延遲。
 
-### 0. **意圖分類層 (Intent Filtering)**
+### 0. **輸入防護與意圖分類層 (Input Guard & Intent Filtering)**
+*   **輸入端注入偵測**: 在進入任何 LLM 流程前，先對使用者輸入進行 Prompt Injection 掃描，命中即直接阻擋。
 *   **問題過濾**: 使用 **Gemini 2.5 Flash** 快速判斷問題是否與碳管理系統相關（信心度閾值 0.7）。
 *   **早期攔截**: 無關問題在檢索前即被攔截，節省 API 成本並提升使用者體驗。
 *   **響應時間**: **< 400ms**，成本 **~$0.0001/query**。
@@ -73,9 +74,12 @@ flowchart TB
 ```mermaid
 flowchart LR
     %% 方向與元件定義
-    Q([使用者提問]) --> Intent{意圖分類<br/>相關?}
+    Q([使用者提問]) --> InputGuard{輸入防護<br/>注入偵測}
 
-    Intent -- 無關 --> Reject([返回提示訊息])
+    InputGuard -- 命中 --> Reject([返回提示訊息])
+    InputGuard -- 通過 --> Intent{意圖分類<br/>相關?}
+
+    Intent -- 無關 --> Reject
     Intent -- 相關 --> Cache{語義快取<br/>命中?}
 
     Redis[(Redis<br/>Semantic Cache)] <--> Cache
@@ -104,7 +108,7 @@ flowchart LR
     classDef reject fill:#ffccbc,stroke:#d84315,stroke-width:2px,color:#bf360c
 
     class Q,Ans input
-    class Intent,Cache,Store logic
+    class InputGuard,Intent,Cache,Store logic
     class Search,Rerank,Gen,GuardDeep,GuardCache core
     class Redis storage
     class Reject reject
@@ -169,26 +173,38 @@ sequenceDiagram
     participant GR as Guardrail
 
     U->>F: Submit Question
-    F->>O: Generate Embedding
-    O-->>F: 1536-dim Vector
-    F->>R: Check Cache
+    F->>GR: Input Injection Scan
+    GR-->>F: Allow/Block
 
-    alt Cache Hit
-        R-->>F: Cached Response
-        F->>GR: PII/Injection Scan
-        GR-->>F: Allow/Block
-        F-->>U: Return Answer
-    else Cache Miss
-        F->>P: Query (k=10)
-        P-->>F: 10 Candidates
-        F->>B: Rerank
-        B-->>F: Top 3 Docs
-        F->>G: Generate Answer
-        G-->>F: Streaming Response
-        F->>GR: Context Similarity + PII/Injection
-        GR-->>F: Allow/Block
-        F->>R: Store in Cache
-        F-->>U: Stream Answer
+    alt Injection Detected
+        F-->>U: Return Guardrail Message
+    else Passed
+        F->>F: Intent Classification (Gemini)
+        F-->>U: Off-topic → Return Guidance
+
+        alt Relevant
+            F->>O: Generate Embedding
+            O-->>F: 1536-dim Vector
+            F->>R: Check Cache
+
+            alt Cache Hit
+                R-->>F: Cached Response
+                F->>GR: PII/Injection Scan
+                GR-->>F: Allow/Block
+                F-->>U: Return Answer
+            else Cache Miss
+                F->>P: Query (k=10)
+                P-->>F: 10 Candidates
+                F->>B: Rerank
+                B-->>F: Top 3 Docs
+                F->>G: Generate Answer
+                G-->>F: Streaming Response
+                F->>GR: Context Similarity + PII/Injection
+                GR-->>F: Allow/Block
+                F->>R: Store in Cache
+                F-->>U: Stream Answer
+            end
+        end
     end
 ```
 
@@ -200,7 +216,7 @@ sequenceDiagram
 | Reranking | Top N | 3 |
 | Semantic Cache | Threshold | 0.85 |
 | Semantic Cache | TTL | 24 hours |
-| Guardrail | Context Similarity (per-context max) | 0.72 |
+| Guardrail | Context Similarity (per-context max) | 0.3 |
 | Embedding | Dimensions | 1536 |
 | Embedding | Batch Size | 100 docs/call |
 | Vector Upsert | Batch Size | 100 vectors/batch |
@@ -215,12 +231,12 @@ The `sync_vector_store()` function has been optimized for high-throughput docume
 
 **Key Improvements:**
 
-1. **Batch Embedding API** (`build_vector_store.py:127-129`)
+1. **Batch Embedding API** (`build_vector_store.py:146-147`)
    - **Before**: Sequential API calls - one embedding per document (~300ms each)
    - **After**: Batch API calls - 100 embeddings per request
    - **Impact**: 10-50x faster for large document sets
 
-2. **Progress Tracking** (`build_vector_store.py:125, 138`)
+2. **Progress Tracking** (`build_vector_store.py:143, 156`)
    - Real-time progress indicators during sync
    - Percentage completion and batch-level updates
    - Improved user experience for long-running operations

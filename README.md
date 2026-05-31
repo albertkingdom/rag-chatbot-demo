@@ -21,11 +21,14 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 ## 💡 Key Technical Highlights
 
 - **Intent Classification Layer**: Uses **Gemini 2.5 Flash** to filter off-topic questions before retrieval (95%+ accuracy, <400ms latency, ~$0.0001/query).
+- **Response Guardrail**: Multi-layer protection including input injection detection, BGE Reranker-based context similarity validation, and PII/injection scanning on responses.
 - **Asynchronous Task Queue**: Uses **Redis Queue (RQ)** to run heavy tasks (e.g., knowledge base sync) in a background `worker` process, ensuring a responsive UI.
 - **Hybrid BOM Mapping**: A 3-stage process (rules, fuzzy matching, and LLM-based classification) provides highly accurate header mapping.
 - **Efficient Vector Sync**: Performs an incremental sync with **Pinecone**, only updating new or changed data instead of full rebuilds.
 - **Dual AI Model Strategy**: Uses **OpenAI** for high-quality embeddings and **Google Gemini 2.5 Flash** for fast, versatile chat and data analysis.
 - **Semantic Cache Layer**: Implemented a cosine-similarity based cache in Redis to intercept similar questions, significantly decreasing latency and token consumption.
+- **Conversation Logging**: All conversations are persisted to **MongoDB** with metadata including response source, intent classification, and cache hit status.
+- **Observability**: Full tracing via **LangSmith** across the RAG pipeline (intent classification, reranking, retrieval, and generation).
 
 
 ---
@@ -36,6 +39,9 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 - **Web UI**: Gradio
 - **Vector Database**: Pinecone
 - **AI Models**: OpenAI, Google Gemini
+- **Reranking**: BGE Reranker v2-m3 (HuggingFace Cross-Encoder)
+- **Observability**: LangSmith
+- **Conversation Storage**: MongoDB
 - **Task Queue**: Redis Queue (RQ)
 - **Message Broker**: Redis
 - **Containerization**: Docker & Docker Compose
@@ -47,8 +53,11 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 The system uses a decoupled architecture orchestrated by Docker Compose:
 
 - **`web`**: FastAPI/Gradio UI. Enqueues jobs to Redis.
-- **`redis`**: Message broker holding the task queue.
+- **`redis`**: Message broker holding the task queue and semantic cache.
 - **`worker`**: Background RQ worker that executes heavy tasks.
+- **`mongodb`**: Conversation logging database.
+- **`mongo-express`**: Web-based MongoDB admin GUI (port 8081).
+- **`redis-insight`**: Redis GUI for inspecting the prompt cache (port 8001).
 
 👉 **[查看完整 RAG 架構圖](architecture.md)**
 
@@ -69,6 +78,11 @@ Clone the repository and create a `.env` file in the project root:
 OPENAI_API_KEY="your_openai_api_key_here"
 PINECONE_API_KEY="your_pinecone_api_key_here"
 GOOGLE_API_KEY="your_google_api_key_here"
+
+# Optional: LangSmith observability
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY="your_langchain_api_key_here"
+LANGCHAIN_PROJECT="carbon-assistant"
 ```
 
 ### 2. Launch the Application
@@ -81,6 +95,7 @@ docker-compose up --build
 
 - **Main Application**: [http://localhost:8000](http://localhost:8000)
 - **Redis GUI (RedisInsight)**: [http://localhost:8001](http://localhost:8001) - Use this to inspect the prompt cache.
+- **MongoDB GUI (Mongo Express)**: [http://localhost:8081](http://localhost:8081) - Use this to inspect conversation logs.
 
 ---
 
