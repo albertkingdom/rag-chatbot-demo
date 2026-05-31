@@ -25,7 +25,6 @@ from .cache_service import PromptCacheService
 from .intent_classifier import IntentClassifier
 from .conversation_db import get_conversation_db
 from .guardrails import (
-    check_context_similarity,
     detect_pii,
     detect_prompt_injection,
     get_guardrail_message,
@@ -161,8 +160,7 @@ _QA_PROMPT = PromptTemplate.from_template(
 def _format_docs(outputs):
     docs = outputs["docs"]
     contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
-    context_questions = [doc.metadata.get("text", "") for doc in docs if doc.metadata.get("text")]
-    return {"context": "\n\n".join(contexts), "contexts": contexts, "context_questions": context_questions}
+    return {"context": "\n\n".join(contexts), "contexts": contexts}
 
 
 def _parse_history_turns(history: list, max_turns: int = 3) -> list:
@@ -385,7 +383,6 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         context_bundle = await get_retrieval_chain().ainvoke(rewritten_query)
         context = context_bundle.get("context", "")
         contexts = context_bundle.get("contexts", [])
-        context_questions = context_bundle.get("context_questions", [])
 
         yield "正在生成回答..."
         history_text = format_history(history)
@@ -394,22 +391,14 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
 
         pii_hit, pii_type = detect_pii(full_response)
         injection_hit, injection_pattern = detect_prompt_injection(full_response)
-        reranker = get_reranker_model()
-        supported, similarity = await asyncio.to_thread(
-            check_context_similarity,
-            rewritten_query,
-            context_questions,
-            reranker,
-        )
 
-        if pii_hit or injection_hit or not supported:
+        if pii_hit or injection_hit:
             guardrail_message = get_guardrail_message()
             print(
                 "[Guardrail] Blocked response:",
                 {
                     "pii": pii_type if pii_hit else None,
                     "injection": injection_pattern if injection_hit else None,
-                    "context_similarity": similarity,
                 },
             )
             db = get_conversation_db()
@@ -423,7 +412,6 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 metadata={
                     "pii_type": pii_type if pii_hit else None,
                     "injection_pattern": injection_pattern if injection_hit else None,
-                    "context_similarity": similarity,
                 },
             )
             for i in range(1, len(guardrail_message) + 1):
