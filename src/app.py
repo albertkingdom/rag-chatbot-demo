@@ -161,12 +161,11 @@ _QA_PROMPT = PromptTemplate.from_template(
 def _format_docs(outputs):
     docs = outputs["docs"]
     contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
-    return {"context": "\n\n".join(contexts), "contexts": contexts}
+    context_questions = [doc.metadata.get("text", "") for doc in docs if doc.metadata.get("text")]
+    return {"context": "\n\n".join(contexts), "contexts": contexts, "context_questions": context_questions}
 
 
-def format_history(history: list, max_turns: int = 3) -> str:
-    if not history:
-        return ""
+def _parse_history_turns(history: list, max_turns: int = 3) -> list:
     turns = []
     i = 0
     while i < len(history) - 1:
@@ -178,9 +177,15 @@ def format_history(history: list, max_turns: int = 3) -> str:
                 i += 2
                 continue
         i += 1
-    if not turns:
+    return turns[-max_turns:] if turns else []
+
+
+def format_history(history: list, max_turns: int = 3) -> str:
+    if not history:
         return ""
-    recent = turns[-max_turns:]
+    recent = _parse_history_turns(history, max_turns)
+    if not recent:
+        return ""
     lines = ["\n\n        Previous conversation:"]
     for user_msg, bot_msg in recent:
         lines.append(f"        User: {user_msg}")
@@ -193,22 +198,10 @@ async def rewrite_query(message: str, history: list, max_turns: int = 3) -> str:
     if not history:
         return message
     
-    turns = []
-    i = 0
-    while i < len(history) - 1:
-        msg = history[i]
-        next_msg = history[i + 1]
-        if isinstance(msg, dict) and isinstance(next_msg, dict):
-            if msg.get("role") == "user" and next_msg.get("role") == "assistant":
-                turns.append((msg["content"], next_msg["content"]))
-                i += 2
-                continue
-        i += 1
-    
-    if not turns:
+    recent = _parse_history_turns(history, max_turns)
+    if not recent:
         return message
     
-    recent = turns[-max_turns:]
     history_text = "\n".join([f"User: {u}\nAssistant: {a}" for u, a in recent])
     
     prompt = f"""Given the conversation history and the follow-up question, rewrite the question into a standalone question that can be understood without the conversation context.
@@ -278,7 +271,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         injection_hit, _ = detect_prompt_injection(message)
         if injection_hit:
             db = get_conversation_db()
-            db.save_conversation(
+            await db.async_save_conversation(
                 user_question=message,
                 assistant_response=get_guardrail_message(),
                 session_id=session_id,
@@ -306,7 +299,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             if not intent_result["relevant"] or intent_result["confidence"] < 0.7:
                 off_topic_message = intent_classifier.get_off_topic_message()
                 db = get_conversation_db()
-                db.save_conversation(
+                await db.async_save_conversation(
                     user_question=message,
                     assistant_response=off_topic_message,
                     session_id=session_id,
@@ -350,7 +343,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                         },
                     )
                     db = get_conversation_db()
-                    db.save_conversation(
+                    await db.async_save_conversation(
                         user_question=message,
                         assistant_response=guardrail_message,
                         session_id=session_id,
@@ -371,7 +364,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 
                 # Record the CACHED conversation to MongoDB
                 db = get_conversation_db()
-                db.save_conversation(
+                await db.async_save_conversation(
                     user_question=message,
                     assistant_response=cached_answer,
                     session_id=session_id,
@@ -392,6 +385,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         context_bundle = await get_retrieval_chain().ainvoke(rewritten_query)
         context = context_bundle.get("context", "")
         contexts = context_bundle.get("contexts", [])
+        context_questions = context_bundle.get("context_questions", [])
 
         yield "正在生成回答..."
         history_text = format_history(history)
@@ -401,9 +395,10 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         pii_hit, pii_type = detect_pii(full_response)
         injection_hit, injection_pattern = detect_prompt_injection(full_response)
         reranker = get_reranker_model()
-        supported, similarity = check_context_similarity(
+        supported, similarity = await asyncio.to_thread(
+            check_context_similarity,
             rewritten_query,
-            contexts,
+            context_questions,
             reranker,
         )
 
@@ -418,7 +413,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 },
             )
             db = get_conversation_db()
-            db.save_conversation(
+            await db.async_save_conversation(
                 user_question=message,
                 assistant_response=guardrail_message,
                 session_id=session_id,
@@ -451,7 +446,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             
         # Record the RAG conversation to MongoDB
         db = get_conversation_db()
-        db.save_conversation(
+        await db.async_save_conversation(
             user_question=message,
             assistant_response=full_response,
             session_id=session_id,

@@ -72,19 +72,21 @@ class PromptCacheService:
             if not cache_keys:
                 return None
             
+            # Batch fetch all cached entries in a single Redis round-trip
+            keys_to_check = list(cache_keys)[:CACHE_MAX_SEARCH_RESULTS]
+            pipe = self.redis.pipeline()
+            for key in keys_to_check:
+                pipe.get(key)
+            cached_values = pipe.execute()
+            
             best_match = None
             best_similarity = threshold
+            best_match_key = None
+            expired_keys = []
             
-            # Search through cached entries for similar questions
-            # Limit search to recent entries for performance
-            for i, cache_key in enumerate(cache_keys):
-                if i >= CACHE_MAX_SEARCH_RESULTS:
-                    break
-                
-                cached_data_json = self.redis.get(cache_key)
+            for cache_key, cached_data_json in zip(keys_to_check, cached_values):
                 if not cached_data_json:
-                    # Key expired, remove from index
-                    self.redis.srem(self.CACHE_INDEX_KEY, cache_key)
+                    expired_keys.append(cache_key)
                     continue
                 
                 cached_data = json.loads(cached_data_json)
@@ -105,6 +107,10 @@ class PromptCacheService:
                         "hit_count": cached_data.get("hit_count", 0)
                     }
                     best_match_key = cache_key
+            
+            # Clean up expired keys in batch
+            if expired_keys:
+                self.redis.srem(self.CACHE_INDEX_KEY, *expired_keys)
             
             if best_match:
                 # Increment hit count

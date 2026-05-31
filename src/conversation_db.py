@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -50,6 +51,9 @@ class ConversationDatabase:
         
         result = self.collection.insert_one(document)
         return str(result.inserted_id)
+
+    async def async_save_conversation(self, **kwargs) -> str:
+        return await asyncio.to_thread(self.save_conversation, **kwargs)
 
     def get_recent_conversations(self, limit: int = 10) -> List[Dict[str, Any]]:
         """

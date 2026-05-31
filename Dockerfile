@@ -17,4 +17,6 @@ COPY . .
 EXPOSE 80
 
 # Run app.py when the container launches
+# Single worker with async event loop (Gradio requires shared state)
+# CPU-bound operations use asyncio.to_thread() to avoid blocking
 CMD ["uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "80"]
