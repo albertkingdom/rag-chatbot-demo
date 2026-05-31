@@ -5,7 +5,7 @@ Filters out off-topic questions before entering the RAG pipeline.
 import os
 from typing import Dict, Any
 from pydantic import BaseModel, Field
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langsmith import traceable
 
 
@@ -42,15 +42,16 @@ class IntentClassifier:
 - 閒聊或問候語（除非緊接著詢問系統問題）
 """
 
-    def __init__(self, google_api_key: str = None):
-        api_key = google_api_key or os.environ.get("GOOGLE_API_KEY")
+    def __init__(self, openrouter_api_key: str = None):
+        api_key = openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY must be provided or set in environment")
+            raise ValueError("OPENROUTER_API_KEY must be provided or set in environment")
 
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+        llm = ChatOpenAI(
+            model="google/gemini-2.5-flash",
             temperature=0,
-            google_api_key=api_key,
+            openai_api_key=api_key,
+            openai_api_base="https://openrouter.ai/api/v1",
         )
         self.structured_llm = llm.with_structured_output(IntentResult)
 

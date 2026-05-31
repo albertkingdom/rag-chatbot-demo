@@ -4,7 +4,7 @@ import os
 from collections import defaultdict
 from typing import Dict, List, Union
 import traceback
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from fuzzywuzzy import fuzz
 import pandas as pd
@@ -12,8 +12,13 @@ from pydantic import BaseModel, Field
 from langsmith import traceable
 
 # 初始化 LangChain LLM
-API_KEY = os.getenv("GOOGLE_API_KEY")
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=API_KEY) if API_KEY else None
+API_KEY = os.getenv("OPENROUTER_API_KEY")
+llm = ChatOpenAI(
+    model="google/gemini-2.5-flash",
+    temperature=0,
+    openai_api_key=API_KEY,
+    openai_api_base="https://openrouter.ai/api/v1",
+) if API_KEY else None
 
 # 根據 Product Requirements Document.docx.pdf 定義系統的五個標準欄位
 SYSTEM_CATEGORIES = {

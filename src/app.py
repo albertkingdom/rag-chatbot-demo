@@ -12,8 +12,7 @@ import traceback
 import asyncio
 from langsmith import traceable
 
-from langchain_openai import OpenAIEmbeddings
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
@@ -64,11 +63,11 @@ def get_intent_classifier():
     global _intent_classifier
     if _intent_classifier is None:
         print("Initializing Intent Classifier...")
-        GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-        if not GOOGLE_API_KEY:
-            print("Warning: GOOGLE_API_KEY not found. Intent classification will be disabled.")
+        OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+        if not OPENROUTER_API_KEY:
+            print("Warning: OPENROUTER_API_KEY not found. Intent classification will be disabled.")
             return None
-        _intent_classifier = IntentClassifier(google_api_key=GOOGLE_API_KEY)
+        _intent_classifier = IntentClassifier(openrouter_api_key=OPENROUTER_API_KEY)
         print("Intent Classifier initialized successfully.")
     return _intent_classifier
 
@@ -91,11 +90,15 @@ def get_embeddings():
 def get_llm():
     global _llm
     if _llm is None:
-        GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-        if not GOOGLE_API_KEY:
-            raise ValueError("GOOGLE_API_KEY not configured")
-        _llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash", temperature=0, streaming=True, google_api_key=GOOGLE_API_KEY
+        OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+        if not OPENROUTER_API_KEY:
+            raise ValueError("OPENROUTER_API_KEY not configured")
+        _llm = ChatOpenAI(
+            model="google/gemini-2.5-flash",
+            temperature=0,
+            streaming=True,
+            openai_api_key=OPENROUTER_API_KEY,
+            openai_api_base="https://openrouter.ai/api/v1",
         )
     return _llm
 
