@@ -24,7 +24,7 @@ flowchart TB
         OpenAI[OpenAI<br/>Embeddings]
         Pinecone[(Pinecone<br/>Vector DB)]
         HuggingFace[BGE Reranker<br/>v2-m3]
-        Gemini[Gemini 2.5 Flash]
+        OpenRouter[OpenRouter<br/>Gemini 2.5 Flash]
         LangSmith[LangSmith]
     end
 
@@ -35,7 +35,7 @@ flowchart TB
     ChatStream --> OpenAI
     ChatStream --> Pinecone
     ChatStream --> HuggingFace
-    ChatStream --> Gemini
+    ChatStream --> OpenRouter
     ChatStream --> Guardrail
     ChatStream -.-> LangSmith
 
@@ -51,13 +51,13 @@ flowchart TB
 
 ### 0. **輸入防護與查詢理解層 (Input Guard & Query Understanding)**
 *   **輸入端注入偵測**: 在進入任何 LLM 流程前，先對使用者輸入進行 Prompt Injection 掃描，命中即直接阻擋。
-*   **查詢改寫 (Query Rewriting)**: 使用 **Gemini 2.5 Flash** 將多輪對話中的追問（如「4.2 呢？」）改寫為獨立問題（如「類別 4.2 排放是什麼？」），提升檢索準確度。
-*   **問題過濾**: 使用 **Gemini 2.5 Flash** 快速判斷問題是否與碳管理系統相關（信心度閾值 0.7）。
+*   **查詢改寫 (Query Rewriting)**: 使用 **Gemini 2.5 Flash (via OpenRouter)** 將多輪對話中的追問（如「4.2 呢？」）改寫為獨立問題（如「類別 4.2 排放是什麼？」），提升檢索準確度。
+*   **問題過濾**: 使用 **Gemini 2.5 Flash (via OpenRouter)** 快速判斷問題是否與碳管理系統相關（信心度閾值 0.7）。
 *   **早期攔截**: 無關問題在檢索前即被攔截，節省 API 成本並提升使用者體驗。
 *   **響應時間**: **< 400ms**，成本 **~$0.0001/query**。
 
 ### 1. **快速響應層 (Fast Path)**
-*   **語義快取 (Semantic Cache)**: 使用 **Redis** 儲存過往問答，當新問題相似度 **> 0.85** 時直接回傳，響應時間 **< 50ms**。
+*   **語義快取 (Semantic Cache)**: 使用 **Redis** 儲存過往問答，當新問題相似度 **> 0.95** 時直接回傳，響應時間 **< 50ms**。
 
 ### 2. **深度檢索層 (Deep Path)**
 *   **向量檢索 (Recall)**: 從 **Pinecone** 提取前 **10 筆** 最相關候選文件 (OpenAI Embeddings)。
@@ -66,7 +66,7 @@ flowchart TB
 ### 3. **多模態生成層 (Generation)**
 *   **上下文合成**: 將 Top 3 文本作為 Context 輸入 LLM。
 *   **對話歷史**: 將最近 3 輪對話加入 prompt，讓 LLM 理解上下文脈絡。
-*   **生成模型**: 採用 **Gemini 2.5 Flash**，具備高效能與長上下文處理能力。
+*   **生成模型**: 採用 **Gemini 2.5 Flash (via OpenRouter)**，具備高效能與長上下文處理能力。
 
 ### 4. **回覆防護層 (Response Guardrail)**
 *   **Context 支持度**: 比對「回答 vs. 每篇 Context」的向量相似度，低於門檻則阻擋。
@@ -91,7 +91,7 @@ flowchart LR
     subgraph RAG ["深度檢索與生成流程"]
         direction LR
         Search[向量檢索<br/>k=10] --> Rerank[BGE 重排<br/>篩選 Top 3]
-        Rerank --> Gen[Gemini 2.5<br/>生成回答]
+        Rerank --> Gen[Gemini 2.5<br/>via OpenRouter<br/>生成回答]
         Gen --> GuardDeep[Guardrail<br/>Context 相似度 + PII/注入]
     end
 
@@ -220,7 +220,7 @@ sequenceDiagram
 |-----------|-----------|-------|
 | Vector Retrieval | k | 10 |
 | Reranking | Top N | 3 |
-| Semantic Cache | Threshold | 0.85 |
+| Semantic Cache | Threshold | 0.95 |
 | Semantic Cache | TTL | 24 hours |
 | Guardrail | Context Similarity (per-context max) | 0.3 |
 | Embedding | Dimensions | 1536 |

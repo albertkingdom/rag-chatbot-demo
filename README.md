@@ -40,7 +40,7 @@ A containerized web app with a RAG chatbot for Q&A and a smart BOM header mappin
 - **Backend**: FastAPI
 - **Web UI**: Gradio
 - **Vector Database**: Pinecone
-- **AI Models**: OpenAI, Google Gemini
+- **AI Models**: OpenAI (Embeddings), OpenRouter (Gemini 2.5 Flash for chat)
 - **Reranking**: BGE Reranker v2-m3 (HuggingFace Cross-Encoder)
 - **Observability**: LangSmith
 - **Conversation Storage**: MongoDB
@@ -80,6 +80,7 @@ Clone the repository and create a `.env` file in the project root:
 OPENAI_API_KEY="your_openai_api_key_here"
 PINECONE_API_KEY="your_pinecone_api_key_here"
 GOOGLE_API_KEY="your_google_api_key_here"
+OPENROUTER_API_KEY="your_openrouter_api_key_here"
 
 # Optional: LangSmith observability
 LANGCHAIN_TRACING_V2=true
