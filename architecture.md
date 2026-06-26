@@ -60,8 +60,10 @@ flowchart TB
 *   **語義快取 (Semantic Cache)**: 使用 **Redis** 儲存過往問答，當新問題相似度 **> 0.95** 時直接回傳，響應時間 **< 50ms**。
 
 ### 2. **深度檢索層 (Deep Path)**
-*   **向量檢索 (Recall)**: 從 **Pinecone** 提取前 **10 筆** 最相關候選文件 (OpenAI Embeddings)。
-*   **精準重排 (Reranking)**: 導入 **`BGE Reranker v2-m3`** 對 10 筆文件進行二次評分，篩選最精準的 **Top 3**。
+*   **BM25 關鍵字檢索 (Keyword Recall)**: 以 in-process `rank_bm25` (BM25Okapi) 從本地 BM25 索引提取前 **`BM25_TOP_N`** 筆關鍵字命中候選文件。
+*   **向量檢索 (Dense Recall)**: 從 **Pinecone** 提取前 **`VECTOR_TOP_N`** 筆語意相近候選文件 (OpenAI Embeddings)。
+*   **分數融合 (Fusion)**: 以 **Reciprocal Rank Fusion (RRF)** 將 BM25 與向量兩路排名融合成單一排序列表，取前 **`FUSION_TOP_M`** 筆交予重排器。
+*   **精準重排 (Reranking)**: 導入 **`BGE Reranker v2-m3`** 對融合後 10 筆文件進行二次評分，篩選最精準的 **Top 3**。
 
 ### 3. **多模態生成層 (Generation)**
 *   **上下文合成**: 將 Top 3 文本作為 Context 輸入 LLM。
