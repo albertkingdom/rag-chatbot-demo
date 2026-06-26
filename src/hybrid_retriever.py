@@ -2,11 +2,12 @@
 
 The two retrieval paths run in parallel (``asyncio.gather``); their
 rankings are fused via Reciprocal Rank Fusion (RRF) and the top-M
-fused candidates are handed to the existing BGE Reranker.
+fused candidates are returned to the caller. Reranking is performed by
+a separate downstream stage (see ``rerank_candidates``).
 """
 
 import asyncio
-from typing import Any, Callable
+from typing import Any
 
 from langchain_core.documents import Document
 
@@ -14,26 +15,17 @@ from src.config import FUSION_TOP_M, BM25_TOP_N, VECTOR_TOP_N, RRF_K
 
 
 class HybridRetriever:
-    """Orchestrates BM25 + vector retrieval, RRF fusion, and reranking."""
+    """Orchestrates BM25 + vector retrieval and RRF fusion."""
 
-    def __init__(
-        self,
-        bm25_index,
-        vector_store,
-        reranker_scorer: Callable[[list[tuple[str, str]]], list[float]],
-    ):
+    def __init__(self, bm25_index, vector_store):
         """
         Args:
             bm25_index: a :class:`BM25Index` instance (or compatible).
             vector_store: a LangChain vector store with ``similarity_search``
                 (sync) and ``asimilarity_search`` (async) semantics.
-            reranker_scorer: callable receiving a list of ``(query, text)``
-                pairs and returning a list of float relevance scores
-                (the BGE Reranker ``score`` function).
         """
         self.bm25_index = bm25_index
         self.vector_store = vector_store
-        self.reranker_scorer = reranker_scorer
 
     # ------------------------------------------------------------------
     # RRF
@@ -95,10 +87,9 @@ class HybridRetriever:
         """Run hybrid retrieval and return a result dict.
 
         Returns:
-            ``{"docs": list[Document]          # top 3 after reranking
-               "rerank_scores": list     # per-doc reranker scores
-               "fusion_metadata": dict  # per-stage observability
-              }``
+            ``{"candidates": list[Document]   # top-M fused candidates
+               "fusion_metadata": dict        # per-stage observability
+               }``
         """
         bm25_results: list[tuple[str, float]] = []
         bm25_error: str | None = None
@@ -125,7 +116,7 @@ class HybridRetriever:
         else:
             fused = self._rrf_fuse(bm25_results, vector_results, rrf_k)
 
-        fused = fused[:FUSION_TOP_M]  # NOTE truncate to reranker cap regardless of fallback
+        fused = fused[:FUSION_TOP_M]
 
         # --- Gather candidate Documents --------------------------
         candidates: list[Document] = []
@@ -135,24 +126,6 @@ class HybridRetriever:
                 doc = self._find_in_vector_docs(doc_id, query, vector_top_n)
             if doc is not None:
                 candidates.append(doc)
-
-        # --- Rerank → Top 3 --------------------------------------
-        rerank_scores_raw: list[float] = []
-        if candidates:
-            pairs = [(query, d.page_content) for d in candidates]
-            rerank_scores_raw = list(self.reranker_scorer(pairs))
-
-        reranked = sorted(zip(candidates, rerank_scores_raw), key=lambda x: x[1], reverse=True)[:3]
-        top_docs = [doc for doc, _ in reranked]
-
-        rerank_scores = [
-            {
-                "rank": i + 1,
-                "score": f"{score:.4f}",
-                "content": doc.page_content[:100] + "...",
-            }
-            for i, (doc, score) in enumerate(reranked)
-        ]
 
         # --- Observability metadata ------------------------------
         fusion_metadata: dict[str, Any] = {
@@ -168,20 +141,12 @@ class HybridRetriever:
                 {"doc_id": doc_id, "score": round(score, 6)}
                 for doc_id, score in fused
             ],
-            "rerank_scores": rerank_scores,
         }
         if fallback:
             fusion_metadata["fallback"] = fallback
 
-        # --- Compose context string (same contract as old chain) -
-        context = "\n\n".join(doc.page_content for doc in top_docs)
-        contexts = [doc.page_content for doc in top_docs]
-
         return {
-            "context": context,
-            "contexts": contexts,
-            "docs": top_docs,
-            "rerank_scores": rerank_scores,
+            "candidates": candidates,
             "fusion_metadata": fusion_metadata,
         }
 

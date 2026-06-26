@@ -32,6 +32,7 @@ from .guardrails import (
 from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR, CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD, BM25_TOP_N, VECTOR_TOP_N, RRF_K, FUSION_TOP_M
 from .bm25_index import BM25Index
 from .hybrid_retriever import HybridRetriever
+from .rerank_stage import rerank_candidates
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 conn = redis.from_url(redis_url)
@@ -139,7 +140,6 @@ def get_hybrid_retriever():
         _hybrid_retriever = HybridRetriever(
             bm25_index=get_bm25_index(),
             vector_store=get_vectorstore(),
-            reranker_scorer=get_reranker_model(),
         )
     return _hybrid_retriever
 
@@ -148,16 +148,29 @@ def get_retrieval_chain():
     if _retrieval_chain is None:
         retriever = get_hybrid_retriever()
 
-        async def _hybrid_retrieve(query: str) -> dict:
+        async def _retrieve(query: str) -> dict:
             result = await retriever.retrieve(
                 query,
                 vector_top_n=VECTOR_TOP_N,
                 bm25_top_n=BM25_TOP_N,
                 rrf_k=RRF_K,
             )
-            return _format_docs(result)
+            return {"query": query, **result}
 
-        _retrieval_chain = RunnableLambda(_hybrid_retrieve)
+        def _rerank(payload: dict) -> dict:
+            query = payload["query"]
+            candidates = payload["candidates"]
+            fusion_metadata = payload["fusion_metadata"]
+            ranked = rerank_candidates(query, candidates, get_reranker_model().score)
+            formatted = _format_docs(ranked)
+            return {
+                **formatted,
+                "docs": ranked["docs"],
+                "rerank_scores": ranked["rerank_scores"],
+                "fusion_metadata": fusion_metadata,
+            }
+
+        _retrieval_chain = RunnableLambda(_retrieve) | RunnableLambda(_rerank)
     return _retrieval_chain
 
 def get_generation_chain():
@@ -248,40 +261,6 @@ Rewritten standalone question:"""
     except Exception as e:
         print(f"[Query Rewriting] ERROR: {e}")
         return message
-
-
-@traceable(name="Rerank Analysis")
-def rerank_analysis(docs_and_query):
-    """手動執行重排序並將分數寫入 Metadata，解決套件版本不支援顯示分數的問題。"""
-    docs = docs_and_query["docs"]
-    query = docs_and_query["query"]
-    
-    if not docs:
-        return {"docs": [], "rerank_scores": []}
-
-    model = get_reranker_model()
-    
-    # 手動計算每個文件的分數
-    scores = model.score([(query, doc.page_content) for doc in docs])
-    
-    # 將分數寫回 metadata 並排序
-    for doc, score in zip(docs, scores):
-        doc.metadata["relevance_score"] = float(score)
-    
-    # 根據分數排序並取 Top 3
-    sorted_docs = sorted(docs, key=lambda x: x.metadata["relevance_score"], reverse=True)[:3]
-    
-    # 準備 LangSmith 摘要
-    summary = []
-    for i, doc in enumerate(sorted_docs):
-        score = doc.metadata["relevance_score"]
-        summary.append({
-            "rank": i + 1,
-            "score": f"{score:.4f}",
-            "content": doc.page_content[:100] + "..."
-        })
-    
-    return {"docs": sorted_docs, "rerank_scores": summary}
 
 
 @traceable(name="Carbon Assistant Chat")

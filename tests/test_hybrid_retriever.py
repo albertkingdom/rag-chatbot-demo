@@ -44,28 +44,23 @@ def vector_store():
 
 
 @pytest.fixture
-def reranker_scorer():
-    return MagicMock(return_value=[0.95, 0.80, 0.70, 0.60])
-
-
-@pytest.fixture
-def retriever(bm25_index, vector_store, reranker_scorer):
-    return HybridRetriever(bm25_index, vector_store, reranker_scorer)
+def retriever(bm25_index, vector_store):
+    return HybridRetriever(bm25_index, vector_store)
 
 
 # --- 3.1 Instantiation -----------------------------------------------
 
 
 class TestInstantiation:
-    def test_can_be_instantiated_with_stubs(self, bm25_index, vector_store, reranker_scorer):
-        r = HybridRetriever(bm25_index, vector_store, reranker_scorer)
+    def test_can_be_instantiated_with_stubs(self, bm25_index, vector_store):
+        r = HybridRetriever(bm25_index, vector_store)
         assert r is not None
         assert r.bm25_index is bm25_index
         assert r.vector_store is vector_store
-        assert r.reranker_scorer is reranker_scorer
+        assert not hasattr(r, "reranker_scorer")
 
 
-# --- 3.2 RRF fusion + reranker ---------------------------------------
+# --- 3.2 RRF fusion ---------------------------------------------------
 
 
 class TestRRFFusion:
@@ -73,8 +68,8 @@ class TestRRFFusion:
     async def test_rrf_fusion_is_deterministic(self, retriever):
         result1 = await retriever.retrieve("test", rrf_k=60)
         result2 = await retriever.retrieve("test", rrf_k=60)
-        ids1 = [d.metadata["doc_id"] for d in result1["docs"]]
-        ids2 = [d.metadata["doc_id"] for d in result2["docs"]]
+        ids1 = [d.metadata["doc_id"] for d in result1["candidates"]]
+        ids2 = [d.metadata["doc_id"] for d in result2["candidates"]]
         assert ids1 == ids2
 
     @pytest.mark.asyncio
@@ -89,25 +84,25 @@ class TestRRFFusion:
 
 class TestFallback:
     @pytest.mark.asyncio
-    async def test_fallback_when_bm25_not_built(self, vector_store, reranker_scorer, sample_docs_map):
+    async def test_fallback_when_bm25_not_built(self, vector_store, sample_docs_map):
         idx = MagicMock()
         idx.is_built = False
         idx.corpus_size = 0
         idx.search = MagicMock(side_effect=RuntimeError("BM25 index not built"))
         idx.get_doc = MagicMock(side_effect=lambda d: sample_docs_map.get(d))
-        r = HybridRetriever(idx, vector_store, reranker_scorer)
+        r = HybridRetriever(idx, vector_store)
         result = await r.retrieve("test")
         assert result["fusion_metadata"].get("fallback") == "vector_only"
-        assert len(result["docs"]) > 0
+        assert len(result["candidates"]) > 0
 
     @pytest.mark.asyncio
-    async def test_fallback_when_corpus_empty(self, vector_store, reranker_scorer, sample_docs_map):
+    async def test_fallback_when_corpus_empty(self, vector_store, sample_docs_map):
         idx = MagicMock()
         idx.is_built = True
         idx.corpus_size = 0
         idx.search = MagicMock(return_value=[])
         idx.get_doc = MagicMock(side_effect=lambda d: sample_docs_map.get(d))
-        r = HybridRetriever(idx, vector_store, reranker_scorer)
+        r = HybridRetriever(idx, vector_store)
         result = await r.retrieve("test")
         assert result["fusion_metadata"].get("fallback") is not None
 
@@ -120,5 +115,13 @@ class TestObservability:
     async def test_trace_metadata_contains_all_stages(self, retriever):
         result = await retriever.retrieve("test")
         meta = result["fusion_metadata"]
-        for key in ("bm25_results", "vector_results", "fusion_results", "rerank_scores"):
+        for key in ("bm25_results", "vector_results", "fusion_results"):
             assert key in meta, f"missing key: {key}"
+        assert "rerank_scores" not in meta
+
+    @pytest.mark.asyncio
+    async def test_return_shape_has_candidates_only(self, retriever):
+        result = await retriever.retrieve("test")
+        assert "candidates" in result
+        for removed_key in ("docs", "rerank_scores", "context", "contexts"):
+            assert removed_key not in result, f"unexpected key: {removed_key}"
