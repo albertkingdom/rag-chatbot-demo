@@ -29,7 +29,9 @@ from .guardrails import (
     detect_prompt_injection,
     get_guardrail_message,
 )
-from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR, CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD
+from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR, CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD, BM25_TOP_N, VECTOR_TOP_N, RRF_K, FUSION_TOP_M
+from .bm25_index import BM25Index
+from .hybrid_retriever import HybridRetriever
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 conn = redis.from_url(redis_url)
@@ -92,6 +94,8 @@ _llm = None
 _vectorstore = None
 _retrieval_chain = None
 _generation_chain = None
+_bm25_index = None
+_hybrid_retriever = None
 
 def get_embeddings():
     global _embeddings
@@ -123,15 +127,37 @@ def get_vectorstore():
         _vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=get_embeddings())
     return _vectorstore
 
+def get_bm25_index():
+    global _bm25_index
+    if _bm25_index is None:
+        _bm25_index = BM25Index()
+    return _bm25_index
+
+def get_hybrid_retriever():
+    global _hybrid_retriever
+    if _hybrid_retriever is None:
+        _hybrid_retriever = HybridRetriever(
+            bm25_index=get_bm25_index(),
+            vector_store=get_vectorstore(),
+            reranker_scorer=get_reranker_model(),
+        )
+    return _hybrid_retriever
+
 def get_retrieval_chain():
     global _retrieval_chain
     if _retrieval_chain is None:
-        base_retriever = get_vectorstore().as_retriever(search_kwargs={"k": 10})
-        _retrieval_chain = (
-            {"docs": base_retriever, "query": lambda x: x}
-            | RunnableLambda(rerank_analysis)
-            | RunnableLambda(_format_docs)
-        )
+        retriever = get_hybrid_retriever()
+
+        async def _hybrid_retrieve(query: str) -> dict:
+            result = await retriever.retrieve(
+                query,
+                vector_top_n=VECTOR_TOP_N,
+                bm25_top_n=BM25_TOP_N,
+                rrf_k=RRF_K,
+            )
+            return _format_docs(result)
+
+        _retrieval_chain = RunnableLambda(_hybrid_retrieve)
     return _retrieval_chain
 
 def get_generation_chain():

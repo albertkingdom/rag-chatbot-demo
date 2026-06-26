@@ -8,6 +8,7 @@ from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
 from .config import PINECONE_INDEX_NAME, DATA_SOURCE_DIR
 from langsmith import traceable
+from .bm25_index import BM25Index
 
 # --- Data Extraction Functions ---
 
@@ -169,6 +170,15 @@ def sync_vector_store():
 
     final_count = len(local_ids)
     print(f"Sync complete. Total vectors: {final_count}. Upserted: {len(ids_to_upsert)}, Deleted: {len(ids_to_delete)}.", flush=True)
+
+    # Rebuild BM25 index so it stays consistent with the vector store
+    try:
+        bm25 = BM25Index()
+        bm25.build_from_documents(list(local_docs.values()))
+        print(f"BM25 index rebuilt with {bm25.corpus_size} documents.", flush=True)
+    except Exception as bm25_err:
+        print(f"Warning: BM25 index rebuild failed ({bm25_err}). Vector sync remains intact.", flush=True)
+
     return {"status": "success", "message": f"Sync complete. Upserted: {len(ids_to_upsert)}, Deleted: {len(ids_to_delete)}. Total vectors: {final_count}."}
 
 

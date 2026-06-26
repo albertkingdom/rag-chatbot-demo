@@ -26,3 +26,4 @@ langchain-huggingface
 langsmith
 pymongo
 tabulate
+rank_bm25
