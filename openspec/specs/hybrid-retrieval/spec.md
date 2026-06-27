@@ -8,7 +8,7 @@ TBD - created by archiving change 'hybrid-search'. Update Purpose after archive.
 
 ### Requirement: Hybrid retrieval combines BM25 and vector search
 
-The retrieval pipeline SHALL execute BM25 keyword retrieval and dense vector retrieval in parallel for every incoming rewritten query, and SHALL fuse the two ranked lists via Reciprocal Rank Fusion (RRF). The `HybridRetriever` SHALL return the top `FUSION_TOP_M` fused candidates as a `candidates` list of `Document` objects together with `fusion_metadata`, and SHALL NOT execute reranking or hold any reference to a reranker.
+The retrieval pipeline SHALL execute BM25 keyword retrieval and dense vector retrieval in parallel for every incoming rewritten query, and SHALL fuse the two ranked lists via Reciprocal Rank Fusion (RRF). The `HybridRetriever` SHALL return the top `FUSION_TOP_M` fused candidates as a `candidates` list of `Document` objects together with `fusion_metadata`, and SHALL NOT execute reranking or hold any reference to a reranker. Both the BM25 retrieval path and the vector retrieval path SHALL derive each candidate's fusion `doc_id` from `metadata['doc_id']`, so that the same document produces the same fusion key on both paths and RRF combines overlapping documents into a single fused entry.
 
 #### Scenario: Normal hybrid retrieval
 
@@ -21,27 +21,28 @@ The retrieval pipeline SHALL execute BM25 keyword retrieval and dense vector ret
 - **WHEN** the system applies RRF
 - **THEN** the fused score for A = 1/61 + 1/63, B = 1/62 + 1/61, C = 1/63, D = 1/62, and the fused list is ordered by descending fused score: [B, A, D, C]
 
+#### Scenario: Overlapping document fuses via shared doc_id
+
+- **GIVEN** a single document that is returned by both the BM25 search and the vector search for the same query
+- **WHEN** the vector path derives its `doc_id` from `metadata['doc_id']` and the BM25 path uses the same `doc_id`
+- **THEN** RRF treats both occurrences as the same document and sums their rank contributions into one fused entry rather than producing two separate entries
+
 
 <!-- @trace
-source: decouple-rerank-from-retriever
+source: stable-doc-id-uuid
 updated: 2026-06-27
 code:
-  - docs/diagrams/rag_pipeline.drawio
+  - docs/diagrams/pinecone_structure_report.md
+  - architecture.md
+  - src/bm25_index.py
+  - TODO.md
   - src/hybrid_retriever.py
-  - .spectra/touched/decouple-rerank-from-retriever.json
-  - .spectra/touched/hybrid-search.json
-  - docs/interview-guide.md
-  - docs/diagrams/rag_pipeline.png
-  - .spectra/changes/decouple-rerank-from-retriever.started
-  - docs/diagrams/rag_pipeline.drawio.png
-  - src/app.py
-  - src/rerank_stage.py
-  - docs/diagrams/rag_pipeline.svg
-  - .spectra/changes/hybrid-search.started
+  - requirements.txt
+  - src/build_vector_store.py
 tests:
-  - tests/test_app_pipeline.py
+  - tests/test_document_identity.py
+  - tests/test_bm25_index.py
   - tests/test_hybrid_retriever.py
-  - tests/test_rerank_stage.py
 -->
 
 ---
