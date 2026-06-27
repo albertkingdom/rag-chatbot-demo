@@ -98,8 +98,10 @@ class BM25Index:
     def build_from_documents(self, docs: list[Document]) -> None:
         """Build (or rebuild) the BM25Okapi index from ``docs``.
 
-        Each document's ``doc_id`` is taken from ``metadata['doc_id']``
-        falling back to ``metadata['text']`` hash, then an auto counter.
+        Each document's ``doc_id`` is taken from ``metadata['doc_id']``.
+        A document lacking ``metadata['doc_id']`` raises ``ValueError`` —
+        the index never falls back to hashing ``page_content``, which would
+        produce process-unstable ids.
 
         If ``docs`` is empty the index is marked not-built and no
         persistence file is written.
@@ -120,7 +122,12 @@ class BM25Index:
         self._doc_ids = []
 
         for i, doc in enumerate(docs):
-            doc_id = doc.metadata.get("doc_id") or f"qa_{abs(hash(doc.page_content))}"
+            doc_id = doc.metadata.get("doc_id")
+            if not doc_id:
+                raise ValueError(
+                    f"Document at index {i} is missing metadata['doc_id']; "
+                    "BM25Index requires a stable doc_id and does not hash page_content."
+                )
             self._corpus[doc_id] = doc
             self._doc_ids.append(doc_id)
             self._tokenized_corpus.append(self._tokenize(doc.page_content))

@@ -25,3 +25,6 @@ temp_files/
 .idea/
 .spectra/
 openspec/.vector-search.db*
+
+# Local backups (xlsx / Pinecone snapshots) — operational, reproducible from source
+backups/

@@ -69,7 +69,11 @@ class HybridRetriever:
 
         scored: list[tuple[str, float]] = []
         for doc, score in results:
-            doc_id = doc.metadata.get("doc_id") or f"qa_{abs(hash(doc.page_content))}"
+            doc_id = doc.metadata.get("doc_id")
+            if not doc_id:
+                # Documents are expected to carry a stable doc_id in metadata;
+                # skip any that don't rather than fabricate an unstable hash id.
+                continue
             scored.append((doc_id, float(score)))
         return scored
 
@@ -166,7 +170,5 @@ class HybridRetriever:
             return None
         for doc in docs:
             if doc.metadata.get("doc_id") == doc_id:
-                return doc
-            if f"qa_{abs(hash(doc.page_content))}" == doc_id:
                 return doc
         return None

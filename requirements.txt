@@ -19,6 +19,7 @@ rq
 redis
 numpy
 pytest
+pytest-asyncio
 python-Levenshtein
 sentence-transformers
 huggingface_hub

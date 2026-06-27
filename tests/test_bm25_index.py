@@ -55,6 +55,20 @@ class TestBuildFromDocuments:
         assert idx.corpus_size == 0
         assert not os.path.exists(tmp_persist_path)
 
+    def test_build_keys_documents_by_metadata_doc_id(self, tmp_persist_path, sample_docs):
+        idx = BM25Index(persist_path=tmp_persist_path)
+        idx.build_from_documents(sample_docs)
+        results = idx.search("4.2", top_n=3)
+        assert results[0][0] == "D1"  # doc_id taken from metadata, not a hash
+
+    def test_build_rejects_document_without_doc_id(self, tmp_persist_path):
+        idx = BM25Index(persist_path=tmp_persist_path)
+        bad_docs = [Document(page_content="no id here", metadata={"text": "Q", "answer": "A"})]
+        with pytest.raises(ValueError, match="doc_id"):
+            idx.build_from_documents(bad_docs)
+        assert idx.is_built is False
+        assert not os.path.exists(tmp_persist_path)
+
 
 # --- 2.2 Search ------------------------------------------------------
 
@@ -147,6 +161,7 @@ class TestSyncIntegration:
              patch("os.path.join", return_value="/fake/fake.csv"), \
              patch.object(build_vector_store, "extract_from_csv", return_value=fake_docs), \
              patch.object(build_vector_store, "DATA_SOURCE_DIR", "/fake_dir"), \
+             patch.object(build_vector_store, "ensure_uuids_in_source", return_value=0), \
              patch("os.makedirs"):
 
             mock_bm25, _ = self._patch_common(mock_pc_cls, mock_bm25_cls)
@@ -169,6 +184,7 @@ class TestSyncIntegration:
              patch("os.path.join", return_value="/fake/fake.xlsx"), \
              patch.object(build_vector_store, "extract_from_xlsx", return_value=fake_docs), \
              patch.object(build_vector_store, "DATA_SOURCE_DIR", "/fake_dir"), \
+             patch.object(build_vector_store, "ensure_uuids_in_source", return_value=0), \
              patch("os.makedirs"):
 
             mock_bm25, mock_pc = self._patch_common(mock_pc_cls, mock_bm25_cls)

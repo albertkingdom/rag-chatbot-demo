@@ -1,5 +1,6 @@
 import os
 import csv
+import uuid as uuid_lib
 import pandas as pd
 import fitz  # PyMuPDF
 from langchain_core.documents import Document
@@ -20,8 +21,9 @@ def extract_from_csv(file_path: str) -> list[dict]:
         for row in reader:
             question = row.get('question', '').split('問：')[-1].strip()
             answer = row.get('answer', '').split('答：')[-1].strip()
+            uuid_val = (row.get('uuid') or '').strip() or None
             if question and answer:
-                docs.append({'question': question, 'answer': answer})
+                docs.append({'question': question, 'answer': answer, 'uuid': uuid_val})
     return docs
 
 def extract_from_xlsx(file_path: str) -> list[dict]:
@@ -33,8 +35,10 @@ def extract_from_xlsx(file_path: str) -> list[dict]:
         answer = str(row.get('answer', ''))
         question = question.split('問：')[-1].strip()
         answer = answer.split('答：')[-1].strip()
+        raw_uuid = row.get('uuid', None)
+        uuid_val = None if pd.isna(raw_uuid) else (str(raw_uuid).strip() or None)
         if question and answer:
-            docs.append({'question': question, 'answer': answer})
+            docs.append({'question': question, 'answer': answer, 'uuid': uuid_val})
     return docs
 
 def extract_from_pdf(file_path: str) -> list[dict]:
@@ -51,8 +55,75 @@ def extract_from_pdf(file_path: str) -> list[dict]:
             question = parts[0].strip()
             answer = parts[1].strip().split('Q:')[0].strip()
             if question and answer:
-                docs.append({'question': question, 'answer': answer})
+                # PDF sources carry no uuid column; identity is generated at sync time.
+                docs.append({'question': question, 'answer': answer, 'uuid': None})
     return docs
+
+
+# --- UUID backfill --- #
+
+def ensure_uuids_in_source(file_path: str) -> int:
+    """Ensure every data row in a csv/xlsx source carries a stable `uuid`.
+
+    Rows lacking a `uuid` are assigned a fresh `uuid4()` and the file is
+    rewritten in place using a temp-file + atomic replace so a partial
+    write cannot corrupt the source. Returns the number of uuids added.
+
+    Only `.csv` and `.xlsx` are written back; other formats (e.g. PDF) carry
+    no uuid column and are handled by in-memory generation at sync time.
+    """
+    if file_path.endswith('.csv'):
+        return _ensure_uuids_csv(file_path)
+    if file_path.endswith('.xlsx'):
+        return _ensure_uuids_xlsx(file_path)
+    return 0
+
+
+def _ensure_uuids_csv(file_path: str) -> int:
+    with open(file_path, mode='r', encoding='utf-8-sig', newline='') as infile:
+        reader = csv.DictReader(infile)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+
+    added = 0
+    if 'uuid' not in fieldnames:
+        fieldnames.append('uuid')
+    for row in rows:
+        if not (row.get('uuid') or '').strip():
+            row['uuid'] = str(uuid_lib.uuid4())
+            added += 1
+
+    if added == 0:
+        return 0
+
+    tmp_path = f"{file_path}.tmp"
+    with open(tmp_path, mode='w', encoding='utf-8-sig', newline='') as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    os.replace(tmp_path, file_path)
+    return added
+
+
+def _ensure_uuids_xlsx(file_path: str) -> int:
+    df = pd.read_excel(file_path)
+    if 'uuid' not in df.columns:
+        df['uuid'] = None
+
+    added = 0
+    for idx in df.index:
+        raw = df.at[idx, 'uuid']
+        if pd.isna(raw) or not str(raw).strip():
+            df.at[idx, 'uuid'] = str(uuid_lib.uuid4())
+            added += 1
+
+    if added == 0:
+        return 0
+
+    tmp_path = f"{file_path}.tmp.xlsx"
+    df.to_excel(tmp_path, index=False, engine="openpyxl")
+    os.replace(tmp_path, file_path)
+    return added
 
 
 # --- Main Sync Function --- #
@@ -76,6 +147,18 @@ def sync_vector_store():
     all_docs_data = []
     for filename in os.listdir(DATA_SOURCE_DIR):
         file_path = os.path.join(DATA_SOURCE_DIR, filename)
+        if filename.endswith(('.csv', '.xlsx', '.pdf')):
+            # Backfill stable uuids into the source file before extraction so
+            # the assigned identity is durable across future syncs. A write-back
+            # failure aborts the sync rather than upserting with unstable ids.
+            try:
+                added = ensure_uuids_in_source(file_path)
+                if added:
+                    print(f"Backfilled {added} uuid(s) into {filename}", flush=True)
+            except Exception as wb_err:
+                print(f"Error: failed to write uuids back to {filename} ({wb_err}). Aborting sync.", flush=True)
+                return {"status": "error", "message": f"Failed to persist uuids to source file '{filename}': {wb_err}"}
+
         if filename.endswith('.csv'):
             print(f"Processing CSV: {filename}", flush=True)
             all_docs_data.extend(extract_from_csv(file_path))
@@ -90,33 +173,35 @@ def sync_vector_store():
         print("No valid documents found to process.", flush=True)
         return {"status": "error", "message": "No valid documents found to process."}
 
-    # Deduplicate Q&A pairs based on both question AND answer
+    # Deduplicate exact (question, answer) pairs; key surviving docs by their
+    # stable uuid (= doc_id). Rows that share a question but differ in answer
+    # have distinct uuids and are both retained.
     local_docs = {}
     seen_qa_pairs = set()
     duplicates_skipped = 0
 
-    for i, doc_data in enumerate(all_docs_data):
+    for doc_data in all_docs_data:
         question = doc_data['question']
         answer = doc_data['answer']
 
-        # Create a unique key combining question and answer
         qa_pair_key = (question, answer)
-
-        # Skip exact duplicates (same question + same answer)
         if qa_pair_key in seen_qa_pairs:
             duplicates_skipped += 1
             continue
-
         seen_qa_pairs.add(qa_pair_key)
 
-        # Use hash of both question and answer for ID
-        combined_hash = abs(hash(qa_pair_key))
-        doc_id = f"qa_{combined_hash}"
+        # Stable doc_id sourced from the uuid column; PDF/other rows without a
+        # persisted uuid get one generated in memory here.
+        doc_id = doc_data.get('uuid') or str(uuid_lib.uuid4())
+        if doc_id in local_docs:
+            print(f"Warning: duplicate uuid '{doc_id}' in source data; keeping the latter row.", flush=True)
 
-        # Create a metadata dict that includes both the answer and the original question text
+        # Create a metadata dict that includes the answer, the original question
+        # text, and the stable doc_id so both Pinecone and BM25 read the same id.
         metadata = {
             "answer": answer,
-            "text": question
+            "text": question,
+            "doc_id": doc_id,
         }
         local_docs[doc_id] = Document(page_content=question, metadata=metadata)
 

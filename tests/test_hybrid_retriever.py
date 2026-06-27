@@ -79,6 +79,39 @@ class TestRRFFusion:
         assert len(leaked_fused) <= 10
 
 
+# --- 4.2 / 4.3 doc_id sourcing and fusion alignment -------------------
+
+
+class TestDocIdSourcing:
+    @pytest.mark.asyncio
+    async def test_vector_path_uses_metadata_doc_id(self, retriever):
+        scored = await retriever._vector_search("test", top_n=3)
+        assert [doc_id for doc_id, _ in scored] == ["A", "B", "C"]
+
+    @pytest.mark.asyncio
+    async def test_vector_path_skips_docs_without_doc_id(self, bm25_index):
+        vs = MagicMock()
+        vs.asimilarity_search_with_score = AsyncMock(
+            return_value=[
+                (Document(page_content="has id", metadata={"doc_id": "A"}), 0.9),
+                (Document(page_content="no id", metadata={}), 0.8),
+            ]
+        )
+        r = HybridRetriever(bm25_index, vs)
+        scored = await r._vector_search("test", top_n=2)
+        assert [doc_id for doc_id, _ in scored] == ["A"]
+
+    @pytest.mark.asyncio
+    async def test_overlapping_doc_fuses_into_single_entry(self, retriever):
+        # bm25: B(rank1), D(rank2), A(rank3) ; vector: A(rank1), B(rank2), C(rank3)
+        result = await retriever.retrieve("test", rrf_k=60)
+        fused = result["fusion_metadata"]["fusion_results"]
+        b_entries = [f for f in fused if f["doc_id"] == "B"]
+        assert len(b_entries) == 1
+        # B = bm25 rank1 (1/61) + vector rank2 (1/62); fusion scores are rounded to 6dp
+        assert b_entries[0]["score"] == pytest.approx(1 / 61 + 1 / 62, abs=1e-6)
+
+
 # --- 3.3 Fallback -----------------------------------------------------
 
 

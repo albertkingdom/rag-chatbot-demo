@@ -137,7 +137,7 @@ flowchart TB
     end
 
     subgraph Process["Processing"]
-        Hash[Generate Doc ID]
+        Uuid[Backfill / Read uuid<br/>as doc_id]
         Compare{Compare with<br/>Existing}
     end
 
@@ -155,8 +155,8 @@ flowchart TB
     PDF --> Extract
     XLSX --> Extract
     CSV --> Extract
-    Extract --> Hash
-    Hash --> Compare
+    Extract --> Uuid
+    Uuid --> Compare
     Compare -->|New| OpenAI
     Compare -->|Outdated| Delete
     OpenAI --> Upsert
