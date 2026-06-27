@@ -102,6 +102,54 @@ docker-compose up --build
 
 ---
 
+## 📊 RAG Evaluation (RAGAS)
+
+The end-to-end RAG pipeline is evaluated offline with [RAGAS](https://docs.ragas.io/). Evaluation reuses the project's existing OpenRouter LLM and OpenAI embeddings as the judge — no new model provider.
+
+### Metrics
+
+| Metric | Needs `ground_truth`? | Measures |
+| --- | --- | --- |
+| `faithfulness` | No | Is the answer grounded in the retrieved contexts (no hallucination)? |
+| `answer_relevancy` | No | Does the answer actually address the question? |
+| `context_precision` | Yes | Are the retrieved contexts relevant (not padded with noise)? |
+| `context_recall` | Yes | Did retrieval find everything the reference answer needs? |
+
+### How to run
+
+```bash
+# 1. (Optional) Generate a draft golden set from the knowledge-base sources.
+#    Questions are paraphrased by the LLM; ground_truth is the source answer verbatim.
+#    Output is a DRAFT — review and edit it, then copy it to tests/rag_eval_data.json.
+python -m tests.generate_rag_eval_data --n 10   # writes tests/rag_eval_data.draft.json
+
+# 2. Run the evaluation against tests/rag_eval_data.json.
+python -m tests.evaluate_rag
+```
+
+Requires `OPENROUTER_API_KEY` and `OPENAI_API_KEY`. Results print as a per-metric table and are written to `tests/rag_eval_report.json`; the command exits non-zero if any metric falls below its threshold (default `0.70`, overridable per metric via `RAG_EVAL_MIN_<METRIC>`, e.g. `RAG_EVAL_MIN_FAITHFULNESS=0.8`).
+
+### Evaluation timing
+
+RAGAS is **post-hoc and offline** — it scores the pipeline's outputs and is never on the live chat request path. The order is:
+
+```
+build knowledge base → generate golden-set draft → human review → (change pipeline) → run pipeline to collect samples → RAGAS scoring → threshold gate
+```
+
+A metric can only be scored once its sample is complete: context metrics need retrieval to have finished, answer metrics need generation to have finished. The evaluator collects every `{question, contexts, answer, ground_truth}` sample first, then scores them in one pass.
+
+### Reading the scores against a baseline
+
+Use the metrics as a **regression guard** when changing retrieval, reranking, prompts, or models:
+
+1. **Record a baseline** — run the evaluation before your change and note the scores.
+2. **Keep the golden set fixed** — `tests/rag_eval_data.json` must stay the same across a comparison, otherwise score changes can't be attributed to the pipeline change.
+3. **Watch the trend, not the decimals** — the LLM judge is non-deterministic, so scores wobble by a few hundredths between runs. Look for clear up/down movement; run 2–3 times and average if you need a tighter read.
+4. **Refresh the golden set when the corpus changes** — if you update the sources under `uploaded_files/`, the old `ground_truth` may be stale; regenerate and review the golden set instead of reusing it.
+
+---
+
 ## 🕹️ UI Demo
 
 The UI has three tabs: RAG Chatbot, BOM Header Mapper, and Admin: Upload Manual.
