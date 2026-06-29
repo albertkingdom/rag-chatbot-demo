@@ -17,6 +17,7 @@ services:
       - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
       - REDIS_URL=redis://redis:6379/0
       - MONGODB_URL=mongodb://mongodb:27017/chatbot
+      - JOB_RUNNER=local
     depends_on:
       - redis
       - mongodb

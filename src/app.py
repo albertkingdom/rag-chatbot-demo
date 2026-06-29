@@ -34,9 +34,20 @@ from .bm25_index import BM25Index
 from .hybrid_retriever import HybridRetriever
 from .rerank_stage import rerank_candidates
 
+# Task execution mode: "local" uses RQ + Redis worker; "gcp" calls the
+# Cloud Run Jobs API. Defaults to "local" so docker-compose keeps working.
+JOB_RUNNER = os.environ.get("JOB_RUNNER", "local")
+
+# GCP Cloud Run Job coordinates (only used when JOB_RUNNER == "gcp").
+GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "")
+GCP_REGION = os.environ.get("GCP_REGION", "asia-east1")
+SYNC_JOB_NAME = os.environ.get("SYNC_JOB_NAME", "sync-job")
+
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+# Redis is initialized in BOTH modes: the semantic cache (PromptCacheService)
+# depends on it regardless of JOB_RUNNER. Only the RQ Queue is local-only.
 conn = redis.from_url(redis_url)
-q = Queue(connection=conn)
+q = Queue(connection=conn) if JOB_RUNNER == "local" else None
 
 # Singleton for BGE-Reranker model
 _reranker = None
@@ -60,7 +71,9 @@ def get_reranker_model():
     global _reranker
     if _reranker is None:
         print("Initializing BGE-Reranker model (BAAI/bge-reranker-v2-m3)...")
-        model_dir = os.path.join(os.getcwd(), "models")
+        # Single source of truth shared with the Dockerfile pre-download step,
+        # so the cached files written at build time are the ones loaded here.
+        model_dir = os.environ.get("MODEL_CACHE_DIR", os.path.join(os.getcwd(), "models"))
         os.makedirs(model_dir, exist_ok=True)
 
         device = _get_optimal_device()
@@ -132,6 +145,9 @@ def get_bm25_index():
     global _bm25_index
     if _bm25_index is None:
         _bm25_index = BM25Index()
+    else:
+        # Pick up a newer index written by the sync Job without a restart.
+        _bm25_index.reload_if_stale()
     return _bm25_index
 
 def get_hybrid_retriever():
@@ -484,8 +500,19 @@ def upload_manual_func(file):
 
     try:
         shutil.copy(file.name, save_path)
-        job = q.enqueue(sync_vector_store, job_timeout='1h')
-        return f"File uploaded. Sync job '{job.id}' enqueued.", job.id
+        if JOB_RUNNER == "gcp":
+            # Import lazily so local mode never requires google-cloud-run.
+            from google.cloud import run_v2
+
+            jobs_client = run_v2.JobsClient()
+            job_name = f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/jobs/{SYNC_JOB_NAME}"
+            operation = jobs_client.run_job(name=job_name)
+            # operation.metadata is the Execution; its name identifies this run.
+            execution_name = operation.metadata.name
+            return f"File uploaded. Sync execution '{execution_name}' started.", execution_name
+        else:
+            job = q.enqueue(sync_vector_store, job_timeout='1h')
+            return f"File uploaded. Sync job '{job.id}' enqueued.", job.id
     except Exception as e:
         return f"Error: {str(e)}", None
 
@@ -540,24 +567,51 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
                 yield "Job ID not found. Please upload again."
                 return
 
+            if JOB_RUNNER == "gcp":
+                # Import lazily so local mode never requires google-cloud-run.
+                from google.cloud import run_v2
+                from google.api_core.exceptions import NotFound
+
+                executions_client = run_v2.ExecutionsClient()
+                while True:
+                    try:
+                        execution = executions_client.get_execution(name=job_id)
+                        if execution.succeeded_count and execution.succeeded_count > 0:
+                            yield "同步成功！知識庫已更新。"
+                            break
+                        elif execution.failed_count and execution.failed_count > 0:
+                            yield "任務失敗！請檢查後台日誌。"
+                            break
+                        else:
+                            yield "任務執行中，系統正在處理您的文件..."
+                        # 3s interval keeps Cloud Run API and Upstash quota modest.
+                        await asyncio.sleep(3)
+                    except NotFound as e:
+                        yield f"無法獲取任務狀態 {job_id}: {e}"
+                        break
+                    except Exception as e:
+                        yield f"無法獲取任務狀態 {job_id}: {e}"
+                        break
+                return
+
             while True:
                 try:
                     job = Job.fetch(job_id, connection=conn)
                     status = job.get_status(refresh=True)
-                    
+
                     status_map = {
                         'queued': f"Job {job.id}: 已進入佇列，正在等待執行...",
                         'started': f"Job {job.id}: 任務執行中，系統正在處理您的文件...",
                         'finished': f"Job {job.id}: 同步成功！知識庫已更新。",
                         'failed': f"Job {job.id}: 任務失敗！請檢查後台日誌。",
                     }
-                    
+
                     message = status_map.get(status, f"Job {job.id}: 未知狀態 ({status})")
                     yield message
 
                     if status in ['finished', 'failed', 'canceled', 'stopped']:
                         break
-                    
+
                     await asyncio.sleep(1)
 
                 except Exception as e:

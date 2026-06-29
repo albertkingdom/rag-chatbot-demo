@@ -2,8 +2,20 @@
 Configuration constants for the application.
 """
 
-# Directory for storing uploaded user manuals and other data sources
-DATA_SOURCE_DIR = "./uploaded_files/"
+import os
+
+# Directory for storing uploaded user manuals and other data sources.
+# Local default keeps the relative path; on GCP, Cloud Run sets this to a
+# subdirectory of the shared GCS volume (e.g. /mnt/data/uploaded_files).
+DATA_SOURCE_DIR = os.environ.get("DATA_SOURCE_DIR", "./uploaded_files/")
+
+# Directory where the BM25 index version files and the pointer file live.
+# Local default is "models"; on GCP it points under the shared GCS volume
+# (e.g. /mnt/data/models) so the Service and Job share the same index.
+BM25_INDEX_DIR = os.environ.get("BM25_INDEX_DIR", "models")
+
+# How many BM25 version files to retain after each sync (older ones pruned).
+BM25_VERSION_RETENTION = int(os.environ.get("BM25_VERSION_RETENTION", "3"))
 
 # Name of the Pinecone index
 PINECONE_INDEX_NAME = "carbon-assistant-qa-index"
