@@ -268,8 +268,12 @@ def sync_vector_store():
 
 
 if __name__ == '__main__':
+    import sys
     try:
         result = sync_vector_store()
-        print(result)
+        print(result, flush=True)
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        # Exit non-zero so the Cloud Run Job execution is recorded as FAILED
+        # (and the UI poll_status reports failure) instead of a false SUCCEEDED.
+        print(f"An unexpected error occurred: {e}", flush=True)
+        sys.exit(1)

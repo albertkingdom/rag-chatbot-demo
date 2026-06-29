@@ -28,3 +28,11 @@ openspec/.vector-search.db*
 
 # Local backups (xlsx / Pinecone snapshots) — operational, reproducible from source
 backups/
+
+# Terraform — local state, crash logs, provider cache, and real variable values
+# Note: .terraform.lock.hcl is intentionally tracked to pin provider versions for reproducible CI builds.
+terraform/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+terraform/terraform.tfvars
