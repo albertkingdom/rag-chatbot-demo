@@ -182,12 +182,25 @@ Secret 資源（非值）由 Terraform 建立。Secret 的實際值（API keys�
 push 到 `release/**` branch 時，GitHub Actions workflow 執行（master push 不觸發）：
 1. 以 Workload Identity Federation 認證 GCP
 2. `docker build` → tag 為 git SHA → push 到 Artifact Registry
-3. 更新 Terraform 變數 `image_tag` 為新 SHA（寫入 `terraform/terraform.tfvars` 或透過 `-var` flag）
-4. `terraform init` → `terraform apply -auto-approve`
+3. 更新 Terraform 變數 `image_tag` 為新 SHA（透過 `-var` flag）
+4. `terraform init` → **scoped** `terraform apply -auto-approve -target=google_cloud_run_v2_service.web -target=google_cloud_run_v2_job.sync`
 
 Terraform apply 負責將 Cloud Run Service 和 Job 更新至新 image tag，不再需要獨立的 `gcloud run deploy` 指令。
 
 使用 Workload Identity Federation 取代 service account JSON key，避免長效憑證外洩風險。
+
+**CI 只 apply app 層（Cloud Run），基礎設施人工本機 apply（最小權限決定）**
+
+第一次走 CI 部署時暴露：workflow 原本跑*完整* `terraform apply`，等於要求 deployer SA 有權管理*全部*資源（SA、IAM bindings、Secret、WIF、buckets、AR repo）。但 deployer SA 刻意只給「部署 app」等級權限（`run.admin` + `artifactregistry.writer`），於是 refresh 既有 SA/secret 時 403。
+
+決定不放大 deployer 權限（方案 A：給近乎 owner，CI 被攻破即專案被接管），改採**方案 B：縮小 CI 範圍**：
+
+- **CI 的 apply 用 `-target` 只動 Cloud Run Service/Job**。`-target` 會連帶 read-only refresh 其相依（runtime SA、9 個 secret 資源、共享 bucket），但不會建立/修改任何基礎設施。
+- **基礎設施（SA、IAM、Secret、WIF、bucket、AR repo）由人以 owner 身分本機 `terraform apply` 管理** — 這些極少變動，且不該讓 CI 有權改寫（符合 runtime/deployer 雙 SA 分權精神）。
+- **deployer SA 維持最小權限**：除 `run.admin` + `artifactregistry.writer`，僅再加 runtime SA 上的 `iam.serviceAccountUser`（actAs）、`secretmanager.viewer`（只讀 secret metadata、非值）、tfstate bucket 的 `storage.objectAdmin`、共享 bucket 的 `storage.legacyBucketReader`。**不給** owner/editor/任何 IAM 或 secret 寫入角色 → CI 被攻破也無法提權。
+- **必要 API**：除 run/artifactregistry/secretmanager/storage 外，須啟用 `iam.googleapis.com`（refresh SA）與 `iamcredentials.googleapis.com`（WIF 模擬）。此二者及上述 IAM 授權皆為**手動 bootstrap**，因牽涉 deployer SA 自身權限，屬雞生蛋、不納入 CI 可改寫範圍。
+
+代價：日後若基礎設施有變（加 secret、改 IAM），需人工本機 apply，CI 不會自動套用 — 這正是分權的取捨，可接受。
 
 ## Implementation Contract
 

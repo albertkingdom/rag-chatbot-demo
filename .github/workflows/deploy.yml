@@ -45,11 +45,23 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       # Backend bucket is configured in terraform/backend.tf (manual, task 1.2).
-      - name: Terraform init & apply
+      #
+      # CI applies ONLY the Cloud Run Service + Job (the app layer) via -target.
+      # Foundational infrastructure (service accounts, IAM bindings, Secret
+      # Manager, WIF, buckets, Artifact Registry repo) is managed by a human
+      # running `terraform apply` locally with owner credentials — it rarely
+      # changes and should not be rewritable by CI. This keeps the deployer SA
+      # least-privilege: it can roll a new image but cannot escalate IAM/WIF.
+      # The targeted resources' dependencies (runtime SA, secrets, shared
+      # bucket) are read-only refreshed, hence the deployer needs viewer-level
+      # access to those plus actAs on the runtime SA (see design.md).
+      - name: Terraform init & apply (Cloud Run app layer only)
         working-directory: terraform
         run: |
           terraform init
           terraform apply -auto-approve \
+            -target=google_cloud_run_v2_service.web \
+            -target=google_cloud_run_v2_job.sync \
             -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
             -var="region=${REGION}" \
             -var="image_tag=${GITHUB_SHA}" \

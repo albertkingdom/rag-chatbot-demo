@@ -2,12 +2,15 @@
 
 ### Requirement: GitHub Actions deploys to Cloud Run on push to release branch
 
-The repository SHALL contain `.github/workflows/deploy.yml` that triggers on every push to any branch matching the pattern `release/**`, builds a Docker image, pushes it to GCP Artifact Registry, then runs `terraform apply` to deploy the new image to both Cloud Run Service and Cloud Run Job. Pushes to `master` SHALL NOT trigger deployment.
+The repository SHALL contain `.github/workflows/deploy.yml` that triggers on every push to any branch matching the pattern `release/**`, builds a Docker image, pushes it to GCP Artifact Registry, then runs a **scoped** `terraform apply` that targets ONLY the Cloud Run Service and Cloud Run Job (the app layer) to deploy the new image. Pushes to `master` SHALL NOT trigger deployment.
 
-#### Scenario: Successful push to release branch triggers full deployment
+The CI `terraform apply` SHALL use `-target=google_cloud_run_v2_service.web -target=google_cloud_run_v2_job.sync` so that the pipeline only rolls a new image and never creates or modifies foundational infrastructure (service accounts, IAM bindings, Secret Manager, Workload Identity Federation, buckets, Artifact Registry repo). Foundational infrastructure SHALL be applied by a human operator running `terraform apply` locally with owner-level credentials.
+
+#### Scenario: Successful push to release branch triggers scoped app deployment
 
 - **WHEN** a commit is pushed to a branch matching `release/**` (e.g. `release/1.0.0`)
-- **THEN** the GitHub Actions workflow SHALL execute the following steps in order: authenticate to GCP via Workload Identity Federation, build Docker image tagged with the git SHA, push image to Artifact Registry, run `terraform init`, run `terraform apply -auto-approve -var="image_tag=<git-sha>"`
+- **THEN** the GitHub Actions workflow SHALL execute the following steps in order: authenticate to GCP via Workload Identity Federation, build Docker image tagged with the git SHA, push image to Artifact Registry, run `terraform init`, run `terraform apply -auto-approve -target=google_cloud_run_v2_service.web -target=google_cloud_run_v2_job.sync -var="image_tag=<git-sha>"`
+- **AND** the apply SHALL NOT add, change, or destroy any foundational resource (service accounts, IAM members, secrets, WIF pool/provider, buckets, Artifact Registry repo)
 
 #### Scenario: Push to master does not trigger deployment
 
@@ -51,3 +54,28 @@ The GitHub Actions workflow SHALL authenticate to GCP using Workload Identity Fe
 
 - **WHEN** the workflow is triggered
 - **THEN** GitHub repository secrets SHALL contain `GCP_PROJECT_ID`, `WIF_PROVIDER`, and `WIF_SERVICE_ACCOUNT`; no API keys or service account JSON SHALL be stored in GitHub Secrets
+
+### Requirement: CI deployer service account holds least-privilege roles only
+
+The GitHub Actions deployer service account (`github-actions-deployer@`) SHALL hold only the permissions required to roll a new Cloud Run image, NOT permissions to manage foundational infrastructure. A compromise of CI SHALL NOT allow IAM, WIF, or secret modification / privilege escalation.
+
+The deployer SA SHALL be granted:
+- `roles/run.admin` (manage the Cloud Run Service and Job)
+- `roles/artifactregistry.writer` (push images)
+- `roles/iam.serviceAccountUser` on the runtime SA (act as it when deploying the Service/Job)
+- `roles/secretmanager.viewer` (read-only refresh of the secret resources referenced by the targeted Cloud Run resources — metadata only, NOT secret values)
+- `roles/storage.objectAdmin` on the tfstate bucket (read/write/lock Terraform state)
+- `roles/storage.legacyBucketReader` on the shared data bucket (read-only refresh of the bucket resource referenced as a Cloud Run volume)
+
+The deployer SA SHALL NOT hold `roles/owner`, `roles/editor`, `roles/secretmanager.admin`, `roles/iam.serviceAccountAdmin`, `roles/resourcemanager.projectIamAdmin`, or any role that can create/modify service accounts, IAM bindings, secrets, or WIF configuration.
+
+#### Scenario: Deployer can roll an image but cannot escalate
+
+- **WHEN** the CI pipeline runs the scoped `terraform apply`
+- **THEN** the deployer SA SHALL successfully update the Cloud Run Service and Job image
+- **AND** any attempt by the deployer SA to create/modify a service account, IAM binding, secret value, or WIF resource SHALL be denied by IAM
+
+#### Scenario: Required GCP APIs are enabled
+
+- **WHEN** the CI pipeline runs `terraform apply` (which refreshes the runtime SA and other dependencies)
+- **THEN** the project SHALL have `iam.googleapis.com` and `iamcredentials.googleapis.com` enabled (in addition to run / artifactregistry / secretmanager / storage), otherwise WIF impersonation and SA refresh fail
