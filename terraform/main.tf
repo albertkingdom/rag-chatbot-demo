@@ -124,7 +124,7 @@ resource "google_cloud_run_v2_service" "web" {
 
       resources {
         limits = {
-          cpu    = "1"
+          cpu    = "4"
           memory = "2Gi"
         }
       }
@@ -161,6 +161,13 @@ resource "google_cloud_run_v2_service" "web" {
       env {
         name  = "LANGCHAIN_TRACING_V2"
         value = "true"
+      }
+      # Match torch/BLAS thread count to allocated vCPUs (resources.limits.cpu).
+      # Without this, torch defaults to 1 thread and the extra cores stay idle,
+      # so the BGE reranker would see no speedup from the CPU bump.
+      env {
+        name  = "OMP_NUM_THREADS"
+        value = "4"
       }
 
       dynamic "env" {

@@ -30,4 +30,4 @@ CACHE_MAX_SEARCH_RESULTS = 5  # Max number of cache entries to check for similar
 BM25_TOP_N = 10        # Number of candidates to retrieve from BM25
 VECTOR_TOP_N = 10      # Number of candidates to retrieve from vector store
 RRF_K = 60             # Reciprocal Rank Fusion constant
-FUSION_TOP_M = 10      # Max candidates after fusion, fed to reranker
+FUSION_TOP_M = 5       # Max candidates after fusion, fed to reranker (halved 10->5 to cut reranker inference time)
