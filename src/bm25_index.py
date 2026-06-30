@@ -8,10 +8,13 @@ base.
 
 import json
 import os
+import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import jieba
 from langchain_core.documents import Document
 
 # Name of the pointer file that names the current version file.
@@ -19,6 +22,29 @@ _POINTER_NAME = "bm25_current.txt"
 # Prefix/suffix for write-once version files: bm25_corpus_<version>.json
 _VERSION_PREFIX = "bm25_corpus_"
 _VERSION_SUFFIX = ".json"
+
+# --- Chinese tokenization setup -------------------------------------------
+# Load the traditional-Chinese dictionary once at module load when available.
+# JIEBA_DICT_PATH is set by the Dockerfile to dict.txt.big; when unset or the
+# file is missing (e.g. local dev), jieba falls back to its built-in dict.
+_JIEBA_DICT_PATH = os.environ.get("JIEBA_DICT_PATH")
+if _JIEBA_DICT_PATH and os.path.exists(_JIEBA_DICT_PATH):
+    jieba.set_dictionary(_JIEBA_DICT_PATH)
+
+# High-frequency Traditional-Chinese function words with little retrieval
+# value. Covers the proposal's list (的/了/我/你/嗎/怎麼辦) plus the segmented
+# form 怎麼 and a conservative set of common particles. Informative terms
+# (密碼/忘記/登入) are intentionally kept.
+_CHINESE_STOPWORDS = frozenset({
+    "的", "了", "我", "你", "他", "她", "嗎", "呢", "啊",
+    "怎麼", "怎麼辦",
+    "是", "在", "也", "都", "就", "與", "和", "及", "等",
+    "之", "其", "這", "那",
+})
+
+# A token is kept only if it contains at least one CJK ideograph or ASCII
+# alphanumeric character; this drops pure-punctuation and whitespace tokens.
+_CONTENT_CHAR_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbfa-zA-Z0-9]")
 
 
 class BM25Index:
@@ -60,8 +86,34 @@ class BM25Index:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _normalize(text: str) -> str:
+        """Normalize surface variants: full-width → half-width, lowercase Latin.
+
+        NFKC folds full-width Latin/digits/punctuation to their half-width
+        equivalents so 'ＡＢＣ' and 'abc' match; ``lower()`` then collapses
+        Latin letter case. CJK ideographs are unaffected by NFKC.
+        """
+        return unicodedata.normalize("NFKC", text).lower()
+
+    @staticmethod
     def _tokenize(text: str) -> list[str]:
-        return text.split()
+        """Segment text into word-level tokens for BM25.
+
+        Pipeline: normalize → jieba ``cut_for_search`` (search-engine mode,
+        which re-segments long words to improve recall) → drop empty,
+        stopword, and pure-punctuation/whitespace tokens. The same pipeline
+        runs at build and search time so corpus and query tokens compare.
+        """
+        normalized = BM25Index._normalize(text)
+        tokens: list[str] = []
+        for tok in jieba.cut_for_search(normalized):
+            tok = tok.strip()
+            if not tok or tok in _CHINESE_STOPWORDS:
+                continue
+            if not _CONTENT_CHAR_RE.search(tok):
+                continue
+            tokens.append(tok)
+        return tokens
 
     # ------------------------------------------------------------------
     # Persistence

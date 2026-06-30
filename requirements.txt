@@ -29,5 +29,6 @@ langsmith
 pymongo
 tabulate
 rank_bm25
+jieba
 ragas>=0.2,<0.3
 datasets>=2.14
