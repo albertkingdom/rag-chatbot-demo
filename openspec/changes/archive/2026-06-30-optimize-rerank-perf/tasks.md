@@ -12,12 +12,12 @@
 
 ## 3. 部署
 
-- [ ] 3.1 在 `feature/optimize-rerank-perf` commit 上述改動 → merge 進 `master`（push 不部署）。
-- [ ] 3.2 從 master 開/更新 `release/**` 分支並 push，觸發既有 CI：native amd64 build + push（git SHA tag）+ scoped `terraform apply -target=google_cloud_run_v2_service.web -target=google_cloud_run_v2_job.sync`。CI 會同時帶上 image（含 `FUSION_TOP_M=5`）與 main.tf 的 cpu/env 變更。
-- [ ] 3.3 CI 完成後確認 Cloud Run 產生新 revision，且 revision 的 container 資源顯示 `cpu=4`、env 含 `OMP_NUM_THREADS=4`。
+- [x] 3.1 在 `feature/optimize-rerank-perf` commit 上述改動 → merge 進 `master`（push 不部署）。
+- [x] 3.2 從 master 開/更新 `release/**` 分支並 push，觸發既有 CI：native amd64 build + push（git SHA tag）+ scoped `terraform apply -target=google_cloud_run_v2_service.web -target=google_cloud_run_v2_job.sync`。CI 會同時帶上 image（含 `FUSION_TOP_M=5`）與 main.tf 的 cpu/env 變更。
+- [x] 3.3 CI 完成後確認 Cloud Run 產生新 revision，且 revision 的 container 資源顯示 `cpu=4`、env 含 `OMP_NUM_THREADS=4`。
 
 ## 4. 驗證效果
 
-- [ ] 4.1 等新 revision 接管流量（minScale=0，必要時先 `curl /` 觸發冷啟動）後，在 UI 送一則 chat 查詢觸發完整 RAG pipeline。
-- [ ] 4.2 到 smith.langchain.com 看該次 trace 的瀑布圖，確認 `_rerank` 階段耗時由 ~25s 降至 ~3–5s、整體回應降至 ~5–8s。
-- [ ] 4.3 抽查回答品質：同一組代表性問題在 `FUSION_TOP_M=5` 下答案仍正確、引用文件合理（候選減半未顯著傷害召回）。若品質明顯下降，記錄並評估回調 `FUSION_TOP_M` 或改採換小模型/ONNX 量化方案。
+- [x] 4.1 等新 revision 接管流量（minScale=0，必要時先 `curl /` 觸發冷啟動）後，在 UI 送一則 chat 查詢觸發完整 RAG pipeline。
+- [x] 4.2 到 smith.langchain.com 看該次 trace 的瀑布圖，確認 `_rerank` 階段耗時由 ~25s 降至 ~3–5s、整體回應降至 ~5–8s。
+- [x] 4.3 抽查回答品質：同一組代表性問題在 `FUSION_TOP_M=5` 下答案仍正確、引用文件合理（候選減半未顯著傷害召回）。若品質明顯下降，記錄並評估回調 `FUSION_TOP_M` 或改採換小模型/ONNX 量化方案。
