@@ -221,6 +221,13 @@ resource "google_cloud_run_v2_job" "sync" {
         # Override the entrypoint to run sync once and exit (vs the web server).
         command = ["python", "-m", "src.build_vector_store"]
 
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "1Gi"
+          }
+        }
+
         volume_mounts {
           name       = "data"
           mount_path = local.shared_data_dir
