@@ -19,7 +19,7 @@
 
 ## 4. 部署與重建索引
 
-- [ ] 4.1 commit（feature/fix-bm25-chinese-tokenization）→ merge 進 master → merge 進 `release/gcp-deployment` push，觸發既有 CI（amd64 build + push + scoped terraform apply），帶上新 `_tokenize`、`jieba` 依賴與 `dict.txt.big`。
+- [x] 4.1 commit（feature/fix-bm25-chinese-tokenization）→ merge 進 master → merge 進 `release/gcp-deployment` push，觸發既有 CI（amd64 build + push + scoped terraform apply），帶上新 `_tokenize`、`jieba` 依賴與 `dict.txt.big`。
 - [ ] 4.2 上線後**觸發一次 sync job 重建 BM25 index**（UI 上傳知識庫檔或手動觸發 job），使 GCS 上的 `tokenized_corpus` 以新 jieba 分詞重建。確認 sync `exit(0)`、log 顯示 vectors/BM25 重建完成。
 
 ## 5. 品質複驗
