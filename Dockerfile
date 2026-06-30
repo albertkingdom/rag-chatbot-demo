@@ -21,6 +21,13 @@ RUN python -c "import os; from huggingface_hub import snapshot_download; snapsho
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
 
+# Pre-download the jieba traditional-Chinese dictionary (dict.txt.big) so
+# runtime never fetches it. JIEBA_DICT_PATH is read once at module load by
+# src/bm25_index.py (jieba.set_dictionary). Placed before COPY . . so code
+# changes don't invalidate this layer.
+ENV JIEBA_DICT_PATH=/app/dict/dict.txt.big
+RUN python -c "import os, urllib.request; os.makedirs(os.path.dirname(os.environ['JIEBA_DICT_PATH']), exist_ok=True); urllib.request.urlretrieve('https://raw.githubusercontent.com/fxsjy/jieba/master/extra_dict/dict.txt.big', os.environ['JIEBA_DICT_PATH'])"
+
 # Copy the rest of the application's code into the container
 COPY . .
 
