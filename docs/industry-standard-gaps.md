@@ -1,14 +1,14 @@
 # 業界標準差距分析
 
 > 對照業界標準,本專案目前的差距清單。建立日期:2026-07-01。
-> Item #1 已開始進行(Spectra change `add-access-control`,branch `feature/auth-and-rate-limit`)。
+> Item #1 已完成(commit `a08d9c0`,branch `feature/auth-and-rate-limit`)。
 
 ## 嚴重(安全 / 正確性,應優先處理)
 
 ### 1. 應用程式完全無認證,且 Cloud Run 對全網公開
-- `terraform/main.tf` 的 `google_cloud_run_v2_service_iam_member.public` 將 Service 開放給 `allUsers`,`src/app.py` 無任何 auth/rate-limit。任何能連網的人都能呼叫 LLM/Pinecone/OpenAI,直接產生費用與濫用風險。
+- ~~`terraform/main.tf` 的 `google_cloud_run_v2_service_iam_member.public` 將 Service 開放給 `allUsers`,`src/app.py` 無任何 auth/rate-limit。任何能連網的人都能呼叫 LLM/Pinecone/OpenAI,直接產生費用與濫用風險。~~
 - 業界標準:至少加 API key / IAP / Cloud Run IAM 限縮 + rate limit。
-- **狀態:進行中** — Spectra change `add-access-control`(Cloud Run IAM 限縮 + app 層 API key/session token + Redis 限流 + `/health` + `/login` + `/logout`)。
+- **狀態:已完成(commit `a08d9c0`)** — Spectra change `add-access-control` 已 archived:Cloud Run IAM 從 `allUsers` 改為 `allowed_invoker_members` 限縮;app 層 `src/access_control.py` 加入 API key header + Redis-backed session token(`/login`/`/logout`)+ per-key fixed-window 限流 + 豁免認證的 `/health`;Terraform `APP_API_KEY` 注入 Secret Manager;34 tests hermetic 全綠。
 
 ### 2. 檔案上傳有路徑穿越風險
 - `src/app.py` 的 `upload_manual_func` 與 `bom_mapper_func` 直接用 `file.name`;無檔案大小限制、無 content-type 驗證、無掃毒。
@@ -61,8 +61,8 @@
 - 業界標準:`logging` + JSON formatter + trace ID。
 
 ### 13. 無健康檢查 / 指標 / 錯誤追蹤
-- 無 `/health` `/ready` endpoint(Cloud Run 用預設);無 Prometheus 指標(cache hit rate、latency、intent 分類率);無 Sentry/錯誤追蹤;無 alerting。
-- 註:`/health` 將由 `add-access-control` change 補上。
+- ~~無 `/health` `/ready` endpoint(Cloud Run 用預設)~~;無 Prometheus 指標(cache hit rate、latency、intent 分類率);無 Sentry/錯誤追蹤;無 alerting。
+- **部分完成**:`/health` 已由 `add-access-control` change 補上(豁免認證、不載重型 singleton、Cloud Run liveness 可用)。剩餘:Prometheus 指標、Sentry、alerting 仍未做。
 
 ### 14. 外部呼叫無 retry / circuit breaker
 - 對 OpenAI、Pinecone、MongoDB、OpenRouter 的呼叫都無重試、無退避、無熔斷。瞬時失敗直接拋給使用者「An error occurred: ...」(還把例外訊息透漏給前端,資訊洩漏)。
@@ -96,17 +96,17 @@
 | Lint/Type/Format | 無 | ruff + mypy + pre-commit | 🔴 全無 |
 | CI 測試門檻 | 無 | PR 必跑 test+lint | 🔴 全無 |
 | 依賴鎖定 | 4/34 釘版 | lockfile + hash | 🔴 幾乎全無 |
-| 認證/限流 | 公開無 auth | IAP/API key + rate limit | 🔴 全無(進行中) |
+| 認證/限流 | ~~公開無 auth~~ API key + session + rate limit | IAP/API key + rate limit | ✅ 已完成 |
 | 日誌 | print() | structured logging | 🟠 全無 |
 | 測試覆蓋率 | 無度量 | ≥70% gate | 🟠 全無 |
-| 健康檢查/指標 | 無 | /health + Prometheus | 🟡 全無(`/health` 進行中) |
+| 健康檢查/指標 | `/health` 已補 | /health + Prometheus | 🟡 指標仍無 |
 | HA/Scaling | max=1 | ≥2 + autoscale | 🟡 單實例 |
 
 ---
 
 ## 建議優先順序
 
-1. **馬上**:修 cache key `hash()` bug(#3)、修測試 bug(#5)、加認證/限流(#1,進行中)、修上傳安全(#2)。
+1. **馬上**:修 cache key `hash()` bug(#3)、修測試 bug(#5)、~~加認證/限流(#1)~~ ✅、修上傳安全(#2)。
 2. **短期**:補 ruff+mypy+pre-commit(#6)、加 CI test workflow(#7)、釘依賴(#8)、`app.py` 拆分(#10)、`print→logging`(#12)。
 3. **中期**:retry/circuit breaker(#14)、指標+健康檢查(#13)、staging 環境(#15)、guardrail 強化+對抗測試(#4)。
 
