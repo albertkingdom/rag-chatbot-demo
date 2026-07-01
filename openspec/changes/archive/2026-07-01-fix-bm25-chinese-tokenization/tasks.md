@@ -20,9 +20,9 @@
 ## 4. 部署與重建索引
 
 - [x] 4.1 commit（feature/fix-bm25-chinese-tokenization）→ merge 進 master → merge 進 `release/gcp-deployment` push，觸發既有 CI（amd64 build + push + scoped terraform apply），帶上新 `_tokenize`、`jieba` 依賴與 `dict.txt.big`。
-- [ ] 4.2 上線後**觸發一次 sync job 重建 BM25 index**（UI 上傳知識庫檔或手動觸發 job），使 GCS 上的 `tokenized_corpus` 以新 jieba 分詞重建。確認 sync `exit(0)`、log 顯示 vectors/BM25 重建完成。
+- [x] 4.2 上線後**觸發一次 sync job 重建 BM25 index**（UI 上傳知識庫檔或手動觸發 job），使 GCS 上的 `tokenized_corpus` 以新 jieba 分詞重建。確認 sync `exit(0)`、log 顯示 vectors/BM25 重建完成。
 
 ## 5. 品質複驗
 
-- [ ] 5.1 在 UI 送「忘記密碼怎麼辦？」並取得 `_retrieve` 的 `fusion_metadata`，確認 `bm25_results` 的 score **不再全為 0**、共享詞文件有正分數（對應 Success Criteria）。
-- [ ] 5.2 抽查 3–5 題代表性中文問題（如「如何登入」「忘記密碼」「如何登出」），確認融合後 Top 候選含正解、且相對純向量基線排序有合理改善；記錄任何品質退化以決定是否調整 stopword 或詞典。
+- [x] 5.1 在 UI 送「忘記密碼怎麼辦？」並取得 `_retrieve` 的 `fusion_metadata`，確認 `bm25_results` 的 score **不再全為 0**、共享詞文件有正分數（對應 Success Criteria）。
+- [x] 5.2 抽查 3–5 題代表性中文問題（如「如何登入」「忘記密碼」「如何登出」），確認融合後 Top 候選含正解、且相對純向量基線排序有合理改善；記錄任何品質退化以決定是否調整 stopword 或詞典。
