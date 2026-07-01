@@ -14,7 +14,7 @@ provider "google" {
 }
 
 locals {
-  # The 9 secrets injected into both Cloud Run resources from Secret Manager.
+  # The 10 secrets injected into both Cloud Run resources from Secret Manager.
   secret_names = [
     "OPENAI_API_KEY",
     "PINECONE_API_KEY",
@@ -25,6 +25,7 @@ locals {
     "LANGCHAIN_PROJECT",
     "MONGODB_URL",
     "REDIS_URL",
+    "APP_API_KEY",
   ]
 
   # Plain (non-secret) environment variables shared by Service and Job.
@@ -169,6 +170,20 @@ resource "google_cloud_run_v2_service" "web" {
         name  = "OMP_NUM_THREADS"
         value = "4"
       }
+      # Access control: auth is enabled in prod; APP_API_KEY comes from the
+      # dynamic secret block below. Rate limit and session TTL are non-secret.
+      env {
+        name  = "AUTH_ENABLED"
+        value = "true"
+      }
+      env {
+        name  = "RATE_LIMIT_RPM"
+        value = tostring(var.rate_limit_rpm)
+      }
+      env {
+        name  = "SESSION_TTL_SECONDS"
+        value = tostring(var.session_ttl_seconds)
+      }
 
       dynamic "env" {
         for_each = toset(local.secret_names)
@@ -188,12 +203,15 @@ resource "google_cloud_run_v2_service" "web" {
   depends_on = [google_secret_manager_secret.secrets]
 }
 
-# Allow unauthenticated public access to the web app.
-resource "google_cloud_run_v2_service_iam_member" "public" {
+# Invoker grants for the web app. Default is empty (Service is fully closed);
+# operators add principals via var.allowed_invoker_members. Setting
+# ["allUsers"] reverts to public access relying on the app-layer API key.
+resource "google_cloud_run_v2_service_iam_member" "invokers" {
+  for_each = toset(var.allowed_invoker_members)
   location = google_cloud_run_v2_service.web.location
   name     = google_cloud_run_v2_service.web.name
   role     = "roles/run.invoker"
-  member   = "allUsers"
+  member   = each.value
 }
 
 # ---------------------------------------------------------------------------

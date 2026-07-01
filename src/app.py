@@ -631,6 +631,11 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
         )
 
 app = FastAPI()
+# Mount access control (auth middleware + /health, /login, /logout routes)
+# BEFORE gr.mount_gradio_app so the middleware wraps Gradio routes too.
+from .access_control import mount_auth  # noqa: E402
+
+mount_auth(app)
 app = gr.mount_gradio_app(app, demo, path="/")
 
 if __name__ == "__main__":

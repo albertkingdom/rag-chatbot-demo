@@ -18,6 +18,10 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - MONGODB_URL=mongodb://mongodb:27017/chatbot
       - JOB_RUNNER=local
+      - APP_API_KEY=${APP_API_KEY:-}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}
+      - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-86400}
     depends_on:
       - redis
       - mongodb
@@ -73,6 +77,10 @@ services:
       - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
       - REDIS_URL=redis://redis:6379/0
       - MONGODB_URL=mongodb://mongodb:27017/chatbot
+      - APP_API_KEY=${APP_API_KEY:-}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}
+      - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-86400}
     depends_on:
       - redis
       - mongodb
