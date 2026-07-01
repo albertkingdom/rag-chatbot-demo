@@ -82,11 +82,36 @@ PINECONE_API_KEY="your_pinecone_api_key_here"
 GOOGLE_API_KEY="your_google_api_key_here"
 OPENROUTER_API_KEY="your_openrouter_api_key_here"
 
+# Access control (see "Access Control" below)
+APP_API_KEY="a_long_random_string_you_choose"   # shared key for /login + X-API-Key
+AUTH_ENABLED=true                               # set false for local dev / tests
+RATE_LIMIT_RPM=60                               # per-key requests per minute
+SESSION_TTL_SECONDS=86400                        # /login session lifetime (24h)
+
 # Optional: LangSmith observability
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY="your_langchain_api_key_here"
 LANGCHAIN_PROJECT="carbon-assistant"
 ```
+
+### Access Control
+
+The app gates every route behind a shared **API key** (no per-user accounts):
+
+- **Browser**: first visit to `/` redirects to `/login`; enter the `APP_API_KEY`
+  value. A Redis-backed session token is issued as an HttpOnly `session_id`
+  cookie (valid for `SESSION_TTL_SECONDS`). The raw key is never stored in the
+  cookie. `/logout` revokes the session immediately.
+- **Programmatic**: send `X-API-Key: <APP_API_KEY>` header.
+- Requests exceeding `RATE_LIMIT_RPM` per key get `429` with `Retry-After`.
+- `GET /health` is exempt (for Cloud Run liveness probes).
+- **Local dev / tests**: set `AUTH_ENABLED=false` (or leave `APP_API_KEY`
+  empty) to bypass auth — a startup warning is logged.
+
+On **GCP**, the Cloud Run Service is closed by default
+(`allowed_invoker_members=[]` in Terraform). Operators must explicitly list
+members (e.g. `"user:demo@example.com"`) or temporarily set `["allUsers"]` and
+rely on the app-layer API key. `APP_API_KEY` is read from Secret Manager.
 
 ### 2. Launch the Application
 
@@ -96,7 +121,8 @@ docker-compose up --build
 
 ### 3. Access the Tools
 
-- **Main Application**: [http://localhost:8000](http://localhost:8000)
+- **Main Application**: [http://localhost:8000](http://localhost:8000) — you will
+  be redirected to `/login` on first visit (enter `APP_API_KEY`).
 - **Redis GUI (RedisInsight)**: [http://localhost:8001](http://localhost:8001) - Use this to inspect the prompt cache.
 - **MongoDB GUI (Mongo Express)**: [http://localhost:8081](http://localhost:8081) - Use this to inspect conversation logs.
 
