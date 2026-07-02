@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, AsyncMock
 
 from langchain_core.documents import Document
 
-import src.app as app_module
+import src.services as services_module
+import src.rag_pipeline as rag_module
 
 
 def _make_doc(doc_id: str, answer: str) -> Document:
@@ -49,14 +50,57 @@ def patched_chain(monkeypatch, docs_map):
     reranker = MagicMock()
     reranker.score = MagicMock(return_value=[0.60, 0.95, 0.70, 0.80])
 
-    monkeypatch.setattr(app_module, "get_bm25_index", lambda: bm25)
-    monkeypatch.setattr(app_module, "get_vectorstore", lambda: vector_store)
-    monkeypatch.setattr(app_module, "get_reranker_model", lambda: reranker)
+    # Build a mock hybrid retriever that returns a fixed fused candidate set,
+    # preserving the original fixture's intent (independent of RRF internals).
+    hybrid_retriever = MagicMock()
+    hybrid_retriever.retrieve = AsyncMock(
+        return_value={
+            "candidates": [
+                docs_map["B"],
+                docs_map["A"],
+                docs_map["D"],
+                docs_map["C"],
+            ],
+            "fusion_metadata": {
+                "bm25_results": [
+                    {"doc_id": "B", "score": 3.0},
+                    {"doc_id": "D", "score": 2.0},
+                    {"doc_id": "A", "score": 1.0},
+                ],
+                "vector_results": [
+                    {"doc_id": "A", "score": 0.9},
+                    {"doc_id": "B", "score": 0.8},
+                    {"doc_id": "C", "score": 0.7},
+                ],
+                "fusion_results": [
+                    {"doc_id": "B", "score": 0.05},
+                    {"doc_id": "A", "score": 0.04},
+                    {"doc_id": "D", "score": 0.03},
+                    {"doc_id": "C", "score": 0.02},
+                ],
+            },
+        }
+    )
 
-    monkeypatch.setattr(app_module, "_hybrid_retriever", None)
-    monkeypatch.setattr(app_module, "_retrieval_chain", None)
+    # Patch the providers on src.services (where they now live) and reset the
+    # chain singletons on src.rag_pipeline (where retrieval/generation chains
+    # are cached). app.py re-exports the providers, so callers using
+    # `from src.app import get_bm25_index` are unaffected.
+    # Patch the providers where they are *looked up*: rag_pipeline imported
+    # them by name at module load, so patching src.services alone is not
+    # enough — we must patch the names as seen by rag_pipeline too.
+    monkeypatch.setattr(rag_module, "get_hybrid_retriever", lambda: hybrid_retriever)
+    monkeypatch.setattr(rag_module, "get_reranker_model", lambda: reranker)
+    # Also reset services singletons in case other tests touched them.
+    # These are LazySingleton instances (see src/services.py); reset their
+    # cached value via monkeypatch so the change auto-reverts after the test
+    # instead of permanently clobbering the module-level singleton object.
+    monkeypatch.setattr(services_module._hybrid_retriever, "_value", None)
+    monkeypatch.setattr(services_module._reranker, "_value", None)
 
-    return app_module.get_retrieval_chain()
+    rag_module._retrieval_chain = None  # reset cached chain
+
+    return rag_module.get_retrieval_chain()
 
 
 @pytest.mark.asyncio

@@ -1,20 +1,27 @@
+"""Manual smoke script for the RAG generation stream.
+
+Not a pytest test (no test_* functions) — run it directly to exercise the
+generation chain against real services. It imports from src.rag_pipeline
+(get_generation_chain) instead of the long-removed `from app import rag_chain`.
+
+Usage:
+    venv/bin/python tests/test_rag_stream.py
+"""
 import asyncio
 import os
 from dotenv import load_dotenv
 
+
 async def run_test():
-    """Loads environment, imports the RAG chain, and tests the astream method."""
-    
-    # Load environment variables from .env file
+    """Loads environment, imports the generation chain, and tests astream."""
     load_dotenv()
-    
-    print("--- Loading RAG Chain from app.py ---")
+
+    print("--- Loading generation chain from src.rag_pipeline ---")
     try:
-        # It's important to import AFTER loading dotenv
-        from app import rag_chain
-        print("RAG Chain loaded successfully.")
+        from src.rag_pipeline import get_generation_chain
+        print("Generation chain loaded successfully.")
     except Exception as e:
-        print(f"Error loading RAG chain: {e}")
+        print(f"Error loading generation chain: {e}")
         return
 
     test_message = "What is the purpose of this system?"
@@ -22,10 +29,13 @@ async def run_test():
 
     try:
         full_response = ""
-        async for chunk in rag_chain.astream(test_message):
+        chain = get_generation_chain()
+        async for chunk in chain.astream(
+            {"context": "", "question": test_message, "history": ""}
+        ):
             print(chunk, end="", flush=True)
             full_response += chunk
-        
+
         print("\n\n--- Stream finished ---")
         if not full_response:
             print("Warning: Stream produced no output.")
@@ -35,6 +45,7 @@ async def run_test():
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     asyncio.run(run_test())

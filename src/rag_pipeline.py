@@ -1,0 +1,404 @@
+"""RAG pipeline: prompt, context formatting, query rewriting, chat stream,
+and the retrieval/generation chain assembly.
+
+Business logic lives here; singletons are obtained from src.services. This
+module has no module-level side effects beyond defining the QA prompt.
+"""
+
+import asyncio
+import logging
+from typing import AsyncGenerator
+
+import gradio as gr
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnableLambda
+from langsmith import traceable
+
+from .cache_service import PromptCacheService
+from .config import (
+    BM25_TOP_N,
+    CACHE_ENABLED,
+    CACHE_SIMILARITY_THRESHOLD,
+    RRF_K,
+    VECTOR_TOP_N,
+)
+from .conversation_db import get_conversation_db
+from .guardrails import (
+    detect_pii,
+    detect_prompt_injection,
+    get_guardrail_message,
+)
+from .rerank_stage import rerank_candidates
+from .services import (
+    get_embeddings,
+    get_hybrid_retriever,
+    get_intent_classifier,
+    get_llm,
+    get_redis_conn,
+    get_reranker_model,
+)
+
+logger = logging.getLogger("rag_pipeline")
+
+
+# ---------------------------------------------------------------------------
+# Prompt
+# ---------------------------------------------------------------------------
+
+_QA_PROMPT = PromptTemplate.from_template(
+    """You are a professional assistant for a carbon management system.
+        Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
+        If the context is not relevant, just say that you don't know, don't try to make up an answer.
+        Keep the answer concise and helpful.
+        {history}
+
+        Context:
+        {context}
+
+        Question:
+        {question}
+
+        Helpful Answer:"""
+)
+
+
+# ---------------------------------------------------------------------------
+# Retrieval / generation chains
+# ---------------------------------------------------------------------------
+
+
+_retrieval_chain = None
+_generation_chain = None
+
+
+@traceable(name="Prepare Context")
+def _format_docs(outputs):
+    docs = outputs["docs"]
+    contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
+    return {"context": "\n\n".join(contexts), "contexts": contexts}
+
+
+_retrieval_chain = None
+_generation_chain = None
+
+
+@traceable(name="Prepare Context")
+def _format_docs(outputs):
+    docs = outputs["docs"]
+    contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
+    return {"context": "\n\n".join(contexts), "contexts": contexts}
+
+
+def get_retrieval_chain():
+    # Deliberately NOT locked: construction only wraps providers already
+    # protected by services.py locks (get_hybrid_retriever, get_reranker_model)
+    # into a RunnableLambda pipe. The build is idempotent and microsecond-
+    # cost; a race worst case builds an extra functionally-equivalent pipe
+    # object (immediately GC'd) — no duplicate expensive I/O, no state change.
+    global _retrieval_chain
+    if _retrieval_chain is None:
+        retriever = get_hybrid_retriever()
+
+        async def _retrieve(query: str) -> dict:
+            result = await retriever.retrieve(
+                query,
+                vector_top_n=VECTOR_TOP_N,
+                bm25_top_n=BM25_TOP_N,
+                rrf_k=RRF_K,
+            )
+            return {"query": query, **result}
+
+        def _rerank(payload: dict) -> dict:
+            query = payload["query"]
+            candidates = payload["candidates"]
+            fusion_metadata = payload["fusion_metadata"]
+            ranked = rerank_candidates(query, candidates, get_reranker_model().score)
+            formatted = _format_docs(ranked)
+            return {
+                **formatted,
+                "docs": ranked["docs"],
+                "rerank_scores": ranked["rerank_scores"],
+                "fusion_metadata": fusion_metadata,
+            }
+
+        _retrieval_chain = RunnableLambda(_retrieve) | RunnableLambda(_rerank)
+    return _retrieval_chain
+
+
+def get_generation_chain():
+    # Deliberately NOT locked: construction only wraps providers already
+    # protected by services.py locks (get_llm) into a prompt|llm|parser pipe.
+    # Idempotent, microsecond-cost; race worst case builds an extra
+    # equivalent pipe — no duplicate expensive I/O, no state change.
+    global _generation_chain
+    if _generation_chain is None:
+        _generation_chain = _QA_PROMPT | get_llm() | StrOutputParser()
+    return _generation_chain
+
+
+# ---------------------------------------------------------------------------
+# Conversation history helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_history_turns(history: list, max_turns: int = 3) -> list:
+    turns = []
+    i = 0
+    while i < len(history) - 1:
+        msg = history[i]
+        next_msg = history[i + 1]
+        if isinstance(msg, dict) and isinstance(next_msg, dict):
+            if msg.get("role") == "user" and next_msg.get("role") == "assistant":
+                turns.append((msg["content"], next_msg["content"]))
+                i += 2
+                continue
+        i += 1
+    return turns[-max_turns:] if turns else []
+
+
+def format_history(history: list, max_turns: int = 3) -> str:
+    if not history:
+        return ""
+    recent = _parse_history_turns(history, max_turns)
+    if not recent:
+        return ""
+    lines = ["\n\n        Previous conversation:"]
+    for user_msg, bot_msg in recent:
+        lines.append(f"        User: {user_msg}")
+        lines.append(f"        Assistant: {bot_msg}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Query rewriting
+# ---------------------------------------------------------------------------
+
+
+@traceable(name="Query Rewriting")
+async def rewrite_query(message: str, history: list, max_turns: int = 3) -> str:
+    if not history:
+        return message
+
+    recent = _parse_history_turns(history, max_turns)
+    if not recent:
+        return message
+
+    history_text = "\n".join([f"User: {u}\nAssistant: {a}" for u, a in recent])
+
+    prompt = f"""Given the conversation history and the follow-up question, rewrite the question into a standalone question that can be understood without the conversation context.
+If the question is already complete and self-contained, return it as-is.
+
+Conversation history:
+{history_text}
+
+Follow-up question: {message}
+
+Rewritten standalone question:"""
+
+    try:
+        llm = get_llm()
+        response = await llm.ainvoke(prompt)
+        rewritten = response.content.strip()
+        logger.info("[Query Rewriting] Original: %s", message)
+        logger.info("[Query Rewriting] Rewritten: %s", rewritten)
+        return rewritten
+    except Exception as e:
+        logger.warning("[Query Rewriting] ERROR: %s", e)
+        return message
+
+
+# ---------------------------------------------------------------------------
+# Chat stream
+# ---------------------------------------------------------------------------
+
+
+@traceable(name="Carbon Assistant Chat")
+async def chat_stream(message: str, history: list, request: gr.Request = None) -> AsyncGenerator[str, None]:
+    """Handles the entire RAG chain lifecycle for a single chat request with caching."""
+    session_id = request.session_hash if request else None
+    full_response = ""
+    intent_result = None
+    try:
+        # Step 0a: Input guardrail - block prompt injection before hitting LLM
+        injection_hit, _ = detect_prompt_injection(message)
+        if injection_hit:
+            db = get_conversation_db()
+            await db.async_save_conversation(
+                user_question=message,
+                assistant_response=get_guardrail_message(),
+                session_id=session_id,
+                response_source="guardrail",
+                metadata={"injection_pattern": "input_injection"},
+            )
+            yield get_guardrail_message()
+            return
+
+        # Step 0b: Query Rewriting - rewrite follow-up questions into standalone queries
+        rewritten_query = await rewrite_query(message, history)
+
+        # Step 0c: Intent Classification - Filter out off-topic questions
+        status_msg = "正在分析您的問題..."
+        for i in range(1, len(status_msg) + 1):
+            yield status_msg[:i]
+            await asyncio.sleep(0.02)
+
+        intent_classifier = get_intent_classifier()
+        if intent_classifier:
+            intent_result = await intent_classifier.classify(rewritten_query)
+            logger.info("Intent classification: %s", intent_result)
+
+            # If question is not relevant, return early with helpful message
+            if not intent_result["relevant"] or intent_result["confidence"] < 0.7:
+                off_topic_message = intent_classifier.get_off_topic_message()
+                db = get_conversation_db()
+                await db.async_save_conversation(
+                    user_question=message,
+                    assistant_response=off_topic_message,
+                    session_id=session_id,
+                    response_source="off_topic",
+                    intent_classification=intent_result,
+                )
+                for i in range(1, len(off_topic_message) + 1):
+                    yield off_topic_message[:i]
+                    await asyncio.sleep(0.01)
+                return
+
+        yield "正在從知識庫檢索相關資訊..."
+        embeddings = get_embeddings()
+
+        # Generate embedding for the rewritten query (needed for both cache and RAG)
+        question_embedding = await embeddings.aembed_query(rewritten_query)
+
+        # Try to get cached response if cache is enabled
+        if CACHE_ENABLED:
+            cache_service = PromptCacheService(get_redis_conn())
+            cached_response = cache_service.get_cached_response(
+                question_embedding,
+                threshold=CACHE_SIMILARITY_THRESHOLD,
+            )
+
+            if cached_response:
+                logger.info(
+                    "Cache hit! Similarity: %.3f, Hit count: %s",
+                    cached_response["similarity"], cached_response["hit_count"],
+                )
+                cached_answer = cached_response["answer"]
+
+                pii_hit, pii_type = detect_pii(cached_answer)
+                injection_hit, injection_pattern = detect_prompt_injection(cached_answer)
+                if pii_hit or injection_hit:
+                    guardrail_message = get_guardrail_message()
+                    logger.warning(
+                        "[Guardrail] Blocked cached response: pii=%s injection=%s sim=%s",
+                        pii_type if pii_hit else None,
+                        injection_pattern if injection_hit else None,
+                        cached_response.get("similarity"),
+                    )
+                    db = get_conversation_db()
+                    await db.async_save_conversation(
+                        user_question=message,
+                        assistant_response=guardrail_message,
+                        session_id=session_id,
+                        response_source="guardrail",
+                        intent_classification=intent_result,
+                        cache_hit=False,
+                        metadata={
+                            "pii_type": pii_type if pii_hit else None,
+                            "injection_pattern": injection_pattern if injection_hit else None,
+                            "cache_candidate": True,
+                            "cache_similarity": cached_response.get("similarity"),
+                        },
+                    )
+                    for i in range(1, len(guardrail_message) + 1):
+                        yield guardrail_message[:i]
+                        await asyncio.sleep(0.005)
+                    return
+
+                # Record the CACHED conversation to MongoDB
+                db = get_conversation_db()
+                await db.async_save_conversation(
+                    user_question=message,
+                    assistant_response=cached_answer,
+                    session_id=session_id,
+                    response_source="cache",
+                    intent_classification=intent_result,
+                    cache_hit=True,
+                    cache_similarity=cached_response["similarity"],
+                )
+
+                # Stream the cached response for consistent UI experience
+                for i in range(1, len(cached_answer) + 1):
+                    yield cached_answer[:i]
+                    await asyncio.sleep(0.005)
+                return
+
+        # Cache miss or cache disabled - proceed with normal RAG pipeline
+        yield "正在優化檢索結果 (Reranking)..."
+        context_bundle = await get_retrieval_chain().ainvoke(rewritten_query)
+        context = context_bundle.get("context", "")
+        contexts = context_bundle.get("contexts", [])
+
+        yield "正在生成回答..."
+        history_text = format_history(history)
+        async for chunk in get_generation_chain().astream(
+            {"context": context, "question": message, "history": history_text}
+        ):
+            full_response += chunk
+
+        pii_hit, pii_type = detect_pii(full_response)
+        injection_hit, injection_pattern = detect_prompt_injection(full_response)
+
+        if pii_hit or injection_hit:
+            guardrail_message = get_guardrail_message()
+            logger.warning(
+                "[Guardrail] Blocked response: pii=%s injection=%s",
+                pii_type if pii_hit else None,
+                injection_pattern if injection_hit else None,
+            )
+            db = get_conversation_db()
+            await db.async_save_conversation(
+                user_question=message,
+                assistant_response=guardrail_message,
+                session_id=session_id,
+                response_source="guardrail",
+                intent_classification=intent_result,
+                cache_hit=False,
+                metadata={
+                    "pii_type": pii_type if pii_hit else None,
+                    "injection_pattern": injection_pattern if injection_hit else None,
+                },
+            )
+            for i in range(1, len(guardrail_message) + 1):
+                yield guardrail_message[:i]
+                await asyncio.sleep(0.005)
+            return
+
+        for i in range(1, len(full_response) + 1):
+            yield full_response[:i]
+            await asyncio.sleep(0.005)
+
+        # Store the generated response in cache
+        if CACHE_ENABLED and full_response:
+            cache_service = PromptCacheService(get_redis_conn())
+            cache_service.set_cached_response(
+                question_embedding,
+                message,
+                full_response,
+            )
+            logger.info("Response cached for question: %s...", message[:50])
+
+        # Record the RAG conversation to MongoDB
+        db = get_conversation_db()
+        await db.async_save_conversation(
+            user_question=message,
+            assistant_response=full_response,
+            session_id=session_id,
+            response_source="rag",
+            intent_classification=intent_result,
+            cache_hit=False,
+        )
+
+    except Exception as e:
+        logger.error("An error occurred during chat stream: %s", e)
+        yield f"An error occurred: {e}"

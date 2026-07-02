@@ -101,16 +101,21 @@ class AuthConfig:
 def build_auth_config() -> AuthConfig:
     """Build an AuthConfig from environment variables.
 
-    Reads AUTH_ENABLED, APP_API_KEY, RATE_LIMIT_RPM, SESSION_TTL_SECONDS and
-    REDIS_URL. When AUTH_ENABLED is true but APP_API_KEY is unset, logs an
-    error and returns enabled=False (degraded) instead of producing a config
-    that would 401 every request.
+    Reads AUTH_ENABLED, APP_API_KEY, RATE_LIMIT_RPM, SESSION_TTL_SECONDS.
+    Redis connection is obtained from the shared services.get_redis_conn()
+    provider so the whole app uses one connection source. When AUTH_ENABLED
+    is true but APP_API_KEY is unset, logs an error and returns enabled=False
+    (degraded) instead of producing a config that would 401 every request.
     """
+    # Lazy import to avoid a circular dependency at module load (services
+    # imports config, not access_control; this is safe but kept lazy for
+    # clarity).
+    from .services import get_redis_conn
+
     auth_enabled = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
     api_key = os.environ.get("APP_API_KEY")
     rate_limit_rpm = int(os.environ.get("RATE_LIMIT_RPM", "60"))
     session_ttl_seconds = int(os.environ.get("SESSION_TTL_SECONDS", "86400"))
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
     if auth_enabled and not api_key:
         logger.error(
@@ -125,7 +130,7 @@ def build_auth_config() -> AuthConfig:
         api_key=api_key,
         rate_limit_rpm=rate_limit_rpm,
         session_ttl_seconds=session_ttl_seconds,
-        redis=redis.from_url(redis_url),
+        redis=get_redis_conn(),
     )
 
 

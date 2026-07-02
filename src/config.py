@@ -20,6 +20,11 @@ BM25_VERSION_RETENTION = int(os.environ.get("BM25_VERSION_RETENTION", "3"))
 # Name of the Pinecone index
 PINECONE_INDEX_NAME = "carbon-assistant-qa-index"
 
+# Redis connection URL. Single source of truth — consumed by services.get_redis_conn()
+# and indirectly by ui.py / rag_pipeline.py / access_control.py. Do not re-read
+# this env var in consumers; import REDIS_URL from here instead.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
 # Prompt Cache Settings
 CACHE_ENABLED = True
 CACHE_TTL_SECONDS = 86400  # 24 hours

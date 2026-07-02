@@ -1,24 +1,13 @@
 import csv
 import json
-import os
 from collections import defaultdict
 from typing import Dict, List, Union
 import traceback
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from fuzzywuzzy import fuzz
 import pandas as pd
 from pydantic import BaseModel, Field
 from langsmith import traceable
-
-# 初始化 LangChain LLM
-API_KEY = os.getenv("OPENROUTER_API_KEY")
-llm = ChatOpenAI(
-    model="google/gemini-2.5-flash",
-    temperature=0,
-    openai_api_key=API_KEY,
-    openai_api_base="https://openrouter.ai/api/v1",
-) if API_KEY else None
 
 # 根據 Product Requirements Document.docx.pdf 定義系統的五個標準欄位
 SYSTEM_CATEGORIES = {
@@ -103,10 +92,22 @@ def fuzzy_match_header(header: str, mapping: dict, threshold=80) -> Union[str, N
         return mapping[best_match]
     return None
 
+def _get_llm():
+    """Lazily obtain the LLM via services.get_llm().
+
+    Kept as a thin local wrapper so bom_mapper stays decoupled from the
+    services module path and so tests can patch bom_mapper._get_llm.
+    """
+    from .services import get_llm
+    return get_llm()
+
+
 def llm_batch_classify_headers(headers: List[str], categories: List[str]) -> Dict[str, str]:
     """使用 LLM 批次分類 headers，並強制使用定義好的 Pydantic Schema。"""
-    if not llm or not headers:
+    if not headers:
         return {}
+
+    llm = _get_llm()
 
     prompt = (
         f"You are an expert in BOM (Bill of Materials) data processing. "
@@ -134,8 +135,10 @@ def llm_batch_classify_headers(headers: List[str], categories: List[str]) -> Dic
 def llm_batch_verify_headers(llm_matched: Dict[str, List[str]]) -> Dict[str, List[str]]:
     """使用 LLM 批次驗證匹配是否正確，並強制使用定義好的 Pydantic Schema。"""
     wrong_headers = defaultdict(list)
-    if not llm or not llm_matched:
+    if not llm_matched:
         return dict(wrong_headers)
+
+    llm = _get_llm()
 
     verification_batch = []
     for english_cat, headers in llm_matched.items(): # Changed chinese_cat to english_cat
