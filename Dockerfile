@@ -1,14 +1,18 @@
 # Use an official Python runtime as a parent image
-FROM python:3.10-slim
+FROM python:3.13-slim
 
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container
+# Copy the requirements file into the container.
+# requirements.txt is a pip-compile lock file (exact pins + --hash per
+# package). Regenerate via scripts/compile_requirements.sh after editing
+# requirements.in. Never hand-edit requirements.txt.
 COPY requirements.txt .
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Install pinned dependencies. The lock file carries --hash annotations,
+# which make pip enforce hash verification automatically.
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 
 # Pre-download the BGE reranker into the image so cold starts never fetch it.
 # MODEL_CACHE_DIR is the single source of truth shared with get_reranker_model().
