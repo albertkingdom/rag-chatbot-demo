@@ -203,15 +203,19 @@ resource "google_cloud_run_v2_service" "web" {
   depends_on = [google_secret_manager_secret.secrets]
 }
 
-# Invoker grants for the web app. Default is empty (Service is fully closed);
-# operators add principals via var.allowed_invoker_members. Setting
-# ["allUsers"] reverts to public access relying on the app-layer API key.
-resource "google_cloud_run_v2_service_iam_member" "invokers" {
-  for_each = toset(var.allowed_invoker_members)
+# Invoker grant for the web app. This app's access model is a single shared
+# APP_API_KEY validated in-app (src/access_control.py), not per-user GCP
+# identity — end users have no GCP account/token, so the Service must stay
+# reachable at the IAM layer and let the app-layer login page do the real
+# gatekeeping. There is no scenario where a narrower value is correct without
+# first changing the app's auth model, so this is hardcoded rather than a
+# variable (a configurable default risks a manual `terraform apply` silently
+# locking the Service out from under real users).
+resource "google_cloud_run_v2_service_iam_member" "public" {
   location = google_cloud_run_v2_service.web.location
   name     = google_cloud_run_v2_service.web.name
   role     = "roles/run.invoker"
-  member   = each.value
+  member   = "allUsers"
 }
 
 # ---------------------------------------------------------------------------

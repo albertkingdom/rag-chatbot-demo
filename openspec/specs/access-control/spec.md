@@ -266,24 +266,21 @@ tests:
 -->
 
 ---
-### Requirement: Cloud Run Service IAM restriction and secret injection
+### Requirement: Cloud Run Service IAM invoker and secret injection
 
-The Terraform configuration SHALL NOT grant `roles/run.invoker` to `allUsers` on the Cloud Run Service. Invoker grants SHALL be limited to a configurable list of members (`allowed_invoker_members`, default empty). The `APP_API_KEY` secret SHALL be added to the set of Secret Manager secrets and injected into the Cloud Run Service container environment alongside the existing secrets. The Service SHALL read the API key from `APP_API_KEY` at startup.
+The Terraform configuration SHALL grant `roles/run.invoker` to `allUsers` on the Cloud Run Service, hardcoded (not a configurable variable). Access control for this Service is enforced at the application layer (API key + session, see `AuthRateLimitMiddleware`), not via IAM — end users authenticate with a shared `APP_API_KEY` and have no GCP principal, so restricting `roles/run.invoker` at the IAM layer would block them from ever reaching the app-layer login page. The `APP_API_KEY` secret SHALL be added to the set of Secret Manager secrets and injected into the Cloud Run Service container environment alongside the existing secrets. The Service SHALL read the API key from `APP_API_KEY` at startup.
 
-#### Scenario: no public invoker by default
+*Correction (2026-07-02): the original version of this requirement (SHALL NOT grant `allUsers`, configurable `allowed_invoker_members` defaulting to empty) was found to conflict with the app's own access model — an empty invoker list blocks the Cloud Run Service at the IAM layer before any request reaches the app-layer login page, making the Service unreachable for real users rather than more secure. Corrected to hardcode `allUsers` and rely on the app-layer credential as the actual gate.*
 
-- **WHEN** Terraform is applied with `allowed_invoker_members` unset
-- **THEN** no `allUsers` invoker binding exists on the Cloud Run Service and only explicitly listed members can reach it
+#### Scenario: invoker is public, app layer is the real gate
+
+- **WHEN** Terraform is applied
+- **THEN** an `allUsers` invoker binding exists on the Cloud Run Service, and unauthenticated requests reach the application, where `AuthRateLimitMiddleware` rejects them with a 401 or redirect to `/login`
 
 #### Scenario: api key injected from Secret Manager
 
 - **WHEN** the Cloud Run Service starts
 - **THEN** the `APP_API_KEY` environment variable is populated from Secret Manager and the application reads it
-
-#### Scenario: operator can allow specific members
-
-- **WHEN** the operator sets `allowed_invoker_members = ["user:demo@example.com"]`
-- **THEN** Terraform grants `roles/run.invoker` to that member only
 
 
 <!-- @trace
