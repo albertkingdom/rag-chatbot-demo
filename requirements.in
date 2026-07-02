@@ -1,3 +1,16 @@
+# torch is a transitive dep (via sentence-transformers / langchain-huggingface
+# for the BGE reranker). Deploy target is CPU-only Cloud Run (see
+# terraform/main.tf OMP_NUM_THREADS tuning) — no GPU ever available. PyPI's
+# default Linux torch wheel pulls in the full CUDA toolkit (~GBs, unused).
+# This extra index publishes CPU-only builds (local version suffix `+cpu`,
+# which PEP 440 ranks higher than the plain version) so the resolver picks
+# the CUDA-free build instead.
+--extra-index-url https://download.pytorch.org/whl/cpu
+# Explicit +cpu pin: with both indexes visible, pip's resolver does not
+# automatically prefer the local-version CPU build over PyPI's default
+# (CUDA-pulling) build, so the version has to be forced here.
+torch==2.12.1+cpu
+
 fastapi
 uvicorn
 requests
@@ -32,3 +45,11 @@ rank_bm25
 jieba
 ragas>=0.2,<0.3
 datasets>=2.14
+
+# Explicit pin (not just a transitive dep of sqlalchemy): sqlalchemy's
+# greenlet requirement is gated by a `platform_machine == "aarch64"` marker
+# (Linux's name for arm64). macOS reports `arm64`, so pip-compile run on a
+# Mac silently drops greenlet from the lock, then `pip install
+# --require-hashes` fails inside the (Linux/aarch64) Docker image where the
+# marker is true. Listing it directly forces it into the lock unconditionally.
+greenlet
