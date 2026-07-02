@@ -347,6 +347,48 @@ class TestRateLimiting:
         redis_mock.pipeline.assert_not_called()
 
 
+class TestStaticAssetRateLimitExemption:
+    """A single Gradio page load fires 100+ /assets and /static requests —
+    far more than a per-minute API budget. These must bypass rate limiting
+    (but still require a credential, unlike /health)."""
+
+    def test_static_asset_bypasses_rate_limit(self, redis_mock):
+        redis_mock.pipeline.return_value = _pipeline_returning(999)
+        config = _make_config(enabled=True, api_key="test-key",
+                              redis_mock=redis_mock, rate_limit_rpm=2)
+        c = TestClient(_build_app(config, protected_path="/assets/App-abc123.js"))
+        for _ in range(5):
+            r = c.get("/assets/App-abc123.js", headers={"X-API-Key": "test-key"})
+            assert r.status_code == 200
+        redis_mock.pipeline.assert_not_called()
+
+    def test_static_font_bypasses_rate_limit(self, redis_mock):
+        redis_mock.pipeline.return_value = _pipeline_returning(999)
+        config = _make_config(enabled=True, api_key="test-key",
+                              redis_mock=redis_mock, rate_limit_rpm=2)
+        c = TestClient(_build_app(config, protected_path="/static/fonts/a.woff2"))
+        for _ in range(5):
+            r = c.get("/static/fonts/a.woff2", headers={"X-API-Key": "test-key"})
+            assert r.status_code == 200
+        redis_mock.pipeline.assert_not_called()
+
+    def test_static_asset_still_requires_credential(self, redis_mock):
+        config = _make_config(enabled=True, api_key="test-key", redis_mock=redis_mock)
+        c = TestClient(_build_app(config, protected_path="/assets/App-abc123.js"))
+        r = c.get("/assets/App-abc123.js")
+        assert r.status_code == 401
+
+    def test_non_static_path_still_rate_limited(self, redis_mock):
+        # Sanity check the exemption is prefix-scoped, not a global bypass.
+        redis_mock.pipeline.return_value = _pipeline_returning(61)
+        c = TestClient(_build_app(
+            _make_config(enabled=True, api_key="test-key",
+                        redis_mock=redis_mock, rate_limit_rpm=60)
+        ))
+        r = c.get("/protected", headers={"X-API-Key": "test-key"})
+        assert r.status_code == 429
+
+
 # ---------------------------------------------------------------------------
 # Fail-open when Redis is down (task 5.2)
 # ---------------------------------------------------------------------------

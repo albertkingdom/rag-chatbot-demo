@@ -43,6 +43,13 @@ _EXEMPT_ROUTES: tuple[tuple[Optional[str], str], ...] = (
     ("POST", "/logout"),
 )
 
+# Path prefixes for static build assets (Gradio's bundled JS/CSS/fonts).
+# These still require a credential (so the UI isn't served to anonymous
+# callers) but are exempt from rate limiting: a single Gradio page load
+# fires 100+ of these requests, which blows through a per-minute budget
+# sized for API calls and leaves the page stuck loading.
+_RATE_LIMIT_EXEMPT_PREFIXES: tuple[str, ...] = ("/assets/", "/static/")
+
 
 # ---------------------------------------------------------------------------
 # Session store helpers
@@ -156,7 +163,10 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
 
     On missing/invalid credential: 401 JSON (programmatic) or 302 to /login
     (browser, detected via ``Accept: text/html``). Exempt routes bypass both
-    auth and rate limiting. When ``AuthConfig.enabled`` is False, everything
+    auth and rate limiting; static asset paths (``_RATE_LIMIT_EXEMPT_PREFIXES``)
+    still require a credential but bypass rate limiting only — a single page
+    load fires far more asset requests than a per-minute API budget allows.
+    When ``AuthConfig.enabled`` is False, everything
     is allowed (dev/test mode). Redis errors fail open (allow + log).
     """
 
@@ -172,6 +182,10 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
             if (em is None or em == m) and path == ep:
                 return True
         return False
+
+    @staticmethod
+    def _is_rate_limit_exempt(path: str) -> bool:
+        return path.startswith(_RATE_LIMIT_EXEMPT_PREFIXES)
 
     # Credential extraction -------------------------------------------
     def _authenticate(self, request: Request) -> Optional[str]:
@@ -259,6 +273,9 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
 
         if kh is None:
             return self._reject(request)
+
+        if self._is_rate_limit_exempt(request.url.path):
+            return await call_next(request)
 
         allowed, retry_after = self._check_rate_limit(kh)
         if not allowed:
