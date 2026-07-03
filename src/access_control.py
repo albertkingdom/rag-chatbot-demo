@@ -197,7 +197,9 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         # Header path.
         header_key = request.headers.get("x-api-key")
         if header_key and self.config.api_key:
-            if hmac.compare_digest(header_key, self.config.api_key):
+            if hmac.compare_digest(
+                header_key.encode("utf-8"), self.config.api_key.encode("utf-8")
+            ):
                 return _key_hash(header_key)
             return None
 
@@ -337,7 +339,11 @@ async def _login_post(request: Request, config: AuthConfig) -> Response:
     form = await request.form()
     submitted = form.get("api_key", "")
 
-    if submitted and config.api_key and hmac.compare_digest(submitted, config.api_key):
+    if (
+        submitted
+        and config.api_key
+        and hmac.compare_digest(submitted.encode("utf-8"), config.api_key.encode("utf-8"))
+    ):
         kh = _key_hash(submitted)
         sid = create_session(config.redis, kh, config.session_ttl_seconds)
         resp = RedirectResponse("/", status_code=302)
