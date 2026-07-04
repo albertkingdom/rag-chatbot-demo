@@ -2,7 +2,9 @@
 Prompt Cache Service for caching similar question-answer pairs.
 Uses Redis for storage and cosine similarity for semantic matching.
 """
+import hashlib
 import json
+import struct
 import time
 import numpy as np
 from typing import Optional, Dict, Any, List
@@ -143,8 +145,8 @@ class PromptCacheService:
             True if successfully cached, False otherwise
         """
         try:
-            # Create a hash of the embedding for the cache key
-            embedding_hash = abs(hash(tuple(question_embedding[:10])))  # Use first 10 dims for hash
+            raw_bytes = struct.pack(f"{len(question_embedding)}d", *question_embedding)
+            embedding_hash = hashlib.sha256(raw_bytes).hexdigest()[:16]
             cache_key = f"{self.CACHE_PREFIX}{embedding_hash}"
             
             cache_data = {
@@ -154,7 +156,13 @@ class PromptCacheService:
                 "timestamp": int(time.time()),
                 "hit_count": 0
             }
-            
+
+            # Preserve hit_count if entry already exists
+            existing = self.redis.get(cache_key)
+            if existing:
+                old_data = json.loads(existing)
+                cache_data["hit_count"] = old_data.get("hit_count", 0)
+
             # Store with TTL
             self.redis.setex(
                 cache_key,
