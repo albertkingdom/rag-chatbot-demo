@@ -2,6 +2,7 @@
 
 > 對照業界標準,本專案目前的差距清單。建立日期:2026-07-01。
 > Item #1 已完成(commit `a08d9c0`,branch `feature/auth-and-rate-limit`)。
+> Item #3 已完成(commit `14b71a5`,branch `fix-cache-key-hash`)。
 
 ## 嚴重(安全 / 正確性,應優先處理)
 
@@ -15,8 +16,8 @@
 - **狀態:部分完成** — 路徑穿越已修複,仍需補上 size cap + content-type 驗證。
 
 ### 3. Cache key 用 Python 內建 `hash()`,跨行程不穩定
-- `src/cache_service.py:147` `abs(hash(tuple(question_embedding[:10])))`。Python 預設啟用 hash randomization(`PYTHONHASHSEED`),同一 embedding 在不同 worker 行程會算出不同 key,導致 cache 永遠 miss、且 index 與 entry 對不上。另外只取前 10 維易碰撞。
-- 業界標準:改用 `hashlib.sha256`。
+- ~~`src/cache_service.py:147` `abs(hash(tuple(question_embedding[:10])))`。Python 預設啟用 hash randomization(`PYTHONHASHSEED`),同一 embedding 在不同 worker 行程會算出不同 key,導致 cache 永遠 miss、且 index 與 entry 對不上。另外只取前 10 維易碰撞。~~
+- **狀態:已完成(commit `14b71a5`)** — Spectra change `fix-cache-key-hash` 已 archived:改用 `hashlib.sha256(struct.pack(...))` 對完整 1536 維 embedding 計算 SHA256,取 16 字元 hex 作為 key；加入 `redis.exists()` 存在性檢查避免重複 cache 時 `hit_count` 歸零；新增碰撞測試與穩定性測試；修復兩個 pre-existing 測試 bug（pipeline mock 問題）；16 tests 全綠。
 
 ### 4. Guardrails 是脆弱的正則,易被繞過
 - `src/guardrails.py` 用關鍵字 regex。同義改寫、Base64、拆字、英文混中文皆可繞過;且把 `password`/`token`/`secret` 列為 injection 會誤殺合法的「忘記密碼」問題(正好是 README 的範例問題)。
@@ -111,6 +112,7 @@
 | Singleton 安全 | ~~全域 race~~ LazySingleton | thread-safe | ✅ 已完成 |
 | 日誌 | 48 print() + 部分 logging | structured logging | 🟠 部分完成 |
 | 測試覆蓋率 | 無度量 | ≥70% gate | 🟠 全無 |
+| Cache key 穩定性 | ~~hash()~~ SHA256 全維 | 加密 hash 跨行程一致 | ✅ 已完成 |
 | 健康檢查/指標 | `/health` 已補 | /health + Prometheus | 🟡 指標仍無 |
 | 檔案安全 | ~~路徑穿越~~ 已修 | size + content-type | 🟡 部分完成 |
 | HA/Scaling | max=1 | ≥2 + autoscale | 🟡 單實例 |
@@ -119,7 +121,7 @@
 
 ## 建議優先順序
 
-1. **馬上**:修 cache key `hash()` bug(#3)、修測試 bug(#5)、~~加認證/限流(#1)~~ ✅、修上傳安全(#2)。
+1. **馬上**:~~修 cache key `hash()` bug(#3)~~ ✅、修測試 bug(#5)、~~加認證/限流(#1)~~ ✅、修上傳安全(#2)。
 2. **短期**:補 ruff+mypy+pre-commit(#6)、加 CI test workflow(#7)、釘依賴(#8)、`app.py` 拆分(#10)、`print→logging`(#12)。
 3. **中期**:retry/circuit breaker(#14)、指標+健康檢查(#13)、staging 環境(#15)、guardrail 強化+對抗測試(#4)。
 
