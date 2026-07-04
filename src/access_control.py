@@ -298,21 +298,103 @@ def _health(request: Request) -> JSONResponse:
 
 _LOGIN_HTML = """<!doctype html>
 <html lang="zh-Hant">
-<head><meta charset="utf-8"><title>Carbon Assistant — 登入</title>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG Demo — 登入</title>
 <style>
-body{{font-family:system-ui,sans-serif;max-width:360px;margin:80px auto;padding:0 16px}}
-input{{width:100%;padding:10px;margin:8px 0;box-sizing:border-box;font-size:15px}}
-button{{width:100%;padding:10px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:15px;cursor:pointer}}
-.err{{color:#b91c1c;margin-bottom:12px}}
-</style></head>
+  :root{{
+    --bg:#f4f5f3;
+    --panel:#ffffff;
+    --border:#e2e5e1;
+    --accent:#2f6b4a;
+    --text:#1c231f;
+    --muted:#6b756f;
+    --err:#b3261e;
+  }}
+  *{{box-sizing:border-box}}
+  body{{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    min-height:100vh;
+    padding:24px;
+  }}
+
+  .panel{{
+    width:100%;
+    max-width:360px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:36px 32px;
+    box-shadow:0 1px 3px rgba(0,0,0,0.04);
+  }}
+
+  h1{{
+    font-size:20px;
+    font-weight:600;
+    margin:0 0 24px;
+    color:var(--text);
+  }}
+
+  label{{
+    display:block;
+    font-size:13px;
+    font-weight:500;
+    color:var(--muted);
+    margin-bottom:6px;
+  }}
+  input{{
+    width:100%;
+    padding:10px 12px;
+    margin:0 0 20px;
+    font-size:14px;
+    color:var(--text);
+    background:#fff;
+    border:1px solid var(--border);
+    border-radius:6px;
+    outline:none;
+    transition:border-color .15s ease;
+  }}
+  input:focus{{
+    border-color:var(--accent);
+  }}
+
+  button{{
+    width:100%;
+    padding:11px;
+    background:var(--accent);
+    color:#fff;
+    border:none;
+    border-radius:6px;
+    font-size:14px;
+    font-weight:600;
+    cursor:pointer;
+  }}
+  button:hover{{background:#26583c}}
+
+  .err{{
+    color:var(--err);
+    font-size:13px;
+    margin:-8px 0 20px;
+  }}
+</style>
+</head>
 <body>
-<h2>Carbon Assistant 登入</h2>
-{error}
-<form method="post" action="/login">
-  <label for="key">API Key</label>
-  <input id="key" name="api_key" type="password" autocomplete="off" autofocus required>
-  <button type="submit">登入</button>
-</form>
+<main class="panel">
+  <h1>RAG Demo 登入</h1>
+  {error}
+  <form method="post" action="/login">
+    <label for="key">APP登入密碼</label>
+    <input id="key" name="api_key" type="password" autocomplete="off" autofocus required>
+    <button type="submit">登入</button>
+  </form>
+</main>
 </body></html>"""
 
 
@@ -353,7 +435,7 @@ async def _login_post(request: Request, config: AuthConfig) -> Response:
         )
         return resp
 
-    return _login_form(error="API Key 無效", status=401)
+    return _login_form(error="APP登入密碼無效", status=401)
 
 
 async def _logout_post(request: Request, config: AuthConfig) -> Response:
