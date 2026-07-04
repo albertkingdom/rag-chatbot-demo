@@ -15,8 +15,10 @@ import gradio as gr
 from rq import Queue
 from rq.job import Job
 
+from .access_control import SESSION_COOKIE
 from .bom_mapper import classify_bom_headers
 from .build_vector_store import sync_vector_store
+from .chat_history_service import ChatHistoryService
 from .config import DATA_SOURCE_DIR
 from .rag_pipeline import chat_stream
 from .services import get_redis_conn
@@ -146,6 +148,16 @@ async def poll_status(job_id):
             break
 
 
+def clear_chat_history(request: gr.Request = None) -> None:
+    """Deletes the session's Redis-stored chat history when the user clears
+    the visible conversation, so a subsequent message doesn't silently reuse
+    the cleared conversation's context."""
+    history_key = (
+        (request.cookies.get(SESSION_COOKIE) or request.session_hash) if request else None
+    )
+    ChatHistoryService(get_redis_conn()).clear_history(history_key)
+
+
 # ---------------------------------------------------------------------------
 # Gradio Blocks UI
 # ---------------------------------------------------------------------------
@@ -154,9 +166,10 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
     gr.Markdown("<h1>Carbon Assistant & BOM Mapping Tool</h1>")
 
     with gr.Tab("RAG Chatbot"):
+        chatbot_component = gr.Chatbot(height=500)
         gr.ChatInterface(
             chat_stream,
-            chatbot=gr.Chatbot(height=500),
+            chatbot=chatbot_component,
             textbox=gr.Textbox(placeholder="詢問碳管理系統相關問題...", container=False, scale=7),
             title="碳管理系統智慧助手",
             description="基於操作手冊的 RAG 問答系統，支援多輪對話",
@@ -169,6 +182,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
                 "門檻值設定該如何填寫？",
             ],
         )
+        chatbot_component.clear(clear_chat_history, inputs=None, outputs=None)
 
     with gr.Tab("BOM Header Mapper"):
         with gr.Row():

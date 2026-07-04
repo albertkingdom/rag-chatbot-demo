@@ -51,3 +51,10 @@ APP_API_KEY = os.environ.get("APP_API_KEY")
 RATE_LIMIT_RPM = int(os.environ.get("RATE_LIMIT_RPM", "60"))
 # TTL for Redis-backed session tokens issued by POST /login (seconds).
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "86400"))
+
+# Chat History Settings (short-term, Redis-backed multi-turn context)
+# Idle TTL for a session's stored chat history (seconds). Refreshed on each
+# new turn; expired history falls back to client-supplied history.
+CHAT_HISTORY_TTL_SECONDS = int(os.environ.get("CHAT_HISTORY_TTL_SECONDS", "1800"))
+# Max number of most-recent conversation turns retained per session.
+CHAT_HISTORY_MAX_TURNS = int(os.environ.get("CHAT_HISTORY_MAX_TURNS", "3"))

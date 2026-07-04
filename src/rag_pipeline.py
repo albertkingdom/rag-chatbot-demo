@@ -15,7 +15,9 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langsmith import traceable
 
+from .access_control import SESSION_COOKIE
 from .cache_service import PromptCacheService
+from .chat_history_service import ChatHistoryService
 from .config import (
     BM25_TOP_N,
     CACHE_ENABLED,
@@ -217,6 +219,13 @@ Rewritten standalone question:"""
 async def chat_stream(message: str, history: list, request: gr.Request = None) -> AsyncGenerator[str, None]:
     """Handles the entire RAG chain lifecycle for a single chat request with caching."""
     session_id = request.session_hash if request else None
+    history_key = (
+        (request.cookies.get(SESSION_COOKIE) or request.session_hash) if request else None
+    )
+    chat_history_service = ChatHistoryService(get_redis_conn())
+    stored_history = chat_history_service.get_history(history_key)
+    if stored_history:
+        history = stored_history
     full_response = ""
     intent_result = None
     try:
@@ -331,6 +340,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 for i in range(1, len(cached_answer) + 1):
                     yield cached_answer[:i]
                     await asyncio.sleep(0.005)
+                chat_history_service.append_turn(history_key, message, cached_answer)
                 return
 
         # Cache miss or cache disabled - proceed with normal RAG pipeline
@@ -377,6 +387,8 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         for i in range(1, len(full_response) + 1):
             yield full_response[:i]
             await asyncio.sleep(0.005)
+
+        chat_history_service.append_turn(history_key, message, full_response)
 
         # Store the generated response in cache
         if CACHE_ENABLED and full_response:
