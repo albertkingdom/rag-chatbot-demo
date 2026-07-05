@@ -15,6 +15,40 @@ class IntentResult(BaseModel):
     reason: str = Field(description="Brief explanation of the classification")
 
 
+def _format_recent_turns(history: list, max_turns: int = 3) -> str:
+    """Builds a short "最近對話：" block from the last few user/assistant turns.
+
+    Mirrors the turn-pairing shape of rag_pipeline.format_history but is
+    implemented locally: rag_pipeline imports services.get_intent_classifier,
+    which imports this module, so importing rag_pipeline here would create a
+    circular import.
+    """
+    if not history:
+        return ""
+
+    turns = []
+    i = 0
+    while i < len(history) - 1:
+        msg = history[i]
+        next_msg = history[i + 1]
+        if isinstance(msg, dict) and isinstance(next_msg, dict):
+            if msg.get("role") == "user" and next_msg.get("role") == "assistant":
+                turns.append((msg["content"], next_msg["content"]))
+                i += 2
+                continue
+        i += 1
+
+    recent = turns[-max_turns:] if turns else []
+    if not recent:
+        return ""
+
+    lines = ["最近對話："]
+    for user_msg, bot_msg in recent:
+        lines.append(f"User: {user_msg}")
+        lines.append(f"Assistant: {bot_msg}")
+    return "\n".join(lines)
+
+
 class IntentClassifier:
     """
     Classifies user questions to determine if they are related to the carbon management system.
@@ -56,11 +90,14 @@ class IntentClassifier:
         self.structured_llm = llm.with_structured_output(IntentResult)
 
     @traceable(name="Intent Classification")
-    async def classify(self, question: str) -> Dict[str, Any]:
+    async def classify(self, question: str, history: list = None) -> Dict[str, Any]:
+        history_block = _format_recent_turns(history)
+        history_section = f"\n{history_block}\n" if history_block else ""
+
         prompt = f"""{self.SYSTEM_TOPICS}
 
 你是碳管理系統的問題分類器。判斷以下問題是否與碳管理系統相關。
-
+{history_section}
 分類範例：
 - 「今天天氣如何？」→ relevant=false, confidence=0.95, reason="詢問天氣資訊"
 - 「如何重設密碼？」→ relevant=true, confidence=0.98, reason="詢問帳號管理功能"
@@ -76,18 +113,19 @@ class IntentClassifier:
             print(f"[Intent Classifier] ERROR: {type(e).__name__}: {e}")
             return {"relevant": True, "confidence": 0.5, "reason": f"分類器錯誤：{str(e)}"}
 
-    async def is_relevant(self, question: str, confidence_threshold: float = 0.7) -> bool:
+    async def is_relevant(self, question: str, history: list = None, confidence_threshold: float = 0.7) -> bool:
         """
         Simplified interface: returns True if question is relevant with high confidence.
 
         Args:
             question: User's input question
+            history: Recent conversation turns, forwarded to classify()
             confidence_threshold: Minimum confidence to consider relevant (default: 0.7)
 
         Returns:
             True if question is relevant and confidence >= threshold
         """
-        result = await self.classify(question)
+        result = await self.classify(question, history)
         return result["relevant"] and result["confidence"] >= confidence_threshold
 
     def get_off_topic_message(self) -> str:

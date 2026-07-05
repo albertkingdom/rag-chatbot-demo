@@ -278,7 +278,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
 
         intent_classifier = get_intent_classifier()
         if intent_classifier:
-            intent_result = await intent_classifier.classify(rewritten_query)
+            intent_result = await intent_classifier.classify(rewritten_query, history)
             logger.info("Intent classification: %s", intent_result)
 
             # If question is not relevant, return early with helpful message

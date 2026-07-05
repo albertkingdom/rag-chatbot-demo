@@ -292,3 +292,29 @@ class TestAnswerSources:
             mock_instance.append_turn.assert_called_once_with(
                 "cookie-sid", "hello", "cached answer"
             )
+
+
+class TestIntentClassifierHistoryForwarding:
+    @pytest.mark.asyncio
+    async def test_chat_stream_forwards_history_to_classify(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        client_history = [
+            {"role": "user", "content": "門檻值設定該如何填寫？"},
+            {"role": "assistant", "content": "您需要填寫顯著性門檻、實質性門檻和排除門檻。"},
+        ]
+
+        mock_intent_classifier = MagicMock()
+        mock_intent_classifier.classify = AsyncMock(
+            return_value={"relevant": True, "confidence": 0.9}
+        )
+
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch.object(rag_pipeline, "get_intent_classifier", return_value=mock_intent_classifier), \
+             patch.object(rag_pipeline, "rewrite_query", new=AsyncMock(return_value="您確定嗎？")):
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            await drain(rag_pipeline.chat_stream("你確定嗎", client_history, request))
+
+            mock_intent_classifier.classify.assert_called_once_with("您確定嗎？", client_history)
