@@ -7,6 +7,7 @@ module has no module-level side effects beyond defining the QA prompt.
 
 import asyncio
 import logging
+import time
 from typing import AsyncGenerator
 
 import gradio as gr
@@ -113,6 +114,10 @@ def _append_source_block(answer: str, sources: list[str]) -> str:
         return answer
     source_lines = "\n".join(f"- {source}" for source in sources)
     return f"{answer}\n\n參考資料：\n{source_lines}"
+
+
+def _append_timing_line(text: str, elapsed_seconds: float) -> str:
+    return f"{text}\n\n回應時間：{elapsed_seconds:.1f} 秒"
 
 
 def get_retrieval_chain():
@@ -252,19 +257,25 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         history = stored_history
     full_response = ""
     intent_result = None
+    start_time = time.monotonic()
     try:
         # Step 0a: Input guardrail - block prompt injection before hitting LLM
         injection_hit, _ = detect_prompt_injection(message)
         if injection_hit:
+            guardrail_message = get_guardrail_message()
             db = get_conversation_db()
             await db.async_save_conversation(
                 user_question=message,
-                assistant_response=get_guardrail_message(),
+                assistant_response=guardrail_message,
                 session_id=session_id,
                 response_source="guardrail",
                 metadata={"injection_pattern": "input_injection"},
             )
-            yield get_guardrail_message()
+            elapsed = time.monotonic() - start_time
+            guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
+            for i in range(1, len(guardrail_message_with_timing) + 1):
+                yield guardrail_message_with_timing[:i]
+                await asyncio.sleep(0.005)
             return
 
         # Step 0b: Query Rewriting - rewrite follow-up questions into standalone queries
@@ -292,8 +303,10 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                     response_source="off_topic",
                     intent_classification=intent_result,
                 )
-                for i in range(1, len(off_topic_message) + 1):
-                    yield off_topic_message[:i]
+                elapsed = time.monotonic() - start_time
+                off_topic_message_with_timing = _append_timing_line(off_topic_message, elapsed)
+                for i in range(1, len(off_topic_message_with_timing) + 1):
+                    yield off_topic_message_with_timing[:i]
                     await asyncio.sleep(0.01)
                 return
 
@@ -344,8 +357,10 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                             "cache_similarity": cached_response.get("similarity"),
                         },
                     )
-                    for i in range(1, len(guardrail_message) + 1):
-                        yield guardrail_message[:i]
+                    elapsed = time.monotonic() - start_time
+                    guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
+                    for i in range(1, len(guardrail_message_with_timing) + 1):
+                        yield guardrail_message_with_timing[:i]
                         await asyncio.sleep(0.005)
                     return
 
@@ -363,8 +378,10 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
 
                 # Stream the cached response for consistent UI experience
                 cached_response_with_sources = _append_source_block(cached_answer, cached_sources)
-                for i in range(1, len(cached_response_with_sources) + 1):
-                    yield cached_response_with_sources[:i]
+                elapsed = time.monotonic() - start_time
+                cached_response_final = _append_timing_line(cached_response_with_sources, elapsed)
+                for i in range(1, len(cached_response_final) + 1):
+                    yield cached_response_final[:i]
                     await asyncio.sleep(0.005)
                 chat_history_service.append_turn(history_key, message, cached_answer)
                 return
@@ -406,14 +423,18 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                     "injection_pattern": injection_pattern if injection_hit else None,
                 },
             )
-            for i in range(1, len(guardrail_message) + 1):
-                yield guardrail_message[:i]
+            elapsed = time.monotonic() - start_time
+            guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
+            for i in range(1, len(guardrail_message_with_timing) + 1):
+                yield guardrail_message_with_timing[:i]
                 await asyncio.sleep(0.005)
             return
 
         response_with_sources = _append_source_block(full_response, sources)
-        for i in range(1, len(response_with_sources) + 1):
-            yield response_with_sources[:i]
+        elapsed = time.monotonic() - start_time
+        response_final = _append_timing_line(response_with_sources, elapsed)
+        for i in range(1, len(response_final) + 1):
+            yield response_final[:i]
             await asyncio.sleep(0.005)
 
         chat_history_service.append_turn(history_key, message, full_response)

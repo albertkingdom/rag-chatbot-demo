@@ -4,6 +4,7 @@ Tests for chat_stream's Redis-backed short-term history wiring:
 - reading stored history from Redis to override the client-supplied history
 - writing turns back to Redis only on genuine successful answers
 """
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +12,8 @@ import pytest
 
 from src import rag_pipeline
 from src.access_control import SESSION_COOKIE
+
+TIMING_LINE_RE = re.compile(r"\n\n回應時間：\d+\.\d 秒$")
 
 
 def make_request(cookies=None, session_hash="hash-1"):
@@ -22,6 +25,14 @@ async def drain(agen):
     async for chunk in agen:
         chunks.append(chunk)
     return chunks
+
+
+def patch_monotonic(*values):
+    """Patch only rag_pipeline's `time` name so asyncio's own use of
+    time.monotonic() (event loop scheduling) is left untouched."""
+    fake_time = MagicMock()
+    fake_time.monotonic = MagicMock(side_effect=list(values))
+    return patch.object(rag_pipeline, "time", fake_time)
 
 
 @pytest.fixture(autouse=True)
@@ -200,7 +211,8 @@ class TestAnswerSources:
     async def test_rag_answer_gets_source_block_appended(self):
         request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
         with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
-             patch.object(rag_pipeline, "get_retrieval_chain") as mock_retrieval_factory:
+             patch.object(rag_pipeline, "get_retrieval_chain") as mock_retrieval_factory, \
+             patch_monotonic(0.0, 3.2):
             mock_instance = MagicMock()
             mock_instance.get_history.return_value = []
             mock_service_cls.return_value = mock_instance
@@ -217,21 +229,22 @@ class TestAnswerSources:
 
             chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
 
-            assert chunks[-1] == "answer\n\n參考資料：\n- 密碼忘記了要怎麼重設啊？"
+            assert chunks[-1] == "answer\n\n參考資料：\n- 密碼忘記了要怎麼重設啊？\n\n回應時間：3.2 秒"
             # The stored/cached answer text stays the pure generated text.
             mock_instance.append_turn.assert_called_once_with("cookie-sid", "hello", "answer")
 
     @pytest.mark.asyncio
     async def test_rag_answer_with_empty_sources_has_no_block(self):
         request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
-        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls:
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch_monotonic(0.0, 1.5):
             mock_instance = MagicMock()
             mock_instance.get_history.return_value = []
             mock_service_cls.return_value = mock_instance
 
             chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
 
-            assert chunks[-1] == "answer"
+            assert chunks[-1] == "answer\n\n回應時間：1.5 秒"
             assert "參考資料" not in chunks[-1]
 
     @pytest.mark.asyncio
@@ -271,7 +284,8 @@ class TestAnswerSources:
         request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
         with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
              patch.object(rag_pipeline, "CACHE_ENABLED", True), \
-             patch.object(rag_pipeline, "PromptCacheService") as mock_cache_service_cls:
+             patch.object(rag_pipeline, "PromptCacheService") as mock_cache_service_cls, \
+             patch_monotonic(0.0, 0.2):
             mock_instance = MagicMock()
             mock_instance.get_history.return_value = []
             mock_service_cls.return_value = mock_instance
@@ -287,7 +301,7 @@ class TestAnswerSources:
 
             chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
 
-            assert chunks[-1] == "cached answer\n\n參考資料：\n- 密碼忘記了要怎麼重設啊？"
+            assert chunks[-1] == "cached answer\n\n參考資料：\n- 密碼忘記了要怎麼重設啊？\n\n回應時間：0.2 秒"
             # The stored history keeps the pure cached answer text.
             mock_instance.append_turn.assert_called_once_with(
                 "cookie-sid", "hello", "cached answer"
@@ -318,3 +332,87 @@ class TestIntentClassifierHistoryForwarding:
             await drain(rag_pipeline.chat_stream("你確定嗎", client_history, request))
 
             mock_intent_classifier.classify.assert_called_once_with("您確定嗎？", client_history)
+
+
+class TestResponseTiming:
+    """Tests for the `回應時間：X.X 秒` line appended to every response path."""
+
+    def test_append_timing_line_formats_elapsed_seconds(self):
+        assert rag_pipeline._append_timing_line("答案", 3.2) == "答案\n\n回應時間：3.2 秒"
+
+    @pytest.mark.asyncio
+    async def test_input_injection_guardrail_appends_timing_line(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch.object(rag_pipeline, "detect_prompt_injection", return_value=(True, "pattern")), \
+             patch_monotonic(0.0, 0.1):
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
+
+            assert TIMING_LINE_RE.search(chunks[-1])
+            assert chunks[-1].endswith("\n\n回應時間：0.1 秒")
+
+    @pytest.mark.asyncio
+    async def test_off_topic_appends_timing_line(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        mock_intent_classifier = MagicMock()
+        mock_intent_classifier.classify = AsyncMock(
+            return_value={"relevant": False, "confidence": 0.1}
+        )
+        mock_intent_classifier.get_off_topic_message.return_value = "off topic"
+
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch.object(rag_pipeline, "get_intent_classifier", return_value=mock_intent_classifier), \
+             patch_monotonic(0.0, 0.4):
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
+
+            assert TIMING_LINE_RE.search(chunks[-1])
+            assert chunks[-1].endswith("\n\n回應時間：0.4 秒")
+
+    @pytest.mark.asyncio
+    async def test_cache_candidate_guardrail_appends_timing_line(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch.object(rag_pipeline, "CACHE_ENABLED", True), \
+             patch.object(rag_pipeline, "PromptCacheService") as mock_cache_service_cls, \
+             patch.object(rag_pipeline, "detect_pii", return_value=(True, "pii_type")), \
+             patch_monotonic(0.0, 0.3):
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            mock_cache_service = MagicMock()
+            mock_cache_service.get_cached_response.return_value = {
+                "answer": "cached answer",
+                "sources": [],
+                "similarity": 0.99,
+                "hit_count": 1,
+            }
+            mock_cache_service_cls.return_value = mock_cache_service
+
+            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
+
+            assert TIMING_LINE_RE.search(chunks[-1])
+            assert chunks[-1].endswith("\n\n回應時間：0.3 秒")
+
+    @pytest.mark.asyncio
+    async def test_post_generation_guardrail_appends_timing_line(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch.object(rag_pipeline, "detect_pii", return_value=(True, "pii_type")), \
+             patch_monotonic(0.0, 3.0):
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
+
+            assert TIMING_LINE_RE.search(chunks[-1])
+            assert chunks[-1].endswith("\n\n回應時間：3.0 秒")
