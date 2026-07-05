@@ -163,7 +163,7 @@ def clear_chat_history(request: gr.Request = None) -> None:
 # ---------------------------------------------------------------------------
 
 with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
-    gr.Markdown("<h1>Carbon Assistant & BOM Mapping Tool</h1>")
+    gr.Markdown("<h1>RAG demo</h1>")
 
     with gr.Tab("RAG Chatbot"):
         chatbot_component = gr.Chatbot(height=500)
@@ -171,7 +171,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
             chat_stream,
             chatbot=chatbot_component,
             textbox=gr.Textbox(placeholder="詢問碳管理系統相關問題...", container=False, scale=7),
-            title="碳管理系統智慧助手",
+            title=None,
             description="基於操作手冊的 RAG 問答系統，支援多輪對話",
             examples=[
                 "忘記密碼怎麼辦？",
@@ -183,18 +183,6 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
             ],
         )
         chatbot_component.clear(clear_chat_history, inputs=None, outputs=None)
-
-    with gr.Tab("BOM Header Mapper"):
-        with gr.Row():
-            bom_input = gr.File(label="Upload BOM file (.csv)")
-            bom_output = gr.JSON(label="Mapping Result")
-        bom_button = gr.Button("Map Headers")
-
-        bom_button.click(
-            bom_mapper_func,
-            inputs=bom_input,
-            outputs=[bom_output, bom_button],
-        )
 
     with gr.Tab("Admin: Upload Manual"):
         job_id_state = gr.State(None)
