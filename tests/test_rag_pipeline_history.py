@@ -48,7 +48,7 @@ def common_mocks():
 
         mock_retrieval_chain = MagicMock()
         mock_retrieval_chain.ainvoke = AsyncMock(
-            return_value={"context": "some context", "contexts": []}
+            return_value={"context": "some context", "contexts": [], "sources": []}
         )
         mock_retrieval_factory.return_value = mock_retrieval_chain
 
@@ -191,3 +191,104 @@ class TestHistoryWriteWiring:
             await drain(rag_pipeline.chat_stream("hello", [], request))
 
             mock_instance.append_turn.assert_not_called()
+
+
+class TestAnswerSources:
+    """Tests for appending a "參考資料：" source list to the streamed answer."""
+
+    @pytest.mark.asyncio
+    async def test_rag_answer_gets_source_block_appended(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch.object(rag_pipeline, "get_retrieval_chain") as mock_retrieval_factory:
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            mock_retrieval_chain = MagicMock()
+            mock_retrieval_chain.ainvoke = AsyncMock(
+                return_value={
+                    "context": "some context",
+                    "contexts": [],
+                    "sources": ["密碼忘記了要怎麼重設啊？"],
+                }
+            )
+            mock_retrieval_factory.return_value = mock_retrieval_chain
+
+            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
+
+            assert chunks[-1] == "answer\n\n參考資料：\n- 密碼忘記了要怎麼重設啊？"
+            # The stored/cached answer text stays the pure generated text.
+            mock_instance.append_turn.assert_called_once_with("cookie-sid", "hello", "answer")
+
+    @pytest.mark.asyncio
+    async def test_rag_answer_with_empty_sources_has_no_block(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls:
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
+
+            assert chunks[-1] == "answer"
+            assert "參考資料" not in chunks[-1]
+
+    @pytest.mark.asyncio
+    async def test_off_topic_response_has_no_source_block(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        mock_intent_classifier = MagicMock()
+        mock_intent_classifier.classify = AsyncMock(
+            return_value={"relevant": False, "confidence": 0.1}
+        )
+        mock_intent_classifier.get_off_topic_message.return_value = "off topic"
+
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch.object(rag_pipeline, "get_intent_classifier", return_value=mock_intent_classifier):
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
+
+            assert all("參考資料" not in chunk for chunk in chunks)
+
+    @pytest.mark.asyncio
+    async def test_guardrail_response_has_no_source_block(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch.object(rag_pipeline, "detect_prompt_injection", return_value=(True, "pattern")):
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
+
+            assert all("參考資料" not in chunk for chunk in chunks)
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_answer_gets_source_block_appended(self):
+        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
+        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
+             patch.object(rag_pipeline, "CACHE_ENABLED", True), \
+             patch.object(rag_pipeline, "PromptCacheService") as mock_cache_service_cls:
+            mock_instance = MagicMock()
+            mock_instance.get_history.return_value = []
+            mock_service_cls.return_value = mock_instance
+
+            mock_cache_service = MagicMock()
+            mock_cache_service.get_cached_response.return_value = {
+                "answer": "cached answer",
+                "sources": ["密碼忘記了要怎麼重設啊？"],
+                "similarity": 0.99,
+                "hit_count": 1,
+            }
+            mock_cache_service_cls.return_value = mock_cache_service
+
+            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
+
+            assert chunks[-1] == "cached answer\n\n參考資料：\n- 密碼忘記了要怎麼重設啊？"
+            # The stored history keeps the pure cached answer text.
+            mock_instance.append_turn.assert_called_once_with(
+                "cookie-sid", "hello", "cached answer"
+            )

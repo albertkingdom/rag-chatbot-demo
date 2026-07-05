@@ -65,7 +65,7 @@ class PromptCacheService:
             
         Returns:
             Cached response dict if found, None otherwise
-            Dict contains: {"question", "answer", "similarity", "hit_count"}
+            Dict contains: {"question", "answer", "sources", "similarity", "hit_count"}
         """
         try:
             # Get all cache keys from the index
@@ -105,6 +105,7 @@ class PromptCacheService:
                     best_match = {
                         "question": cached_data.get("question"),
                         "answer": cached_data.get("answer"),
+                        "sources": cached_data["sources"],
                         "similarity": similarity,
                         "hit_count": cached_data.get("hit_count", 0)
                     }
@@ -126,21 +127,23 @@ class PromptCacheService:
             return None
     
     def set_cached_response(
-        self, 
-        question_embedding: List[float], 
-        question_text: str, 
+        self,
+        question_embedding: List[float],
+        question_text: str,
         answer: str,
+        sources: List[str],
         ttl: int = CACHE_TTL_SECONDS
     ) -> bool:
         """
         Store a question-answer pair in the cache.
-        
+
         Args:
             question_embedding: Embedding vector of the question
             question_text: Original question text
             answer: Generated answer text
+            sources: Deduplicated list of source FAQ questions/doc_ids for this answer
             ttl: Time-to-live in seconds
-            
+
         Returns:
             True if successfully cached, False otherwise
         """
@@ -148,10 +151,11 @@ class PromptCacheService:
             raw_bytes = struct.pack(f"{len(question_embedding)}d", *question_embedding)
             embedding_hash = hashlib.sha256(raw_bytes).hexdigest()[:16]
             cache_key = f"{self.CACHE_PREFIX}{embedding_hash}"
-            
+
             cache_data = {
                 "question": question_text,
                 "answer": answer,
+                "sources": sources,
                 "embedding": question_embedding,
                 "timestamp": int(time.time()),
                 "hit_count": 0

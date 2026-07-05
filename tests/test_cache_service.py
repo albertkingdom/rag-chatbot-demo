@@ -71,6 +71,7 @@ class TestCacheRetrieval:
         cached_data = {
             "question": "What is carbon management?",
             "answer": "Carbon management is...",
+            "sources": ["What is carbon management?"],
             "embedding": [0.85, 0.15, 0.0],  # Very similar
             "timestamp": int(time.time()),
             "hit_count": 2
@@ -89,6 +90,7 @@ class TestCacheRetrieval:
         assert result is not None
         assert result["question"] == "What is carbon management?"
         assert result["answer"] == "Carbon management is..."
+        assert result["sources"] == ["What is carbon management?"]
         assert result["similarity"] > 0.85
     
     def test_cache_miss_with_low_similarity(self, cache_service, mock_redis):
@@ -119,29 +121,52 @@ class TestCacheStorage:
         embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
         question = "What is the system?"
         answer = "The system is a carbon management tool."
-        
-        result = cache_service.set_cached_response(embedding, question, answer, ttl=3600)
-        
+        sources = ["What is the system?"]
+
+        result = cache_service.set_cached_response(embedding, question, answer, sources, ttl=3600)
+
         assert result is True
         mock_redis.setex.assert_called_once()
         mock_redis.sadd.assert_called_once()
-        
+
         # Verify the data structure
         call_args = mock_redis.setex.call_args
         assert call_args[0][1] == 3600  # TTL
         stored_data = json.loads(call_args[0][2])
         assert stored_data["question"] == question
         assert stored_data["answer"] == answer
+        assert stored_data["sources"] == sources
         assert stored_data["embedding"] == embedding
         assert stored_data["hit_count"] == 0
-    
+
+    def test_set_cached_response_roundtrip_sources(self, cache_service, mock_redis):
+        """Sources written by set_cached_response can be read back by get_cached_response."""
+        embedding = [0.9, 0.1, 0.0]
+        sources = ["密碼忘記了要怎麼重設啊？"]
+
+        cache_service.set_cached_response(embedding, "問題", "答案", sources, ttl=3600)
+        stored_json = mock_redis.setex.call_args[0][2]
+
+        cache_key = mock_redis.setex.call_args[0][0]
+        mock_redis.smembers.return_value = {cache_key.encode()}
+        pipe_mock = MagicMock()
+        pipe_mock.execute.return_value = [stored_json]
+        mock_redis.pipeline.return_value = pipe_mock
+        mock_redis.get.return_value = stored_json  # for _increment_hit_count
+        mock_redis.ttl.return_value = 3600
+
+        result = cache_service.get_cached_response(embedding, threshold=0.5)
+
+        assert result is not None
+        assert result["sources"] == sources
+
     def test_set_cached_response_with_error(self, cache_service, mock_redis):
         """Test error handling when storing fails."""
         mock_redis.setex.side_effect = Exception("Redis error")
-        
+
         embedding = [0.1, 0.2, 0.3]
-        result = cache_service.set_cached_response(embedding, "Question", "Answer")
-        
+        result = cache_service.set_cached_response(embedding, "Question", "Answer", [])
+
         assert result is False
 
 
@@ -199,7 +224,7 @@ class TestCacheKeyStability:
     def _compute_key(self, cache_service, embedding):
         """Helper: invoke set_cached_response and capture the key passed to setex."""
         cache_service.redis.get.return_value = None
-        cache_service.set_cached_response(embedding, "q", "a", ttl=3600)
+        cache_service.set_cached_response(embedding, "q", "a", [], ttl=3600)
         call_args = cache_service.redis.setex.call_args
         return call_args[0][0]
 
@@ -246,7 +271,7 @@ class TestCacheDeduplication:
         }
         mock_redis.get.return_value = json.dumps(existing_data)
 
-        result = cache_service.set_cached_response(embedding, "Same question", "New answer", ttl=3600)
+        result = cache_service.set_cached_response(embedding, "Same question", "New answer", [], ttl=3600)
 
         assert result is True
         call_args = mock_redis.setex.call_args

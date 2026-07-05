@@ -104,11 +104,63 @@ def patched_chain(monkeypatch, docs_map):
 
 
 @pytest.mark.asyncio
-async def test_chain_returns_five_keys(patched_chain):
+async def test_chain_returns_six_keys(patched_chain):
     result = await patched_chain.ainvoke("test query")
 
-    for key in ("context", "contexts", "docs", "rerank_scores", "fusion_metadata"):
+    for key in ("context", "contexts", "sources", "docs", "rerank_scores", "fusion_metadata"):
         assert key in result, f"missing key: {key}"
+
+
+@pytest.mark.asyncio
+async def test_sources_built_from_qa_content(patched_chain):
+    result = await patched_chain.ainvoke("test query")
+
+    # docs_map fixture docs have no "text" metadata, so the question falls
+    # back to page_content; combined with "answer" this is short enough to
+    # not need truncation.
+    assert result["sources"] == [
+        "Q: Q A A: ans A",
+        "Q: Q C A: ans C",
+        "Q: Q D A: ans D",
+    ]
+
+
+def test_format_sources_dedupes_by_qa_content_preserving_order():
+    docs = [
+        Document(page_content="ignored", metadata={
+            "doc_id": "B", "text": "How to reset password?", "answer": "Click forgot password.",
+        }),
+        Document(page_content="ignored", metadata={
+            "doc_id": "D", "text": "What is CarbonM?", "answer": "A carbon management platform.",
+        }),
+        Document(page_content="ignored", metadata={
+            "doc_id": "C", "text": "How to reset password?", "answer": "Click forgot password.",
+        }),
+    ]
+
+    assert rag_module._format_sources(docs) == [
+        "Q: How to reset password? A: Click forgot password.",
+        "Q: What is CarbonM? A: A carbon management platform.",
+    ]
+
+
+def test_format_sources_truncates_long_qa_content_to_100_chars():
+    long_answer = "重設密碼的信件的有效時間為24小時，超過時間請重新寄送驗證信。" * 3
+    docs = [Document(page_content="ignored", metadata={
+        "doc_id": "faq-01", "text": "重設密碼的信件可以撐多久？", "answer": long_answer,
+    })]
+
+    [source] = rag_module._format_sources(docs)
+
+    assert len(source) == 103  # 100 chars + "..."
+    assert source.endswith("...")
+    assert source.startswith("Q: 重設密碼的信件可以撐多久？ A: ")
+
+
+def test_format_sources_falls_back_to_doc_id_when_question_or_answer_missing():
+    docs = [Document(page_content="", metadata={"doc_id": "faq-042"})]
+
+    assert rag_module._format_sources(docs) == ["faq-042"]
 
 
 @pytest.mark.asyncio

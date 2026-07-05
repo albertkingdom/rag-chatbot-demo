@@ -240,6 +240,24 @@ CI 不需要這些(它用 WIF / OIDC,無長期金鑰)。
 
 ---
 
-## 9. 一句話總結
+## 9. Prompt Cache 一次性 Flush(`add-answer-sources` 部署前置作業)
+
+`add-answer-sources` change 為 prompt cache 的快取值 schema 新增必要欄位 `sources`(見 `openspec/changes/add-answer-sources/design.md`)。舊 schema 的快取值沒有這個欄位,且程式碼**不做向後相容 fallback**——`get_cached_response` 讀到缺 `sources` 的舊快取值時行為未定義(視為快取讀取失敗)。
+
+**部署此 change 時,必須在新版程式碼開始服務流量之前,於同一維護窗口內清空 Redis 的 `prompt_cache:*` namespace**:
+
+```bash
+# 透過 Upstash Redis CLI 或任何連得上 REDIS_URL 的 redis-cli
+redis-cli -u "$REDIS_URL" --scan --pattern 'prompt_cache:*' > /tmp/prompt_cache_keys.txt
+xargs -a /tmp/prompt_cache_keys.txt redis-cli -u "$REDIS_URL" del
+```
+
+**驗證**:`redis-cli -u "$REDIS_URL" --scan --pattern 'prompt_cache:*'` 應回傳空結果,確認舊快取已全數清空。
+
+**預期影響**:flush 後短期內 cache miss 率會回升到接近 100%,reranker 負載短暫回升(見 §6.4 的暖機/穩態說明,穩態約 3.4s/次);這是預期代價,換取新舊 schema 不必相容。不需額外程式碼防護,只需確保這一步排進部署 runbook,且順序早於新 revision 開始收流量。
+
+---
+
+## 10. 一句話總結
 
 > 改完 code → 併到 `release/gcp-deployment` 並 push → `gh run watch` 看 CI(~13 min)→ 綠燈後 `gcloud run services describe` 確認新 revision 的 image tag = 你的 commit SHA → 若動到 BM25/知識庫,手動 `gcloud run jobs execute sync-job` 重建 → LangSmith 看 followup trace 驗效能。

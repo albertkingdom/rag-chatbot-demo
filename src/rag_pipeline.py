@@ -92,6 +92,29 @@ def _format_docs(outputs):
     return {"context": "\n\n".join(contexts), "contexts": contexts}
 
 
+def _format_sources(docs) -> list[str]:
+    sources = []
+    for doc in docs:
+        question = doc.metadata.get("text") or doc.page_content
+        answer = doc.metadata.get("answer")
+        if question and answer:
+            source = f"Q: {question} A: {answer}"
+            if len(source) > 100:
+                source = source[:100] + "..."
+        else:
+            source = doc.metadata.get("doc_id")
+        if source and source not in sources:
+            sources.append(source)
+    return sources
+
+
+def _append_source_block(answer: str, sources: list[str]) -> str:
+    if not sources:
+        return answer
+    source_lines = "\n".join(f"- {source}" for source in sources)
+    return f"{answer}\n\n參考資料：\n{source_lines}"
+
+
 def get_retrieval_chain():
     # Deliberately NOT locked: construction only wraps providers already
     # protected by services.py locks (get_hybrid_retriever, get_reranker_model)
@@ -119,6 +142,7 @@ def get_retrieval_chain():
             formatted = _format_docs(ranked)
             return {
                 **formatted,
+                "sources": _format_sources(ranked["docs"]),
                 "docs": ranked["docs"],
                 "rerank_scores": ranked["rerank_scores"],
                 "fusion_metadata": fusion_metadata,
@@ -293,6 +317,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                     cached_response["similarity"], cached_response["hit_count"],
                 )
                 cached_answer = cached_response["answer"]
+                cached_sources = cached_response.get("sources", [])
 
                 pii_hit, pii_type = detect_pii(cached_answer)
                 injection_hit, injection_pattern = detect_prompt_injection(cached_answer)
@@ -337,8 +362,9 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 )
 
                 # Stream the cached response for consistent UI experience
-                for i in range(1, len(cached_answer) + 1):
-                    yield cached_answer[:i]
+                cached_response_with_sources = _append_source_block(cached_answer, cached_sources)
+                for i in range(1, len(cached_response_with_sources) + 1):
+                    yield cached_response_with_sources[:i]
                     await asyncio.sleep(0.005)
                 chat_history_service.append_turn(history_key, message, cached_answer)
                 return
@@ -348,6 +374,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         context_bundle = await get_retrieval_chain().ainvoke(rewritten_query)
         context = context_bundle.get("context", "")
         contexts = context_bundle.get("contexts", [])
+        sources = context_bundle.get("sources", [])
 
         yield "正在生成回答..."
         history_text = format_history(history)
@@ -384,8 +411,9 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 await asyncio.sleep(0.005)
             return
 
-        for i in range(1, len(full_response) + 1):
-            yield full_response[:i]
+        response_with_sources = _append_source_block(full_response, sources)
+        for i in range(1, len(response_with_sources) + 1):
+            yield response_with_sources[:i]
             await asyncio.sleep(0.005)
 
         chat_history_service.append_turn(history_key, message, full_response)
@@ -397,6 +425,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 question_embedding,
                 message,
                 full_response,
+                sources,
             )
             logger.info("Response cached for question: %s...", message[:50])
 
