@@ -1,4 +1,4 @@
-"""Access control for the Carbon Assistant app.
+"""Access control for the RAG_DEMO app.
 
 Provides API-key authentication, Redis-backed session tokens for browsers,
 and per-key rate limiting. See openspec/changes/add-access-control for the

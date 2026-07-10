@@ -1,6 +1,41 @@
-# Carbon Assistant
+# RAG_DEMO
 
-一個容器化的 Web 應用，內建 RAG 聊天機器人，讓使用者能用自然語言查詢碳管理系統的操作手冊，以 FastAPI、Gradio、Docker 建構。
+一個容器化的 Web 應用，內建 RAG 聊天機器人，讓使用者能用自然語言查詢操作手冊，以 FastAPI、Gradio、Docker 建構。
+
+---
+
+## 如何啟動專案
+
+### 事前準備
+
+- Docker 與 Docker Compose
+- Git
+
+### 1. 環境設定
+
+Clone 專案後，在根目錄建立 `.env` 檔案（完整項目請參考 `.env.example`）：
+
+```
+OPENAI_API_KEY="your_openai_api_key_here"
+PINECONE_API_KEY="your_pinecone_api_key_here"
+OPENROUTER_API_KEY="your_openrouter_api_key_here"
+
+# 存取控制
+APP_API_KEY="a_long_random_string_you_choose"   # 共用金鑰，用於 /login 及 X-API-Key
+AUTH_ENABLED=true                               # 本機開發/測試可設為 false
+```
+
+### 2. 啟動應用程式
+
+```bash
+docker-compose up --build
+```
+
+### 3. 存取服務
+
+- **主應用程式**：[http://localhost:8000](http://localhost:8000)，首次造訪會導向 `/login`，輸入 `APP_API_KEY` 即可登入。
+- **Redis 管理介面（RedisInsight）**：[http://localhost:8001](http://localhost:8001)，用於檢視 prompt cache。
+- **MongoDB 管理介面（Mongo Express）**：[http://localhost:8081](http://localhost:8081)，用於檢視對話紀錄。
 
 ---
 
@@ -21,13 +56,13 @@
 
 - **意圖分類層**：使用 **Gemini 2.5 Flash** 在檢索前過濾離題問題（準確率 95%+，延遲 <400ms，成本約 $0.0001/查詢）。
 - **查詢改寫**：透過 LLM 自動將追問改寫為獨立問題，讓多輪對話的檢索結果更準確。
+- **Hybrid Search**：BM25 關鍵字檢索與向量語意檢索並行，以 Reciprocal Rank Fusion（RRF）融合排序結果，再送入 Reranker 精排，兼顧精確專有名詞命中與語意相關性。
 - **回覆防護（Guardrail）**：多層防護機制，包含輸入端的 prompt injection 偵測與輸出端的 PII/injection 掃描。
 - **非同步任務佇列**：使用 **Redis Queue (RQ)** 將知識庫同步等耗時任務丟到背景 `worker` 執行，確保介面保持回應速度。
 - **高效向量同步**：對 **Pinecone** 執行增量同步，只更新新增或變動的資料，而非每次全量重建。
-- **雙 AI 模型策略**：使用 **OpenAI** 做高品質向量嵌入，搭配 **Google Gemini 2.5 Flash** 處理快速且多樣化的對話生成。
 - **語意快取層**：以餘弦相似度為基礎，在 Redis 中實作快取層，攔截相似問題以大幅降低延遲與 token 消耗。
 - **對話紀錄**：所有對話都會連同回覆來源、意圖分類結果、快取命中狀態等中繼資料一併存入 **MongoDB**。
-- **可觀測性**：透過 **LangSmith** 對整個 RAG pipeline（意圖分類、重排序、檢索、生成）進行完整追蹤。
+- **可觀測性**：透過 **LangSmith** 對 RAG pipeline 的意圖分類、檢索、生成等關鍵步驟進行追蹤。
 
 ---
 
@@ -43,39 +78,3 @@
 - **`redis-insight`**：Redis 管理介面，用於檢視 prompt cache（port 8001）。
 
 ![架構圖](docs/slides/architecture-diagram-2026-07-04.png)
-
----
-
-## 如何啟動專案
-
-### 事前準備
-
-- Docker 與 Docker Compose
-- Git
-
-### 1. 環境設定
-
-Clone 專案後，在根目錄建立 `.env` 檔案（完整項目請參考 `.env.example`）：
-
-```
-OPENAI_API_KEY="your_openai_api_key_here"
-PINECONE_API_KEY="your_pinecone_api_key_here"
-GOOGLE_API_KEY="your_google_api_key_here"
-OPENROUTER_API_KEY="your_openrouter_api_key_here"
-
-# 存取控制
-APP_API_KEY="a_long_random_string_you_choose"   # 共用金鑰，用於 /login 及 X-API-Key
-AUTH_ENABLED=true                               # 本機開發/測試可設為 false
-```
-
-### 2. 啟動應用程式
-
-```bash
-docker-compose up --build
-```
-
-### 3. 存取服務
-
-- **主應用程式**：[http://localhost:8000](http://localhost:8000)，首次造訪會導向 `/login`，輸入 `APP_API_KEY` 即可登入。
-- **Redis 管理介面（RedisInsight）**：[http://localhost:8001](http://localhost:8001)，用於檢視 prompt cache。
-- **MongoDB 管理介面（Mongo Express）**：[http://localhost:8081](http://localhost:8081)，用於檢視對話紀錄。

@@ -1,4 +1,4 @@
-# Carbon Assistant - RAG Architecture
+# RAG_DEMO - RAG Architecture
 
 ## System Overview
 

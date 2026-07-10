@@ -1,7 +1,7 @@
 services:
   web:
     build: .
-    container_name: carbon-assistant-app
+    container_name: rag-demo-app
     ports:
       - "8000:80"
     volumes:
@@ -28,7 +28,7 @@ services:
 
   redis-insight:
     image: redis/redisinsight:latest
-    container_name: carbon-assistant-redisinsight
+    container_name: rag-demo-redisinsight
     ports:
       - "8001:5540"
     depends_on:
@@ -36,11 +36,11 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: carbon-assistant-redis
+    container_name: rag-demo-redis
 
   mongodb:
     image: mongo:7
-    container_name: carbon-assistant-mongodb
+    container_name: rag-demo-mongodb
     environment:
       - MONGO_INITDB_DATABASE=chatbot
     volumes:
@@ -50,7 +50,7 @@ services:
 
   mongo-express:
     image: mongo-express:latest
-    container_name: carbon-assistant-mongo-express
+    container_name: rag-demo-mongo-express
     ports:
       - "8081:8081"
     environment:
@@ -62,7 +62,7 @@ services:
 
   worker:
     build: .
-    container_name: carbon-assistant-worker
+    container_name: rag-demo-worker
     command: rq worker --with-scheduler -u redis://redis:6379/0
     volumes:
       - .:/app

@@ -244,7 +244,7 @@ Rewritten standalone question:"""
 # ---------------------------------------------------------------------------
 
 
-@traceable(name="Carbon Assistant Chat")
+@traceable(name="RAG_DEMO Chat")
 async def chat_stream(message: str, history: list, request: gr.Request = None) -> AsyncGenerator[str, None]:
     """Handles the entire RAG chain lifecycle for a single chat request with caching."""
     session_id = request.session_hash if request else None

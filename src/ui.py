@@ -1,4 +1,4 @@
-"""Gradio UI definition and BOM/upload handlers.
+"""Gradio UI definition and upload handlers.
 
 The `demo` Blocks instance is defined at module level and consumed by
 src/app.py via `gr.mount_gradio_app(app, demo, path="/")`. Handlers obtain
@@ -145,7 +145,7 @@ def clear_chat_history(request: gr.Request = None) -> None:
 # Gradio Blocks UI
 # ---------------------------------------------------------------------------
 
-with gr.Blocks(theme=gr.themes.Soft(), title="Carbon Assistant App") as demo:
+with gr.Blocks(theme=gr.themes.Soft(), title="RAG_DEMO") as demo:
     gr.Markdown("<h1>RAG demo</h1>")
 
     with gr.Tab("RAG Chatbot"):
