@@ -8,7 +8,6 @@ RAG/business functions from src.rag_pipeline and providers from src.services.
 import asyncio
 import os
 import shutil
-import traceback
 from pathlib import Path
 
 import gradio as gr
@@ -16,7 +15,6 @@ from rq import Queue
 from rq.job import Job
 
 from .access_control import SESSION_COOKIE
-from .bom_mapper import classify_bom_headers
 from .build_vector_store import sync_vector_store
 from .chat_history_service import ChatHistoryService
 from .config import DATA_SOURCE_DIR
@@ -49,21 +47,6 @@ def _get_queue():
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
-
-
-def bom_mapper_func(file):
-    """Wrapper for BOM mapping; disables the button during execution."""
-    if file is None:
-        return {"error": "Please upload a file first."}, gr.update(interactive=True)
-
-    yield {"status": "Processing..."}, gr.update(interactive=False)
-
-    try:
-        result = classify_bom_headers(file.name)
-        yield result, gr.update(interactive=True)
-    except Exception as e:
-        traceback.print_exc()
-        yield {"error": str(e)}, gr.update(interactive=True)
 
 
 def upload_manual_func(file):
