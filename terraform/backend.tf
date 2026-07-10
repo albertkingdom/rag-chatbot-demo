@@ -3,7 +3,7 @@
 # either by editing it here or via `terraform init -backend-config="bucket=<name>"`.
 terraform {
   backend "gcs" {
-    bucket = "carbon-rag-assistant-prod-2026-tfstate"
+    bucket = "your-terraform-state-bucket"
     prefix = "gcp-deployment/state"
   }
 }

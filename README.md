@@ -61,6 +61,8 @@ The system uses a decoupled architecture orchestrated by Docker Compose:
 - **`mongo-express`**: Web-based MongoDB admin GUI (port 8081).
 - **`redis-insight`**: Redis GUI for inspecting the prompt cache (port 8001).
 
+![Architecture Diagram](docs/slides/architecture-diagram-2026-07-04.png)
+
 👉 **[查看完整 RAG 架構圖](architecture.md)**
 
 ---
@@ -215,12 +217,3 @@ The Dockerfile installs via `pip install --require-hashes -r requirements.txt`,
 so any hash mismatch (e.g. a tampered or silently-replaced package) aborts the
 build. To install `pip-tools` locally: `pip install pip-tools`.
 
----
-
-## 📚 Documentation
-
-Detailed development records and design decisions:
-
-- [Implementation Plan](docs/development/prompt-cache-implementation-plan.md)
-- [Feature Walkthrough & Verification](docs/development/prompt-cache-walkthrough.md)
-- [Development Task Checklist](docs/development/prompt-cache-task.md)

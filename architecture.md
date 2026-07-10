@@ -1,4 +1,4 @@
-# Cedars Carbon Assistant - RAG Architecture
+# Carbon Assistant - RAG Architecture
 
 ## System Overview
 
