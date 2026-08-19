@@ -26,3 +26,17 @@ discuss? → propose → apply ⇄ ingest → archive
 Changes can be parked（暫存）— temporarily moved out of `openspec/changes/`. Parked changes won't appear in `spectra list` but can be found with `spectra list --parked`. To restore: `spectra unpark <name>`. The `/spectra-apply` and `/spectra-ingest` skills handle parked changes automatically.
 
 <!-- SPECTRA:END -->
+
+## Development Rules
+
+### Branching
+
+- New features MUST be developed on a new branch created from `master`, `main`, or `develop`.
+- Branch naming convention: `feature/{feature-name}`
+- Before implementation, there must be a planning document or a completed Spectra flow (`/spectra-propose`).
+- Update `README.md` to reflect new features before merging.
+- A PR must go through code review before merging.
+
+### Commit Messages
+
+- Commit messages MUST NOT mention any AI tools (e.g., Claude, Copilot, ChatGPT, or any other AI assistant).
