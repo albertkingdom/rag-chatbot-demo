@@ -230,14 +230,15 @@ class TestQueryRewriting:
 
     @pytest.mark.asyncio
     async def test_rewrite_error_falls_back_to_original_message(self, monkeypatch):
+        # "碳盤查建議值" contains 碳 → rule route = rag; rewrite error → original
         llm = MagicMock()
         llm.ainvoke = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
 
-        result = await route_query("那建議值呢？", HISTORY)
+        result = await route_query("碳盤查建議值是多少？", HISTORY)
 
         assert result.route == "rag"
-        assert result.rewritten_query == "那建議值呢？"
+        assert result.rewritten_query == "碳盤查建議值是多少？"
 
     @pytest.mark.asyncio
     async def test_llm_route_rewrites_in_single_call(self, monkeypatch):
