@@ -86,7 +86,7 @@ User Query
   - New: `tests/test_retrieval_grader.py`
 - Affected dependencies: 無新增依賴
 
-## Open Questions
+## Decisions
 
-1. 品質評估方式：用 reranker score 的最高分 vs 平均分 vs LLM 判斷？reranker score 不需額外 LLM 呼叫，延遲最低；LLM 判斷更準但增加一次呼叫。建議先用 reranker score，後續可切換。
-2. 重試時的查詢改寫：復用現有的 `rewrite_query` 邏輯（基於對話歷史改寫）還是新增一個針對檢索失敗的改寫 prompt（基於原始查詢 + 失敗原因改寫）？建議後者，因為目的不同。
+1. **品質評估方式**：使用 reranker top-1 score（零額外 LLM 呼叫，延遲最低）。後續可視需要切換為 LLM 判斷。
+2. **重試改寫方式**：新增專用的改寫 prompt（基於原始查詢 + 低品質文件摘要），不復用現有的 `rewrite_query`（用途不同：一個是對話追問改寫，一個是檢索失敗改寫）。
