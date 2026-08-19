@@ -20,7 +20,6 @@ from .services import (  # noqa: F401
     get_bm25_index,
     get_embeddings,
     get_hybrid_retriever,
-    get_intent_classifier,
     get_llm,
     get_reranker_model,
     get_vectorstore,

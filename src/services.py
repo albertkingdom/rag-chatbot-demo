@@ -12,7 +12,6 @@ Public providers:
     get_bm25_index()        -> BM25Index
     get_hybrid_retriever()  -> HybridRetriever
     get_reranker_model()    -> HuggingFaceCrossEncoder
-    get_intent_classifier() -> IntentClassifier | None
     _get_optimal_device()   -> str
 
 This module has NO import-time side effects (no network, no model loading,
@@ -31,7 +30,6 @@ from langchain_pinecone import PineconeVectorStore
 from .bm25_index import BM25Index
 from .config import PINECONE_INDEX_NAME, REDIS_URL
 from .hybrid_retriever import HybridRetriever
-from .intent_classifier import IntentClassifier
 
 logger = logging.getLogger("services")
 
@@ -47,8 +45,7 @@ class LazySingleton:
     Encapsulates the double-checked locking pattern so the 6 pure providers
     (redis, embeddings, llm, vectorstore, hybrid_retriever, reranker) share
     one implementation and cannot accidentally forget the lock. Providers
-    with extra logic (bm25 reload_if_stale, intent_classifier None-on-missing-
-    key) stay hand-written.
+    with extra logic (bm25 reload_if_stale) stay hand-written.
     """
 
     __slots__ = ("_build", "_lock", "_value")
@@ -91,9 +88,8 @@ def _get_optimal_device():
 # Singletons
 # ---------------------------------------------------------------------------
 # 6 pure build-once providers use LazySingleton (redis, embeddings, llm,
-# vectorstore, hybrid_retriever, reranker). 2 providers with extra logic
-# (bm25_index reload_if_stale, intent_classifier None-on-missing-key) stay
-# hand-written with their own lock.
+# vectorstore, hybrid_retriever, reranker). 1 provider with extra logic
+# (bm25_index reload_if_stale) stays hand-written with its own lock.
 
 _redis_conn = LazySingleton(lambda: redis.from_url(REDIS_URL))
 
@@ -192,30 +188,3 @@ def get_bm25_index():
     else:
         _bm25_index.reload_if_stale()
     return _bm25_index
-
-
-_intent_classifier = None
-_intent_classifier_lock = threading.Lock()
-
-
-def get_intent_classifier():
-    """取得 Intent Classifier 實例（thread-safe）。回傳 None 表示分類器被停用。
-
-    Note: when OPENROUTER_API_KEY is missing we return None WITHOUT caching
-    (so a later key injection can retry), hence this provider stays
-    hand-written rather than using LazySingleton.
-    """
-    global _intent_classifier
-    if _intent_classifier is None:
-        with _intent_classifier_lock:
-            if _intent_classifier is None:
-                logger.info("Initializing Intent Classifier...")
-                openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
-                if not openrouter_api_key:
-                    logger.warning(
-                        "OPENROUTER_API_KEY not found. Intent classification will be disabled."
-                    )
-                    return None
-                _intent_classifier = IntentClassifier(openrouter_api_key=openrouter_api_key)
-                logger.info("Intent Classifier initialized successfully.")
-    return _intent_classifier
