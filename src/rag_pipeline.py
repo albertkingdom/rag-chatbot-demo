@@ -85,17 +85,6 @@ def _format_docs(outputs):
     return {"context": "\n\n".join(contexts), "contexts": contexts}
 
 
-_retrieval_chain = None
-_generation_chain = None
-
-
-@traceable(name="Prepare Context")
-def _format_docs(outputs):
-    docs = outputs["docs"]
-    contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
-    return {"context": "\n\n".join(contexts), "contexts": contexts}
-
-
 def _format_sources(docs) -> list[str]:
     sources = []
     for doc in docs:
