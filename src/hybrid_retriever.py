@@ -10,6 +10,7 @@ import asyncio
 from typing import Any
 
 from langchain_core.documents import Document
+from langsmith import traceable
 
 from src.config import FUSION_TOP_M, BM25_TOP_N, VECTOR_TOP_N, RRF_K
 
@@ -56,6 +57,7 @@ class HybridRetriever:
     # Vector search wrapper (sync→async bridge)
     # ------------------------------------------------------------------
 
+    @traceable(name="Vector Search (Pinecone)")
     async def _vector_search(self, query: str, top_n: int) -> list[tuple[str, float]]:
         """Return ``(doc_id, score)`` from the vector store.
 
@@ -95,41 +97,15 @@ class HybridRetriever:
                "fusion_metadata": dict        # per-stage observability
                }``
         """
-        bm25_results: list[tuple[str, float]] = []
-        bm25_error: str | None = None
+        bm25_results, bm25_error = self._bm25_search(query, bm25_top_n)
 
-        # --- BM25 (may raise / be empty) --------------------------
-        try:
-            if not self.bm25_index.is_built or self.bm25_index.corpus_size == 0:
-                bm25_error = "bm25_unavailable"
-            else:
-                bm25_results = self.bm25_index.search(query, top_n=bm25_top_n)
-                if not bm25_results:
-                    bm25_error = "bm25_empty_results"
-        except RuntimeError as exc:
-            bm25_error = f"bm25_error: {exc}"
-
-        # --- Vector (async) --------------------------------------
         vector_results = await self._vector_search(query, top_n=vector_top_n)
 
-        # --- Fusion ----------------------------------------------
-        fallback = None
-        if bm25_error:
-            fallback = "vector_only"
-            fused = [(doc_id, 1.0 / (rrf_k + rank)) for rank, (doc_id, _) in enumerate(vector_results, start=1)]
-        else:
-            fused = self._rrf_fuse(bm25_results, vector_results, rrf_k)
+        fused, fallback = self._fuse_results(
+            bm25_results, bm25_error, vector_results, rrf_k,
+        )
 
-        fused = fused[:FUSION_TOP_M]
-
-        # --- Gather candidate Documents --------------------------
-        candidates: list[Document] = []
-        for doc_id, _ in fused:
-            doc = self.bm25_index.get_doc(doc_id)
-            if doc is None:
-                doc = self._find_in_vector_docs(doc_id, query, vector_top_n)
-            if doc is not None:
-                candidates.append(doc)
+        candidates = self._gather_candidates(fused, query, vector_top_n)
 
         # --- Observability metadata ------------------------------
         fusion_metadata: dict[str, Any] = {
@@ -153,6 +129,58 @@ class HybridRetriever:
             "candidates": candidates,
             "fusion_metadata": fusion_metadata,
         }
+
+    @traceable(name="BM25 Search")
+    def _bm25_search(
+        self, query: str, top_n: int,
+    ) -> tuple[list[tuple[str, float]], str | None]:
+        bm25_results: list[tuple[str, float]] = []
+        bm25_error: str | None = None
+        try:
+            if not self.bm25_index.is_built or self.bm25_index.corpus_size == 0:
+                bm25_error = "bm25_unavailable"
+            else:
+                bm25_results = self.bm25_index.search(query, top_n=top_n)
+                if not bm25_results:
+                    bm25_error = "bm25_empty_results"
+        except RuntimeError as exc:
+            bm25_error = f"bm25_error: {exc}"
+        return bm25_results, bm25_error
+
+    @traceable(name="RRF Fusion")
+    def _fuse_results(
+        self,
+        bm25_results: list[tuple[str, float]],
+        bm25_error: str | None,
+        vector_results: list[tuple[str, float]],
+        rrf_k: int,
+    ) -> tuple[list[tuple[str, float]], str | None]:
+        fallback = None
+        if bm25_error:
+            fallback = "vector_only"
+            fused = [
+                (doc_id, 1.0 / (rrf_k + rank))
+                for rank, (doc_id, _) in enumerate(vector_results, start=1)
+            ]
+        else:
+            fused = self._rrf_fuse(bm25_results, vector_results, rrf_k)
+        return fused[:FUSION_TOP_M], fallback
+
+    @traceable(name="Gather Candidates")
+    def _gather_candidates(
+        self,
+        fused: list[tuple[str, float]],
+        query: str,
+        vector_top_n: int,
+    ) -> list[Document]:
+        candidates: list[Document] = []
+        for doc_id, _ in fused:
+            doc = self.bm25_index.get_doc(doc_id)
+            if doc is None:
+                doc = self._find_in_vector_docs(doc_id, query, vector_top_n)
+            if doc is not None:
+                candidates.append(doc)
+        return candidates
 
     # ------------------------------------------------------------------
     # Helpers

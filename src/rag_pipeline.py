@@ -157,7 +157,10 @@ def get_retrieval_chain():
                 "fusion_metadata": fusion_metadata,
             }
 
-        _retrieval_chain = RunnableLambda(_retrieve) | RunnableLambda(_rerank)
+        _retrieval_chain = (
+            RunnableLambda(_retrieve, name="Hybrid Retrieve")
+            | RunnableLambda(_rerank, name="Rerank (BGE)")
+        )
     return _retrieval_chain
 
 
