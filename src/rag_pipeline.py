@@ -49,6 +49,17 @@ from .services import (
 
 logger = logging.getLogger("rag_pipeline")
 
+_STREAM_CHUNK_SIZE = 10
+_STREAM_CHUNK_DELAY = 0.005
+
+
+async def _stream_text(text: str) -> AsyncGenerator[str, None]:
+    length = len(text)
+    for end in range(_STREAM_CHUNK_SIZE, length, _STREAM_CHUNK_SIZE):
+        yield text[:end]
+        await asyncio.sleep(_STREAM_CHUNK_DELAY)
+    yield text
+
 
 # ---------------------------------------------------------------------------
 # Prompt
@@ -242,9 +253,8 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             )
             elapsed = time.monotonic() - start_time
             guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
-            for i in range(1, len(guardrail_message_with_timing) + 1):
-                yield guardrail_message_with_timing[:i]
-                await asyncio.sleep(0.005)
+            async for chunk in _stream_text(guardrail_message_with_timing):
+                yield chunk
             return
 
         # Step 0b: Route - decide "rag" vs "direct", and get a standalone query
@@ -289,16 +299,14 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 )
                 elapsed = time.monotonic() - start_time
                 guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
-                for i in range(1, len(guardrail_message_with_timing) + 1):
-                    yield guardrail_message_with_timing[:i]
-                    await asyncio.sleep(0.005)
+                async for chunk in _stream_text(guardrail_message_with_timing):
+                    yield chunk
                 return
 
             elapsed = time.monotonic() - start_time
             response_final = _append_timing_line(full_response, elapsed)
-            for i in range(1, len(response_final) + 1):
-                yield response_final[:i]
-                await asyncio.sleep(0.005)
+            async for chunk in _stream_text(response_final):
+                yield chunk
 
             chat_history_service.append_turn(history_key, message, full_response)
 
@@ -364,9 +372,8 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                     )
                     elapsed = time.monotonic() - start_time
                     guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
-                    for i in range(1, len(guardrail_message_with_timing) + 1):
-                        yield guardrail_message_with_timing[:i]
-                        await asyncio.sleep(0.005)
+                    async for chunk in _stream_text(guardrail_message_with_timing):
+                        yield chunk
                     return
 
                 # Record the CACHED conversation to MongoDB
@@ -384,9 +391,8 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 cached_response_with_sources = _append_source_block(cached_answer, cached_sources)
                 elapsed = time.monotonic() - start_time
                 cached_response_final = _append_timing_line(cached_response_with_sources, elapsed)
-                for i in range(1, len(cached_response_final) + 1):
-                    yield cached_response_final[:i]
-                    await asyncio.sleep(0.005)
+                async for chunk in _stream_text(cached_response_final):
+                    yield chunk
                 chat_history_service.append_turn(history_key, message, cached_answer)
                 return
 
@@ -446,18 +452,16 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             )
             elapsed = time.monotonic() - start_time
             guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
-            for i in range(1, len(guardrail_message_with_timing) + 1):
-                yield guardrail_message_with_timing[:i]
-                await asyncio.sleep(0.005)
+            async for chunk in _stream_text(guardrail_message_with_timing):
+                yield chunk
             return
 
         with langsmith.trace(name="Stream Response"):
             response_with_sources = _append_source_block(full_response, sources)
             elapsed = time.monotonic() - start_time
             response_final = _append_timing_line(response_with_sources, elapsed)
-            for i in range(1, len(response_final) + 1):
-                yield response_final[:i]
-                await asyncio.sleep(0.005)
+            async for chunk in _stream_text(response_final):
+                yield chunk
 
         chat_history_service.append_turn(history_key, message, full_response)
 
