@@ -15,6 +15,7 @@ import gradio as gr
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
+import langsmith
 from langsmith import traceable
 
 from .access_control import SESSION_COOKIE
@@ -317,16 +318,17 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         yield "正在從知識庫檢索相關資訊..."
         embeddings = get_embeddings()
 
-        # Generate embedding for the rewritten query (needed for both cache and RAG)
-        question_embedding = await embeddings.aembed_query(rewritten_query)
+        with langsmith.trace(name="Embed Query (OpenAI)"):
+            question_embedding = await embeddings.aembed_query(rewritten_query)
 
-        # Try to get cached response if cache is enabled
+        cached_response = None
         if CACHE_ENABLED:
-            cache_service = PromptCacheService(get_redis_conn())
-            cached_response = cache_service.get_cached_response(
-                question_embedding,
-                threshold=CACHE_SIMILARITY_THRESHOLD,
-            )
+            with langsmith.trace(name="Cache Lookup (Redis)"):
+                cache_service = PromptCacheService(get_redis_conn())
+                cached_response = cache_service.get_cached_response(
+                    question_embedding,
+                    threshold=CACHE_SIMILARITY_THRESHOLD,
+                )
 
             if cached_response:
                 logger.info(
@@ -389,7 +391,8 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 return
 
         # Cache miss or cache disabled - proceed with normal RAG pipeline
-        yield "正在優化檢索結果 (Reranking)..."
+        with langsmith.trace(name="Yield Status Update"):
+            yield "正在優化檢索結果 (Reranking)..."
         context_bundle = await get_retrieval_chain().ainvoke(rewritten_query)
 
         # Grade retrieval quality; on a low-quality grade, rewrite the query
@@ -418,8 +421,9 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         ):
             full_response += chunk
 
-        pii_hit, pii_type = detect_pii(full_response)
-        injection_hit, injection_pattern = detect_prompt_injection(full_response)
+        with langsmith.trace(name="Output Guardrail"):
+            pii_hit, pii_type = detect_pii(full_response)
+            injection_hit, injection_pattern = detect_prompt_injection(full_response)
 
         if pii_hit or injection_hit:
             guardrail_message = get_guardrail_message()
@@ -447,35 +451,35 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 await asyncio.sleep(0.005)
             return
 
-        response_with_sources = _append_source_block(full_response, sources)
-        elapsed = time.monotonic() - start_time
-        response_final = _append_timing_line(response_with_sources, elapsed)
-        for i in range(1, len(response_final) + 1):
-            yield response_final[:i]
-            await asyncio.sleep(0.005)
+        with langsmith.trace(name="Stream Response"):
+            response_with_sources = _append_source_block(full_response, sources)
+            elapsed = time.monotonic() - start_time
+            response_final = _append_timing_line(response_with_sources, elapsed)
+            for i in range(1, len(response_final) + 1):
+                yield response_final[:i]
+                await asyncio.sleep(0.005)
 
         chat_history_service.append_turn(history_key, message, full_response)
 
-        # Store the generated response in cache
-        if CACHE_ENABLED and full_response:
-            cache_service = PromptCacheService(get_redis_conn())
-            cache_service.set_cached_response(
-                question_embedding,
-                message,
-                full_response,
-                sources,
-            )
-            logger.info("Response cached for question: %s...", message[:50])
+        with langsmith.trace(name="Cache Write + DB Save"):
+            if CACHE_ENABLED and full_response:
+                cache_service = PromptCacheService(get_redis_conn())
+                cache_service.set_cached_response(
+                    question_embedding,
+                    message,
+                    full_response,
+                    sources,
+                )
+                logger.info("Response cached for question: %s...", message[:50])
 
-        # Record the RAG conversation to MongoDB
-        db = get_conversation_db()
-        await db.async_save_conversation(
-            user_question=message,
-            assistant_response=full_response,
-            session_id=session_id,
-            response_source="rag",
-            cache_hit=False,
-        )
+            db = get_conversation_db()
+            await db.async_save_conversation(
+                user_question=message,
+                assistant_response=full_response,
+                session_id=session_id,
+                response_source="rag",
+                cache_hit=False,
+            )
 
     except Exception as e:
         logger.error("An error occurred during chat stream: %s", e)
