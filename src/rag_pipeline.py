@@ -8,11 +8,12 @@ module has no module-level side effects beyond defining the QA prompt.
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator
 
 import gradio as gr
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langsmith import traceable
 
@@ -52,21 +53,21 @@ logger = logging.getLogger("rag_pipeline")
 # Prompt
 # ---------------------------------------------------------------------------
 
-_QA_PROMPT = PromptTemplate.from_template(
-    """You are a helpful assistant with expertise in carbon management.
-        Use the following context to answer the user's question.
-        If the context is not relevant or empty, answer based on your general knowledge.
-        Keep the answer concise and helpful.
-        {history}
-
-        Context:
-        {context}
-
-        Question:
-        {question}
-
-        Helpful Answer:"""
-)
+_QA_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a helpful assistant with expertise in carbon management (CarbonM).\n"
+     "Today is {today}.\n"
+     "Always reply in Traditional Chinese (繁體中文) unless the user explicitly uses another language.\n"
+     "You cannot browse the internet, execute code, or access external systems.\n"
+     "Do not provide medical, legal, or financial advice.\n"
+     "Use the provided context to answer the user's question. "
+     "If the context is not relevant or empty, answer based on your general knowledge.\n"
+     "Keep the answer concise and helpful."),
+    ("human",
+     "{history}\n\n"
+     "Context:\n{context}\n\n"
+     "Question:\n{question}"),
+])
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +100,17 @@ def _format_sources(docs) -> list[str]:
         if source and source not in sources:
             sources.append(source)
     return sources
+
+
+_TW_TZ = timezone(timedelta(hours=8))
+
+_WEEKDAY_ZH = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+
+
+def _today_str() -> str:
+    now = datetime.now(_TW_TZ)
+    weekday = _WEEKDAY_ZH[now.weekday()]
+    return f"{now.strftime('%Y-%m-%d')} {weekday}"
 
 
 def _append_source_block(answer: str, sources: list[str]) -> str:
@@ -245,7 +257,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         if router_result.route == "direct":
             history_text = format_history(history)
             async for chunk in get_generation_chain().astream(
-                {"context": "", "question": message, "history": history_text}
+                {"context": "", "question": message, "history": history_text, "today": _today_str()}
             ):
                 full_response += chunk
 
@@ -399,7 +411,7 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         yield "正在生成回答..."
         history_text = format_history(history)
         async for chunk in get_generation_chain().astream(
-            {"context": context, "question": message, "history": history_text}
+            {"context": context, "question": message, "history": history_text, "today": _today_str()}
         ):
             full_response += chunk
 
