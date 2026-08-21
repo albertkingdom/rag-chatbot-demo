@@ -58,8 +58,10 @@ class HybridRetriever:
     # ------------------------------------------------------------------
 
     @traceable(name="Vector Search (Pinecone)")
-    async def _vector_search(self, query: str, top_n: int) -> list[tuple[str, float]]:
-        """Return ``(doc_id, score)`` from the vector store.
+    async def _vector_search(
+        self, query: str, top_n: int,
+    ) -> tuple[list[tuple[str, float]], dict[str, Document]]:
+        """Return ``((doc_id, score) list, {doc_id: Document})`` from the vector store.
 
         Falls back to ``similarity_search_with_score`` when
         ``asimilarity_search_with_score`` is unavailable.
@@ -70,14 +72,14 @@ class HybridRetriever:
             results = self.vector_store.similarity_search_with_score(query, k=top_n)
 
         scored: list[tuple[str, float]] = []
+        doc_lookup: dict[str, Document] = {}
         for doc, score in results:
             doc_id = doc.metadata.get("doc_id")
             if not doc_id:
-                # Documents are expected to carry a stable doc_id in metadata;
-                # skip any that don't rather than fabricate an unstable hash id.
                 continue
             scored.append((doc_id, float(score)))
-        return scored
+            doc_lookup[doc_id] = doc
+        return scored, doc_lookup
 
     # ------------------------------------------------------------------
     # Main entry
@@ -99,13 +101,15 @@ class HybridRetriever:
         """
         bm25_results, bm25_error = self._bm25_search(query, bm25_top_n)
 
-        vector_results = await self._vector_search(query, top_n=vector_top_n)
+        vector_results, vector_doc_lookup = await self._vector_search(
+            query, top_n=vector_top_n,
+        )
 
         fused, fallback = self._fuse_results(
             bm25_results, bm25_error, vector_results, rrf_k,
         )
 
-        candidates = self._gather_candidates(fused, query, vector_top_n)
+        candidates = self._gather_candidates(fused, vector_doc_lookup)
 
         # --- Observability metadata ------------------------------
         fusion_metadata: dict[str, Any] = {
@@ -170,33 +174,13 @@ class HybridRetriever:
     def _gather_candidates(
         self,
         fused: list[tuple[str, float]],
-        query: str,
-        vector_top_n: int,
+        vector_doc_lookup: dict[str, Document],
     ) -> list[Document]:
         candidates: list[Document] = []
         for doc_id, _ in fused:
             doc = self.bm25_index.get_doc(doc_id)
             if doc is None:
-                doc = self._find_in_vector_docs(doc_id, query, vector_top_n)
+                doc = vector_doc_lookup.get(doc_id)
             if doc is not None:
                 candidates.append(doc)
         return candidates
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _find_in_vector_docs(self, doc_id: str, query: str, top_n: int):
-        """Best-effort lookup for a doc id that BM25Index didn't have.
-
-        This happens when a document came from the vector store only;
-        we re-issue a small search and match by id.
-        """
-        try:
-            docs = self.vector_store.similarity_search(query, k=top_n)
-        except Exception:
-            return None
-        for doc in docs:
-            if doc.metadata.get("doc_id") == doc_id:
-                return doc
-        return None
