@@ -1,0 +1,252 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 640" width="1040" height="640" role="img" aria-label="Agentic RAG Flow">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap');
+      text { font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif; }
+      .title { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+      .label { font-size: 11px; font-weight: 500; }
+      .sublabel { font-size: 9px; font-weight: 400; fill: #6b7280; }
+      .param { font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; font-weight: 500; }
+      .group-title { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+      .decision-label { font-size: 10px; font-weight: 500; }
+      .edge-label { font-size: 8.5px; font-weight: 500; }
+      .arrow { stroke-width: 1.6; fill: none; marker-end: url(#ah); }
+      .arrow-retry { stroke-width: 1.8; fill: none; marker-end: url(#ah-retry); }
+      .arrow-block { stroke-width: 1.6; fill: none; marker-end: url(#ah-block); }
+    </style>
+    <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="ah-retry" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#dc2626"/>
+    </marker>
+    <marker id="ah-block" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#ea580c"/>
+    </marker>
+    <filter id="s" x="-3%" y="-6%" width="106%" height="116%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1040" height="640" rx="8" fill="#f8fafc"/>
+
+  <!-- Title -->
+  <text x="36" y="36" class="title" fill="#0f172a">Agentic RAG — Decision Flow</text>
+  <text x="36" y="52" class="sublabel" fill="#94a3b8" font-size="10px">Retrieve → Grade → Retry loop with query rewriting</text>
+  <line x1="36" y1="62" x2="1004" y2="62" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- ROW 1: Input pipeline (horizontal)             -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <!-- User Query -->
+  <rect x="36" y="82" width="120" height="42" rx="20" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.4" filter="url(#s)"/>
+  <text x="96" y="107" text-anchor="middle" class="label" fill="#1e3a5f">User Query</text>
+
+  <!-- → Input Guard -->
+  <line x1="156" y1="103" x2="190" y2="103" class="arrow" stroke="#475569"/>
+
+  <!-- Input Guard (diamond) -->
+  <polygon points="248,73 308,103 248,133 190,103" fill="#fff7ed" stroke="#f97316" stroke-width="1.4"/>
+  <text x="248" y="100" text-anchor="middle" class="decision-label" fill="#9a3412">Input</text>
+  <text x="248" y="112" text-anchor="middle" class="decision-label" fill="#9a3412">Guard</text>
+
+  <!-- block ↓ -->
+  <line x1="248" y1="133" x2="248" y2="162" class="arrow-block" stroke="#ea580c"/>
+  <text x="258" y="153" class="edge-label" fill="#ea580c">Injection</text>
+  <rect x="214" y="162" width="68" height="28" rx="4" fill="#ffedd5" stroke="#ea580c" stroke-width="1"/>
+  <text x="248" y="180" text-anchor="middle" class="label" fill="#9a3412">Block</text>
+
+  <!-- pass → Query Rewrite -->
+  <line x1="308" y1="103" x2="340" y2="103" class="arrow" stroke="#475569"/>
+  <text x="316" y="96" class="edge-label" fill="#16a34a">Pass</text>
+
+  <!-- Query Rewrite -->
+  <rect x="340" y="82" width="120" height="42" rx="5" fill="#fff" stroke="#fbbf24" stroke-width="1.2" filter="url(#s)"/>
+  <text x="400" y="100" text-anchor="middle" class="label" fill="#78350f">Query Rewrite</text>
+  <text x="400" y="114" text-anchor="middle" class="sublabel">追問 → 獨立問題</text>
+
+  <!-- → Intent Router -->
+  <line x1="460" y1="103" x2="494" y2="103" class="arrow" stroke="#475569"/>
+
+  <!-- Intent Router (diamond) -->
+  <polygon points="552,73 612,103 552,133 494,103" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.4"/>
+  <text x="552" y="100" text-anchor="middle" class="decision-label" fill="#166534">Intent</text>
+  <text x="552" y="112" text-anchor="middle" class="decision-label" fill="#166534">Router</text>
+
+  <!-- off-topic ↓ -->
+  <line x1="552" y1="133" x2="552" y2="162" class="arrow-block" stroke="#ea580c"/>
+  <text x="566" y="153" class="edge-label" fill="#ea580c">Off-topic</text>
+  <rect x="518" y="162" width="68" height="28" rx="4" fill="#ffedd5" stroke="#ea580c" stroke-width="1"/>
+  <text x="552" y="180" text-anchor="middle" class="label" fill="#9a3412">Reject</text>
+
+  <!-- RAG → Cache -->
+  <line x1="612" y1="103" x2="646" y2="103" class="arrow" stroke="#475569"/>
+  <text x="618" y="96" class="edge-label" fill="#16a34a">RAG</text>
+
+  <!-- Direct route (top bypass) -->
+  <path d="M612,103 L630,80 L630,38 L830,38" class="arrow" stroke="#475569"/>
+  <text x="670" y="34" class="edge-label" fill="#6366f1">Direct (no retrieval)</text>
+  <rect x="830" y="22" width="100" height="30" rx="5" fill="#eef2ff" stroke="#818cf8" stroke-width="1"/>
+  <text x="880" y="41" text-anchor="middle" class="label" fill="#3730a3">LLM Direct</text>
+
+  <!-- Cache (diamond) -->
+  <polygon points="710,73 770,103 710,133 646,103" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.4"/>
+  <text x="710" y="97" text-anchor="middle" class="decision-label" fill="#1e40af">Cache</text>
+  <text x="710" y="110" text-anchor="middle" class="param" fill="#1e40af">≥ 0.95</text>
+
+  <!-- Cache hit → goes right then down along the right edge -->
+  <path d="M770,103 L980,103 L980,400" class="arrow" stroke="#3b82f6"/>
+  <text x="790" y="96" class="edge-label" fill="#2563eb">Hit</text>
+  <text x="988" y="260" class="edge-label" fill="#2563eb" writing-mode="tb" font-size="8px">skip retrieval</text>
+
+  <!-- Redis annotation -->
+  <rect x="800" y="112" width="72" height="22" rx="3" fill="#dbeafe" stroke="#93c5fd" stroke-width="0.8"/>
+  <text x="836" y="127" text-anchor="middle" class="param" fill="#1e40af">Redis</text>
+
+  <!-- Cache miss ↓ -->
+  <line x1="710" y1="133" x2="710" y2="170" class="arrow" stroke="#475569"/>
+  <text x="722" y="156" class="edge-label" fill="#64748b">Miss</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- AGENTIC RETRIEVAL LOOP                         -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="56" y="216" width="860" height="264" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.2" stroke-dasharray="6 3"/>
+  <text x="76" y="238" class="group-title" fill="#991b1b">Agentic Retrieval Loop</text>
+  <text x="76" y="252" class="sublabel" fill="#b91c1c" font-size="9px">max retries = 1 · grade threshold = 0.3</text>
+
+  <!-- Entry arrow into retrieval -->
+  <path d="M710,170 L710,196 L170,196 L170,276" class="arrow" stroke="#475569"/>
+
+  <!-- Hybrid Retrieval -->
+  <rect x="90" y="276" width="160" height="68" rx="6" fill="#fff" stroke="#fbbf24" stroke-width="1.2" filter="url(#s)"/>
+  <text x="170" y="298" text-anchor="middle" class="label" fill="#78350f">Hybrid Retrieval</text>
+  <line x1="110" y1="308" x2="230" y2="308" stroke="#fde68a" stroke-width="0.8"/>
+  <text x="115" y="324" class="param" fill="#92400e">BM25  k=10</text>
+  <text x="115" y="338" class="param" fill="#92400e">Vector k=10</text>
+
+  <!-- → RRF Fusion -->
+  <line x1="250" y1="310" x2="290" y2="310" class="arrow" stroke="#475569"/>
+
+  <rect x="290" y="276" width="120" height="68" rx="6" fill="#fff" stroke="#fbbf24" stroke-width="1.2" filter="url(#s)"/>
+  <text x="350" y="298" text-anchor="middle" class="label" fill="#78350f">RRF Fusion</text>
+  <line x1="310" y1="308" x2="390" y2="308" stroke="#fde68a" stroke-width="0.8"/>
+  <text x="315" y="324" class="param" fill="#92400e">k=60</text>
+  <text x="315" y="338" class="param" fill="#92400e">top_m=5</text>
+
+  <!-- → BGE Reranker -->
+  <line x1="410" y1="310" x2="450" y2="310" class="arrow" stroke="#475569"/>
+
+  <rect x="450" y="276" width="120" height="68" rx="6" fill="#fff" stroke="#fbbf24" stroke-width="1.2" filter="url(#s)"/>
+  <text x="510" y="298" text-anchor="middle" class="label" fill="#78350f">BGE Reranker</text>
+  <line x1="470" y1="308" x2="550" y2="308" stroke="#fde68a" stroke-width="0.8"/>
+  <text x="475" y="324" class="param" fill="#92400e">v2-m3</text>
+  <text x="475" y="338" class="param" fill="#92400e">→ Top 3</text>
+
+  <!-- → Grade (diamond) -->
+  <line x1="570" y1="310" x2="600" y2="310" class="arrow" stroke="#475569"/>
+
+  <polygon points="660,280 720,310 660,340 600,310" fill="#fef2f2" stroke="#ef4444" stroke-width="1.6"/>
+  <text x="660" y="307" text-anchor="middle" class="decision-label" fill="#991b1b">Grade</text>
+  <text x="660" y="320" text-anchor="middle" class="param" fill="#991b1b">≥ 0.3?</text>
+
+  <!-- Grade PASS → LLM Generate -->
+  <path d="M720,310 L770,310" class="arrow" stroke="#475569"/>
+  <text x="733" y="303" class="edge-label" fill="#16a34a">Pass</text>
+
+  <!-- Grade FAIL ↓ → Retry Rewrite -->
+  <line x1="660" y1="340" x2="660" y2="370" class="arrow-retry" stroke="#dc2626"/>
+  <text x="672" y="360" class="edge-label" fill="#dc2626">Fail</text>
+
+  <!-- Retry Query Rewrite -->
+  <rect x="570" y="370" width="180" height="52" rx="6" fill="#fef2f2" stroke="#ef4444" stroke-width="1.4" filter="url(#s)"/>
+  <text x="660" y="390" text-anchor="middle" class="label" fill="#991b1b">Retry Query Rewrite</text>
+  <text x="660" y="406" text-anchor="middle" class="sublabel" fill="#b91c1b">LLM rewrites with failed context</text>
+  <text x="660" y="418" text-anchor="middle" class="sublabel" fill="#b91c1b">to try different keywords/angles</text>
+
+  <!-- Retry loop arrow: Rewrite → back to Retrieval -->
+  <path d="M570,396 L72,396 L72,310 L90,310" class="arrow-retry" stroke="#dc2626"/>
+  <text x="250" y="390" class="edge-label" fill="#dc2626">Retry with rewritten query</text>
+
+  <!-- LLM Generate (inside agentic box) -->
+  <rect x="770" y="276" width="130" height="68" rx="6" fill="#fff" stroke="#8b5cf6" stroke-width="1.2" filter="url(#s)"/>
+  <text x="835" y="298" text-anchor="middle" class="label" fill="#5b21b6">LLM Generate</text>
+  <line x1="790" y1="308" x2="880" y2="308" stroke="#ddd6fe" stroke-width="0.8"/>
+  <text x="795" y="324" class="param" fill="#6d28d9">Gemini 2.5 Flash</text>
+  <text x="795" y="338" class="param" fill="#6d28d9">+ 3-turn history</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- OUTPUT COLUMN (below, centered at x=835)       -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <!-- LLM Generate → Guard (straight down) -->
+  <line x1="835" y1="344" x2="835" y2="500" class="arrow" stroke="#475569"/>
+
+  <!-- Guard box -->
+  <rect x="795" y="500" width="80" height="52" rx="5" fill="#fff7ed" stroke="#f97316" stroke-width="1.2" filter="url(#s)"/>
+  <text x="835" y="520" text-anchor="middle" class="label" fill="#9a3412">Guard</text>
+  <text x="835" y="534" text-anchor="middle" class="sublabel" fill="#9a3412">PII / Injection</text>
+
+  <!-- Cache hit line connects into Guard from right -->
+  <path d="M980,400 L980,526 L875,526" class="arrow" stroke="#3b82f6"/>
+
+  <!-- Guard → Update Cache -->
+  <line x1="835" y1="552" x2="835" y2="572" class="arrow" stroke="#475569"/>
+
+  <!-- Update Cache -->
+  <rect x="787" y="572" width="96" height="30" rx="4" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+  <text x="835" y="591" text-anchor="middle" class="label" fill="#1e40af">Update Cache</text>
+
+  <!-- → Stream Answer -->
+  <line x1="835" y1="602" x2="835" y2="612" class="arrow" stroke="#475569"/>
+
+  <rect x="770" y="612" width="130" height="24" rx="12" fill="#dcfce7" stroke="#22c55e" stroke-width="1.4"/>
+  <text x="835" y="628" text-anchor="middle" class="label" fill="#166534">Stream Answer</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- External service callouts (bottom)             -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="90" y="500" width="90" height="26" rx="4" fill="#fdf2f8" stroke="#f472b6" stroke-width="1"/>
+  <text x="135" y="517" text-anchor="middle" class="param" fill="#831843">Pinecone</text>
+  <path d="M135,500 L135,344" stroke="#f472b6" stroke-width="1" stroke-dasharray="4 2" fill="none"/>
+  <circle cx="135" cy="344" r="3" fill="#f472b6"/>
+
+  <rect x="220" y="500" width="90" height="26" rx="4" fill="#fdf2f8" stroke="#f472b6" stroke-width="1"/>
+  <text x="265" y="517" text-anchor="middle" class="param" fill="#831843">OpenAI Embed</text>
+  <path d="M265,500 L265,344 L220,344" stroke="#f472b6" stroke-width="1" stroke-dasharray="4 2" fill="none"/>
+  <circle cx="220" cy="344" r="3" fill="#f472b6"/>
+
+  <rect x="380" y="500" width="90" height="26" rx="4" fill="#fdf2f8" stroke="#f472b6" stroke-width="1"/>
+  <text x="425" y="517" text-anchor="middle" class="param" fill="#831843">HuggingFace</text>
+  <path d="M425,500 L425,344 L470,344" stroke="#f472b6" stroke-width="1" stroke-dasharray="4 2" fill="none"/>
+  <circle cx="470" cy="344" r="3" fill="#f472b6"/>
+
+  <rect x="540" y="500" width="90" height="26" rx="4" fill="#fdf2f8" stroke="#f472b6" stroke-width="1"/>
+  <text x="585" y="517" text-anchor="middle" class="param" fill="#831843">OpenRouter</text>
+  <path d="M585,500 L585,422" stroke="#f472b6" stroke-width="1" stroke-dasharray="4 2" fill="none"/>
+  <circle cx="585" cy="422" r="3" fill="#f472b6"/>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- LangSmith trace annotation                     -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="36" y="560" width="120" height="26" rx="4" fill="#f5f3ff" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4 2"/>
+  <text x="96" y="577" text-anchor="middle" class="param" fill="#6d28d9">LangSmith Trace</text>
+  <text x="168" y="577" class="sublabel" fill="#8b5cf6" font-size="9px">spans entire pipeline</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- Legend                                         -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="36" y="608" width="440" height="24" rx="4" fill="#f8fafc" stroke="#e2e8f0" stroke-width="0.8"/>
+  <line x1="48" y1="620" x2="70" y2="620" stroke="#475569" stroke-width="1.6" marker-end="url(#ah)"/>
+  <text x="78" y="624" class="sublabel" fill="#475569" font-size="8.5px">Data Flow</text>
+  <line x1="140" y1="620" x2="162" y2="620" stroke="#dc2626" stroke-width="1.8" marker-end="url(#ah-retry)"/>
+  <text x="170" y="624" class="sublabel" fill="#dc2626" font-size="8.5px">Retry Loop</text>
+  <line x1="232" y1="620" x2="254" y2="620" stroke="#ea580c" stroke-width="1.6" marker-end="url(#ah-block)"/>
+  <text x="262" y="624" class="sublabel" fill="#ea580c" font-size="8.5px">Blocked</text>
+  <line x1="316" y1="620" x2="338" y2="620" stroke="#3b82f6" stroke-width="1.6" marker-end="url(#ah)"/>
+  <text x="346" y="624" class="sublabel" fill="#3b82f6" font-size="8.5px">Cache Path</text>
+  <line x1="410" y1="620" x2="432" y2="620" stroke="#f472b6" stroke-width="1" stroke-dasharray="4 2"/>
+  <circle cx="432" cy="620" r="3" fill="#f472b6"/>
+  <text x="442" y="624" class="sublabel" fill="#f472b6" font-size="8.5px">External</text>
+</svg>

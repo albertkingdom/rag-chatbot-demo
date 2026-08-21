@@ -79,4 +79,4 @@ docker-compose up --build
 - **`mongo-express`**：MongoDB 管理介面（port 8081）。
 - **`redis-insight`**：Redis 管理介面，用於檢視 prompt cache（port 8001）。
 
-![架構圖](docs/slides/architecture-diagram-2026-07-04.png)
+![架構圖](assets/system_architecture.svg)
