@@ -12,6 +12,7 @@ import pytest
 
 from src import rag_pipeline
 from src.access_control import SESSION_COOKIE
+from src.query_router import RouterResult
 
 TIMING_LINE_RE = re.compile(r"\n\n回應時間：\d+\.\d 秒$")
 
@@ -39,14 +40,18 @@ def patch_monotonic(*values):
 def common_mocks():
     """Patch dependencies that are irrelevant to history wiring so chat_stream
     can run end-to-end without hitting real services."""
+    mock_router_result = RouterResult(
+        route="rag", rewritten_query="hello", reasoning="test"
+    )
     with patch.object(rag_pipeline, "get_redis_conn", return_value=MagicMock()), \
          patch.object(rag_pipeline, "get_conversation_db") as mock_db_factory, \
-         patch.object(rag_pipeline, "get_intent_classifier", return_value=None), \
+         patch.object(rag_pipeline, "route_query", new=AsyncMock(return_value=mock_router_result)), \
          patch.object(rag_pipeline, "detect_prompt_injection", return_value=(False, None)), \
          patch.object(rag_pipeline, "detect_pii", return_value=(False, None)), \
          patch.object(rag_pipeline, "get_embeddings") as mock_embeddings_factory, \
          patch.object(rag_pipeline, "get_retrieval_chain") as mock_retrieval_factory, \
          patch.object(rag_pipeline, "get_generation_chain") as mock_generation_factory, \
+         patch.object(rag_pipeline, "grade_documents", return_value=True), \
          patch.object(rag_pipeline, "CACHE_ENABLED", False):
 
         mock_db = MagicMock()
@@ -59,7 +64,13 @@ def common_mocks():
 
         mock_retrieval_chain = MagicMock()
         mock_retrieval_chain.ainvoke = AsyncMock(
-            return_value={"context": "some context", "contexts": [], "sources": []}
+            return_value={
+                "context": "some context",
+                "contexts": [],
+                "sources": [],
+                "rerank_scores": [{"rank": 1, "score": "0.9", "content": "x"}],
+                "docs": [],
+            }
         )
         mock_retrieval_factory.return_value = mock_retrieval_chain
 
@@ -107,13 +118,11 @@ class TestHistoryReadWiring:
             {"role": "assistant", "content": "previous answer"},
         ]
         with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
-             patch.object(rag_pipeline, "format_history", return_value="") as mock_format, \
-             patch.object(rag_pipeline, "rewrite_query", new=AsyncMock(return_value="hello")):
+             patch.object(rag_pipeline, "format_history", return_value="") as mock_format:
             mock_instance = MagicMock()
             mock_instance.get_history.return_value = stored
             mock_service_cls.return_value = mock_instance
 
-            # Second call simulates a page refresh: client sends empty history.
             await drain(rag_pipeline.chat_stream("hello", [], request))
 
             mock_format.assert_called_once_with(stored)
@@ -123,8 +132,7 @@ class TestHistoryReadWiring:
         request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
         client_history = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
         with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
-             patch.object(rag_pipeline, "format_history", return_value="") as mock_format, \
-             patch.object(rag_pipeline, "rewrite_query", new=AsyncMock(return_value="hello")):
+             patch.object(rag_pipeline, "format_history", return_value="") as mock_format:
             mock_instance = MagicMock()
             mock_instance.get_history.return_value = []
             mock_service_cls.return_value = mock_instance
@@ -172,25 +180,6 @@ class TestHistoryWriteWiring:
             )
 
     @pytest.mark.asyncio
-    async def test_append_turn_not_called_on_off_topic(self):
-        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
-        mock_intent_classifier = MagicMock()
-        mock_intent_classifier.classify = AsyncMock(
-            return_value={"relevant": False, "confidence": 0.1}
-        )
-        mock_intent_classifier.get_off_topic_message.return_value = "off topic"
-
-        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
-             patch.object(rag_pipeline, "get_intent_classifier", return_value=mock_intent_classifier):
-            mock_instance = MagicMock()
-            mock_instance.get_history.return_value = []
-            mock_service_cls.return_value = mock_instance
-
-            await drain(rag_pipeline.chat_stream("hello", [], request))
-
-            mock_instance.append_turn.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_append_turn_not_called_on_guardrail_block(self):
         request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
         with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
@@ -223,6 +212,8 @@ class TestAnswerSources:
                     "context": "some context",
                     "contexts": [],
                     "sources": ["密碼忘記了要怎麼重設啊？"],
+                    "rerank_scores": [{"rank": 1, "score": "0.9", "content": "x"}],
+                    "docs": [],
                 }
             )
             mock_retrieval_factory.return_value = mock_retrieval_chain
@@ -230,7 +221,6 @@ class TestAnswerSources:
             chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
 
             assert chunks[-1] == "answer\n\n參考資料：\n- 密碼忘記了要怎麼重設啊？\n\n回應時間：3.2 秒"
-            # The stored/cached answer text stays the pure generated text.
             mock_instance.append_turn.assert_called_once_with("cookie-sid", "hello", "answer")
 
     @pytest.mark.asyncio
@@ -246,25 +236,6 @@ class TestAnswerSources:
 
             assert chunks[-1] == "answer\n\n回應時間：1.5 秒"
             assert "參考資料" not in chunks[-1]
-
-    @pytest.mark.asyncio
-    async def test_off_topic_response_has_no_source_block(self):
-        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
-        mock_intent_classifier = MagicMock()
-        mock_intent_classifier.classify = AsyncMock(
-            return_value={"relevant": False, "confidence": 0.1}
-        )
-        mock_intent_classifier.get_off_topic_message.return_value = "off topic"
-
-        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
-             patch.object(rag_pipeline, "get_intent_classifier", return_value=mock_intent_classifier):
-            mock_instance = MagicMock()
-            mock_instance.get_history.return_value = []
-            mock_service_cls.return_value = mock_instance
-
-            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
-
-            assert all("參考資料" not in chunk for chunk in chunks)
 
     @pytest.mark.asyncio
     async def test_guardrail_response_has_no_source_block(self):
@@ -302,36 +273,9 @@ class TestAnswerSources:
             chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
 
             assert chunks[-1] == "cached answer\n\n參考資料：\n- 密碼忘記了要怎麼重設啊？\n\n回應時間：0.2 秒"
-            # The stored history keeps the pure cached answer text.
             mock_instance.append_turn.assert_called_once_with(
                 "cookie-sid", "hello", "cached answer"
             )
-
-
-class TestIntentClassifierHistoryForwarding:
-    @pytest.mark.asyncio
-    async def test_chat_stream_forwards_history_to_classify(self):
-        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
-        client_history = [
-            {"role": "user", "content": "門檻值設定該如何填寫？"},
-            {"role": "assistant", "content": "您需要填寫顯著性門檻、實質性門檻和排除門檻。"},
-        ]
-
-        mock_intent_classifier = MagicMock()
-        mock_intent_classifier.classify = AsyncMock(
-            return_value={"relevant": True, "confidence": 0.9}
-        )
-
-        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
-             patch.object(rag_pipeline, "get_intent_classifier", return_value=mock_intent_classifier), \
-             patch.object(rag_pipeline, "rewrite_query", new=AsyncMock(return_value="您確定嗎？")):
-            mock_instance = MagicMock()
-            mock_instance.get_history.return_value = []
-            mock_service_cls.return_value = mock_instance
-
-            await drain(rag_pipeline.chat_stream("你確定嗎", client_history, request))
-
-            mock_intent_classifier.classify.assert_called_once_with("您確定嗎？", client_history)
 
 
 class TestResponseTiming:
@@ -354,27 +298,6 @@ class TestResponseTiming:
 
             assert TIMING_LINE_RE.search(chunks[-1])
             assert chunks[-1].endswith("\n\n回應時間：0.1 秒")
-
-    @pytest.mark.asyncio
-    async def test_off_topic_appends_timing_line(self):
-        request = make_request(cookies={SESSION_COOKIE: "cookie-sid"})
-        mock_intent_classifier = MagicMock()
-        mock_intent_classifier.classify = AsyncMock(
-            return_value={"relevant": False, "confidence": 0.1}
-        )
-        mock_intent_classifier.get_off_topic_message.return_value = "off topic"
-
-        with patch.object(rag_pipeline, "ChatHistoryService") as mock_service_cls, \
-             patch.object(rag_pipeline, "get_intent_classifier", return_value=mock_intent_classifier), \
-             patch_monotonic(0.0, 0.4):
-            mock_instance = MagicMock()
-            mock_instance.get_history.return_value = []
-            mock_service_cls.return_value = mock_instance
-
-            chunks = await drain(rag_pipeline.chat_stream("hello", [], request))
-
-            assert TIMING_LINE_RE.search(chunks[-1])
-            assert chunks[-1].endswith("\n\n回應時間：0.4 秒")
 
     @pytest.mark.asyncio
     async def test_cache_candidate_guardrail_appends_timing_line(self):

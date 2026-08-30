@@ -31,6 +31,10 @@ CACHE_TTL_SECONDS = 86400  # 24 hours
 CACHE_SIMILARITY_THRESHOLD = 0.95  # Cosine similarity threshold for cache hits
 CACHE_MAX_SEARCH_RESULTS = 5  # Max number of cache entries to check for similarity
 
+# Agentic RAG: retrieval grading & retry
+GRADE_SCORE_THRESHOLD = float(os.environ.get("GRADE_SCORE_THRESHOLD", "0.3"))
+RETRIEVAL_MAX_RETRIES = int(os.environ.get("RETRIEVAL_MAX_RETRIES", "1"))
+
 # Hybrid Search Settings
 BM25_TOP_N = 10        # Number of candidates to retrieve from BM25
 VECTOR_TOP_N = 10      # Number of candidates to retrieve from vector store

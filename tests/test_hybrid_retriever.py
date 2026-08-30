@@ -85,7 +85,7 @@ class TestRRFFusion:
 class TestDocIdSourcing:
     @pytest.mark.asyncio
     async def test_vector_path_uses_metadata_doc_id(self, retriever):
-        scored = await retriever._vector_search("test", top_n=3)
+        scored, _ = await retriever._vector_search("test", top_n=3)
         assert [doc_id for doc_id, _ in scored] == ["A", "B", "C"]
 
     @pytest.mark.asyncio
@@ -98,8 +98,18 @@ class TestDocIdSourcing:
             ]
         )
         r = HybridRetriever(bm25_index, vs)
-        scored = await r._vector_search("test", top_n=2)
+        scored, lookup = await r._vector_search("test", top_n=2)
         assert [doc_id for doc_id, _ in scored] == ["A"]
+        assert "A" in lookup
+        assert lookup["A"].page_content == "has id"
+
+    @pytest.mark.asyncio
+    async def test_vector_search_returns_doc_lookup(self, retriever):
+        """Task 1.1: _vector_search returns a doc_id → Document lookup dict."""
+        scored, lookup = await retriever._vector_search("test", top_n=3)
+        assert set(lookup.keys()) == {"A", "B", "C"}
+        for doc_id, doc in lookup.items():
+            assert doc.metadata["doc_id"] == doc_id
 
     @pytest.mark.asyncio
     async def test_overlapping_doc_fuses_into_single_entry(self, retriever):
@@ -158,3 +168,48 @@ class TestObservability:
         assert "candidates" in result
         for removed_key in ("docs", "rerank_scores", "context", "contexts"):
             assert removed_key not in result, f"unexpected key: {removed_key}"
+
+
+# --- Candidate assembly (optimize-gather-candidates) --------------------
+
+
+class TestCandidateAssembly:
+    @pytest.mark.asyncio
+    async def test_vector_only_candidate_resolved_from_lookup(self):
+        """Task 2.1: vector-only doc resolved without additional query."""
+        doc_c = Document(page_content="Doc C content", metadata={"doc_id": "C"})
+
+        idx = MagicMock()
+        idx.is_built = True
+        idx.corpus_size = 1
+        idx.search = MagicMock(return_value=[("A", 3.0)])
+        idx.get_doc = MagicMock(side_effect=lambda d: None)
+
+        vs = MagicMock()
+        vs.asimilarity_search_with_score = AsyncMock(
+            return_value=[(doc_c, 0.9)]
+        )
+
+        r = HybridRetriever(idx, vs)
+        result = await r.retrieve("test", rrf_k=60)
+
+        assert any(d.metadata["doc_id"] == "C" for d in result["candidates"])
+        vs.similarity_search.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_candidate_not_found_in_either_source_is_skipped(self):
+        """Task 2.2: missing doc_id silently skipped."""
+        idx = MagicMock()
+        idx.is_built = True
+        idx.corpus_size = 1
+        idx.search = MagicMock(return_value=[("MISSING", 3.0)])
+        idx.get_doc = MagicMock(return_value=None)
+
+        vs = MagicMock()
+        vs.asimilarity_search_with_score = AsyncMock(return_value=[])
+
+        r = HybridRetriever(idx, vs)
+        result = await r.retrieve("test", rrf_k=60)
+
+        assert len(result["candidates"]) == 0
+        vs.similarity_search.assert_not_called()

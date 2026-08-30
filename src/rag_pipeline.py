@@ -8,12 +8,14 @@ module has no module-level side effects beyond defining the QA prompt.
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator
 
 import gradio as gr
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
+import langsmith
 from langsmith import traceable
 
 from .access_control import SESSION_COOKIE
@@ -23,6 +25,8 @@ from .config import (
     BM25_TOP_N,
     CACHE_ENABLED,
     CACHE_SIMILARITY_THRESHOLD,
+    GRADE_SCORE_THRESHOLD,
+    RETRIEVAL_MAX_RETRIES,
     RRF_K,
     VECTOR_TOP_N,
 )
@@ -32,11 +36,12 @@ from .guardrails import (
     detect_prompt_injection,
     get_guardrail_message,
 )
+from .query_router import route_query
 from .rerank_stage import rerank_candidates
+from .retrieval_grader import grade_documents, rewrite_for_retry
 from .services import (
     get_embeddings,
     get_hybrid_retriever,
-    get_intent_classifier,
     get_llm,
     get_redis_conn,
     get_reranker_model,
@@ -44,42 +49,42 @@ from .services import (
 
 logger = logging.getLogger("rag_pipeline")
 
+_STREAM_CHUNK_SIZE = 10
+_STREAM_CHUNK_DELAY = 0.005
+
+
+async def _stream_text(text: str) -> AsyncGenerator[str, None]:
+    length = len(text)
+    for end in range(_STREAM_CHUNK_SIZE, length, _STREAM_CHUNK_SIZE):
+        yield text[:end]
+        await asyncio.sleep(_STREAM_CHUNK_DELAY)
+    yield text
+
 
 # ---------------------------------------------------------------------------
 # Prompt
 # ---------------------------------------------------------------------------
 
-_QA_PROMPT = PromptTemplate.from_template(
-    """You are a professional assistant for a carbon management system.
-        Use the following piece of context, which is the answer to a frequently asked question, to answer the user's question.
-        If the context is not relevant, just say that you don't know, don't try to make up an answer.
-        Keep the answer concise and helpful.
-        {history}
-
-        Context:
-        {context}
-
-        Question:
-        {question}
-
-        Helpful Answer:"""
-)
+_QA_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a helpful assistant with expertise in carbon management (CarbonM).\n"
+     "Today is {today}.\n"
+     "Always reply in Traditional Chinese (繁體中文) unless the user explicitly uses another language.\n"
+     "You cannot browse the internet, execute code, or access external systems.\n"
+     "Do not provide medical, legal, or financial advice.\n"
+     "Use the provided context to answer the user's question. "
+     "If the context is not relevant or empty, answer based on your general knowledge.\n"
+     "Keep the answer concise and helpful."),
+    ("human",
+     "{history}\n\n"
+     "Context:\n{context}\n\n"
+     "Question:\n{question}"),
+])
 
 
 # ---------------------------------------------------------------------------
 # Retrieval / generation chains
 # ---------------------------------------------------------------------------
-
-
-_retrieval_chain = None
-_generation_chain = None
-
-
-@traceable(name="Prepare Context")
-def _format_docs(outputs):
-    docs = outputs["docs"]
-    contexts = [doc.metadata.get("answer", "") for doc in docs if doc.metadata.get("answer")]
-    return {"context": "\n\n".join(contexts), "contexts": contexts}
 
 
 _retrieval_chain = None
@@ -107,6 +112,17 @@ def _format_sources(docs) -> list[str]:
         if source and source not in sources:
             sources.append(source)
     return sources
+
+
+_TW_TZ = timezone(timedelta(hours=8))
+
+_WEEKDAY_ZH = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+
+
+def _today_str() -> str:
+    now = datetime.now(_TW_TZ)
+    weekday = _WEEKDAY_ZH[now.weekday()]
+    return f"{now.strftime('%Y-%m-%d')} {weekday}"
 
 
 def _append_source_block(answer: str, sources: list[str]) -> str:
@@ -139,11 +155,13 @@ def get_retrieval_chain():
             )
             return {"query": query, **result}
 
-        def _rerank(payload: dict) -> dict:
+        async def _rerank(payload: dict) -> dict:
             query = payload["query"]
             candidates = payload["candidates"]
             fusion_metadata = payload["fusion_metadata"]
-            ranked = rerank_candidates(query, candidates, get_reranker_model().score)
+            ranked = await asyncio.to_thread(
+                rerank_candidates, query, candidates, get_reranker_model().score
+            )
             formatted = _format_docs(ranked)
             return {
                 **formatted,
@@ -153,7 +171,10 @@ def get_retrieval_chain():
                 "fusion_metadata": fusion_metadata,
             }
 
-        _retrieval_chain = RunnableLambda(_retrieve) | RunnableLambda(_rerank)
+        _retrieval_chain = (
+            RunnableLambda(_retrieve, name="Hybrid Retrieve")
+            | RunnableLambda(_rerank, name="Rerank (BGE)")
+        )
     return _retrieval_chain
 
 
@@ -202,44 +223,6 @@ def format_history(history: list, max_turns: int = 3) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Query rewriting
-# ---------------------------------------------------------------------------
-
-
-@traceable(name="Query Rewriting")
-async def rewrite_query(message: str, history: list, max_turns: int = 3) -> str:
-    if not history:
-        return message
-
-    recent = _parse_history_turns(history, max_turns)
-    if not recent:
-        return message
-
-    history_text = "\n".join([f"User: {u}\nAssistant: {a}" for u, a in recent])
-
-    prompt = f"""Given the conversation history and the follow-up question, rewrite the question into a standalone question that can be understood without the conversation context.
-If the question is already complete and self-contained, return it as-is.
-
-Conversation history:
-{history_text}
-
-Follow-up question: {message}
-
-Rewritten standalone question:"""
-
-    try:
-        llm = get_llm()
-        response = await llm.ainvoke(prompt)
-        rewritten = response.content.strip()
-        logger.info("[Query Rewriting] Original: %s", message)
-        logger.info("[Query Rewriting] Rewritten: %s", rewritten)
-        return rewritten
-    except Exception as e:
-        logger.warning("[Query Rewriting] ERROR: %s", e)
-        return message
-
-
-# ---------------------------------------------------------------------------
 # Chat stream
 # ---------------------------------------------------------------------------
 
@@ -256,7 +239,6 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
     if stored_history:
         history = stored_history
     full_response = ""
-    intent_result = None
     start_time = time.monotonic()
     try:
         # Step 0a: Input guardrail - block prompt injection before hitting LLM
@@ -273,56 +255,90 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             )
             elapsed = time.monotonic() - start_time
             guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
-            for i in range(1, len(guardrail_message_with_timing) + 1):
-                yield guardrail_message_with_timing[:i]
-                await asyncio.sleep(0.005)
+            async for chunk in _stream_text(guardrail_message_with_timing):
+                yield chunk
             return
 
-        # Step 0b: Query Rewriting - rewrite follow-up questions into standalone queries
-        rewritten_query = await rewrite_query(message, history)
+        # Step 0b: Route - decide "rag" vs "direct", and get a standalone query
+        router_result = await route_query(message, history)
+        rewritten_query = router_result.rewritten_query
+        logger.info(
+            "[Router] route=%s rewritten=%s reasoning=%s",
+            router_result.route, rewritten_query, router_result.reasoning,
+        )
 
-        # Step 0c: Intent Classification - Filter out off-topic questions
-        status_msg = "正在分析您的問題..."
-        for i in range(1, len(status_msg) + 1):
-            yield status_msg[:i]
-            await asyncio.sleep(0.02)
+        # -------------------------------------------------------------
+        # Direct path: no retrieval, no cache — straight to generation.
+        # -------------------------------------------------------------
+        if router_result.route == "direct":
+            history_text = format_history(history)
+            async for chunk in get_generation_chain().astream(
+                {"context": "", "question": message, "history": history_text, "today": _today_str()}
+            ):
+                full_response += chunk
 
-        intent_classifier = get_intent_classifier()
-        if intent_classifier:
-            intent_result = await intent_classifier.classify(rewritten_query, history)
-            logger.info("Intent classification: %s", intent_result)
+            pii_hit, pii_type = detect_pii(full_response)
+            injection_hit, injection_pattern = detect_prompt_injection(full_response)
 
-            # If question is not relevant, return early with helpful message
-            if not intent_result["relevant"] or intent_result["confidence"] < 0.7:
-                off_topic_message = intent_classifier.get_off_topic_message()
+            if pii_hit or injection_hit:
+                guardrail_message = get_guardrail_message()
+                logger.warning(
+                    "[Guardrail] Blocked response: pii=%s injection=%s",
+                    pii_type if pii_hit else None,
+                    injection_pattern if injection_hit else None,
+                )
                 db = get_conversation_db()
                 await db.async_save_conversation(
                     user_question=message,
-                    assistant_response=off_topic_message,
+                    assistant_response=guardrail_message,
                     session_id=session_id,
-                    response_source="off_topic",
-                    intent_classification=intent_result,
+                    response_source="guardrail",
+                    cache_hit=False,
+                    metadata={
+                        "pii_type": pii_type if pii_hit else None,
+                        "injection_pattern": injection_pattern if injection_hit else None,
+                    },
                 )
                 elapsed = time.monotonic() - start_time
-                off_topic_message_with_timing = _append_timing_line(off_topic_message, elapsed)
-                for i in range(1, len(off_topic_message_with_timing) + 1):
-                    yield off_topic_message_with_timing[:i]
-                    await asyncio.sleep(0.01)
+                guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
+                async for chunk in _stream_text(guardrail_message_with_timing):
+                    yield chunk
                 return
 
+            elapsed = time.monotonic() - start_time
+            response_final = _append_timing_line(full_response, elapsed)
+            async for chunk in _stream_text(response_final):
+                yield chunk
+
+            chat_history_service.append_turn(history_key, message, full_response)
+
+            db = get_conversation_db()
+            await db.async_save_conversation(
+                user_question=message,
+                assistant_response=full_response,
+                session_id=session_id,
+                response_source="direct",
+                cache_hit=False,
+            )
+            return
+
+        # -------------------------------------------------------------
+        # RAG path
+        # -------------------------------------------------------------
         yield "正在從知識庫檢索相關資訊..."
         embeddings = get_embeddings()
 
-        # Generate embedding for the rewritten query (needed for both cache and RAG)
-        question_embedding = await embeddings.aembed_query(rewritten_query)
+        with langsmith.trace(name="Embed Query (OpenAI)"):
+            question_embedding = await embeddings.aembed_query(rewritten_query)
 
-        # Try to get cached response if cache is enabled
+        cached_response = None
         if CACHE_ENABLED:
-            cache_service = PromptCacheService(get_redis_conn())
-            cached_response = cache_service.get_cached_response(
-                question_embedding,
-                threshold=CACHE_SIMILARITY_THRESHOLD,
-            )
+            with langsmith.trace(name="Cache Lookup (Redis)"):
+                cache_service = PromptCacheService(get_redis_conn())
+                cached_response = cache_service.get_cached_response(
+                    question_embedding,
+                    threshold=CACHE_SIMILARITY_THRESHOLD,
+                )
 
             if cached_response:
                 logger.info(
@@ -348,7 +364,6 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                         assistant_response=guardrail_message,
                         session_id=session_id,
                         response_source="guardrail",
-                        intent_classification=intent_result,
                         cache_hit=False,
                         metadata={
                             "pii_type": pii_type if pii_hit else None,
@@ -359,9 +374,8 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                     )
                     elapsed = time.monotonic() - start_time
                     guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
-                    for i in range(1, len(guardrail_message_with_timing) + 1):
-                        yield guardrail_message_with_timing[:i]
-                        await asyncio.sleep(0.005)
+                    async for chunk in _stream_text(guardrail_message_with_timing):
+                        yield chunk
                     return
 
                 # Record the CACHED conversation to MongoDB
@@ -371,7 +385,6 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                     assistant_response=cached_answer,
                     session_id=session_id,
                     response_source="cache",
-                    intent_classification=intent_result,
                     cache_hit=True,
                     cache_similarity=cached_response["similarity"],
                 )
@@ -380,15 +393,31 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 cached_response_with_sources = _append_source_block(cached_answer, cached_sources)
                 elapsed = time.monotonic() - start_time
                 cached_response_final = _append_timing_line(cached_response_with_sources, elapsed)
-                for i in range(1, len(cached_response_final) + 1):
-                    yield cached_response_final[:i]
-                    await asyncio.sleep(0.005)
+                async for chunk in _stream_text(cached_response_final):
+                    yield chunk
                 chat_history_service.append_turn(history_key, message, cached_answer)
                 return
 
         # Cache miss or cache disabled - proceed with normal RAG pipeline
-        yield "正在優化檢索結果 (Reranking)..."
+        with langsmith.trace(name="Yield Status Update"):
+            yield "正在優化檢索結果 (Reranking)..."
         context_bundle = await get_retrieval_chain().ainvoke(rewritten_query)
+
+        # Grade retrieval quality; on a low-quality grade, rewrite the query
+        # and retry once (bounded by RETRIEVAL_MAX_RETRIES).
+        retry_count = 0
+        grade_passed = grade_documents(context_bundle.get("rerank_scores", []))
+        while not grade_passed and retry_count < RETRIEVAL_MAX_RETRIES:
+            retry_count += 1
+            retry_query = await rewrite_for_retry(
+                rewritten_query, context_bundle.get("docs", [])
+            )
+            logger.info(
+                "[Retrieval Retry] attempt=%s query=%s", retry_count, retry_query
+            )
+            context_bundle = await get_retrieval_chain().ainvoke(retry_query)
+            grade_passed = grade_documents(context_bundle.get("rerank_scores", []))
+
         context = context_bundle.get("context", "")
         contexts = context_bundle.get("contexts", [])
         sources = context_bundle.get("sources", [])
@@ -396,12 +425,13 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
         yield "正在生成回答..."
         history_text = format_history(history)
         async for chunk in get_generation_chain().astream(
-            {"context": context, "question": message, "history": history_text}
+            {"context": context, "question": message, "history": history_text, "today": _today_str()}
         ):
             full_response += chunk
 
-        pii_hit, pii_type = detect_pii(full_response)
-        injection_hit, injection_pattern = detect_prompt_injection(full_response)
+        with langsmith.trace(name="Output Guardrail"):
+            pii_hit, pii_type = detect_pii(full_response)
+            injection_hit, injection_pattern = detect_prompt_injection(full_response)
 
         if pii_hit or injection_hit:
             guardrail_message = get_guardrail_message()
@@ -416,7 +446,6 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
                 assistant_response=guardrail_message,
                 session_id=session_id,
                 response_source="guardrail",
-                intent_classification=intent_result,
                 cache_hit=False,
                 metadata={
                     "pii_type": pii_type if pii_hit else None,
@@ -425,41 +454,38 @@ async def chat_stream(message: str, history: list, request: gr.Request = None) -
             )
             elapsed = time.monotonic() - start_time
             guardrail_message_with_timing = _append_timing_line(guardrail_message, elapsed)
-            for i in range(1, len(guardrail_message_with_timing) + 1):
-                yield guardrail_message_with_timing[:i]
-                await asyncio.sleep(0.005)
+            async for chunk in _stream_text(guardrail_message_with_timing):
+                yield chunk
             return
 
-        response_with_sources = _append_source_block(full_response, sources)
-        elapsed = time.monotonic() - start_time
-        response_final = _append_timing_line(response_with_sources, elapsed)
-        for i in range(1, len(response_final) + 1):
-            yield response_final[:i]
-            await asyncio.sleep(0.005)
+        with langsmith.trace(name="Stream Response"):
+            response_with_sources = _append_source_block(full_response, sources)
+            elapsed = time.monotonic() - start_time
+            response_final = _append_timing_line(response_with_sources, elapsed)
+            async for chunk in _stream_text(response_final):
+                yield chunk
 
         chat_history_service.append_turn(history_key, message, full_response)
 
-        # Store the generated response in cache
-        if CACHE_ENABLED and full_response:
-            cache_service = PromptCacheService(get_redis_conn())
-            cache_service.set_cached_response(
-                question_embedding,
-                message,
-                full_response,
-                sources,
-            )
-            logger.info("Response cached for question: %s...", message[:50])
+        with langsmith.trace(name="Cache Write + DB Save"):
+            if CACHE_ENABLED and full_response:
+                cache_service = PromptCacheService(get_redis_conn())
+                cache_service.set_cached_response(
+                    question_embedding,
+                    message,
+                    full_response,
+                    sources,
+                )
+                logger.info("Response cached for question: %s...", message[:50])
 
-        # Record the RAG conversation to MongoDB
-        db = get_conversation_db()
-        await db.async_save_conversation(
-            user_question=message,
-            assistant_response=full_response,
-            session_id=session_id,
-            response_source="rag",
-            intent_classification=intent_result,
-            cache_hit=False,
-        )
+            db = get_conversation_db()
+            await db.async_save_conversation(
+                user_question=message,
+                assistant_response=full_response,
+                session_id=session_id,
+                response_source="rag",
+                cache_hit=False,
+            )
 
     except Exception as e:
         logger.error("An error occurred during chat stream: %s", e)
