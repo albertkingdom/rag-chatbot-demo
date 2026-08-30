@@ -155,11 +155,13 @@ def get_retrieval_chain():
             )
             return {"query": query, **result}
 
-        def _rerank(payload: dict) -> dict:
+        async def _rerank(payload: dict) -> dict:
             query = payload["query"]
             candidates = payload["candidates"]
             fusion_metadata = payload["fusion_metadata"]
-            ranked = rerank_candidates(query, candidates, get_reranker_model().score)
+            ranked = await asyncio.to_thread(
+                rerank_candidates, query, candidates, get_reranker_model().score
+            )
             formatted = _format_docs(ranked)
             return {
                 **formatted,
