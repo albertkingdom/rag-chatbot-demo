@@ -81,7 +81,7 @@ class ChatHistoryService:
         except Exception as e:
             logger.warning("[ChatHistoryService] append_turn failed: %s", e)
 
-    def clear_history(self, history_key: Optional[str]) -> None:
+    def clear_history(self, history_key: Optional[str]) -> bool:
         """
         Delete the stored conversation history for a session.
 
@@ -89,9 +89,11 @@ class ChatHistoryService:
             history_key: Session identifier. None is a no-op.
         """
         if not history_key:
-            return
+            return True
 
         try:
             self.redis.delete(f"{self.KEY_PREFIX}{history_key}")
+            return True
         except Exception as e:
             logger.warning("[ChatHistoryService] clear_history failed: %s", e)
+            return False

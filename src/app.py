@@ -1,19 +1,19 @@
-"""FastAPI entry point.
-
-Mounts access control (auth middleware + /health, /login, /logout) and the
-Gradio UI. All business logic, singletons, and UI definitions live in
-dedicated modules (src.services, src.rag_pipeline, src.ui).
+"""FastAPI entry point for the versioned API and selected frontend.
 
 Provider functions are re-exported here for backward compatibility with
 existing imports like `from src.app import get_embeddings`.
 """
 
+import os
+from pathlib import Path
+
 import uvicorn
-import gradio as gr
 from fastapi import FastAPI
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .access_control import mount_auth
-from .ui import demo
+from .api import router as api_router
 
 # Backward-compatible re-exports. Prefer importing from src.services directly.
 from .services import (  # noqa: F401
@@ -29,11 +29,46 @@ from .services import (  # noqa: F401
 from .rag_pipeline import get_retrieval_chain, get_generation_chain  # noqa: F401
 
 
-app = FastAPI()
-# Mount access control BEFORE gr.mount_gradio_app so the middleware wraps
-# Gradio routes too.
-mount_auth(app)
-app = gr.mount_gradio_app(app, demo, path="/")
+def create_app() -> FastAPI:
+    frontend_mode = os.environ.get("FRONTEND_MODE", "gradio").lower()
+    if frontend_mode not in {"gradio", "spa"}:
+        raise ValueError("FRONTEND_MODE must be 'gradio' or 'spa'")
+
+    application = FastAPI()
+    mount_auth(application, include_legacy_routes=frontend_mode == "gradio")
+    application.include_router(api_router)
+
+    if frontend_mode == "gradio":
+        import gradio as gr
+        from .ui import demo
+
+        return gr.mount_gradio_app(application, demo, path="/")
+
+    dist_dir = Path(
+        os.environ.get(
+            "FRONTEND_DIST_DIR",
+            Path(__file__).resolve().parents[1] / "frontend" / "dist",
+        )
+    )
+    assets_dir = dist_dir / "assets"
+    if assets_dir.is_dir():
+        application.mount("/assets", StaticFiles(directory=assets_dir), name="spa-assets")
+
+    @application.get("/{path:path}", include_in_schema=False)
+    async def spa_fallback(path: str):
+        if path == "api" or path.startswith("api/"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        index_file = dist_dir / "index.html"
+        if not index_file.is_file():
+            return JSONResponse(
+                {"detail": "Frontend build is unavailable"}, status_code=503
+            )
+        return FileResponse(index_file)
+
+    return application
+
+
+app = create_app()
 
 
 if __name__ == "__main__":
