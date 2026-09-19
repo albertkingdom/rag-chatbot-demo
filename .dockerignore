@@ -7,6 +7,9 @@ venv
 .env
 models/
 uploaded_files/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 tests/
 docs/
 *.md

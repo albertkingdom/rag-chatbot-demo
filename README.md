@@ -1,6 +1,6 @@
 # RAG_DEMO
 
-一個容器化的 Web 應用，內建 Agentic RAG 聊天機器人，兼具碳管理專業知識與通用問答能力，以 FastAPI、Gradio、Docker 建構。
+一個容器化的 Web 應用，內建 Agentic RAG 聊天機器人，兼具碳管理專業知識與通用問答能力。正式介面採 React + TypeScript，FastAPI 提供同源 API 與靜態成品。
 
 ---
 
@@ -23,6 +23,7 @@ OPENROUTER_API_KEY="your_openrouter_api_key_here"
 # 存取控制
 APP_API_KEY="a_long_random_string_you_choose"   # 共用金鑰，用於 /login 及 X-API-Key
 AUTH_ENABLED=true                               # 本機開發/測試可設為 false
+FRONTEND_MODE=spa                               # 新 React 介面；gradio 為暫時 rollback 模式
 ```
 
 ### 2. 啟動應用程式
@@ -33,7 +34,7 @@ docker-compose up --build
 
 ### 3. 存取服務
 
-- **主應用程式**：[http://localhost:8000](http://localhost:8000)，首次造訪會導向 `/login`，輸入 `APP_API_KEY` 即可登入。
+- **主應用程式**：[http://localhost:8000](http://localhost:8000)，首次造訪會顯示登入頁，輸入 `APP_API_KEY` 即可登入。
 - **Redis 管理介面（RedisInsight）**：[http://localhost:8001](http://localhost:8001)，用於檢視 prompt cache。
 - **MongoDB 管理介面（Mongo Express）**：[http://localhost:8081](http://localhost:8081)，用於檢視對話紀錄。
 
@@ -48,7 +49,7 @@ docker-compose up --build
 - **串流回覆**：逐字（token-by-token）輸出回答，提供即時互動的使用體驗。
 - **非同步任務處理**：使用 **Redis Queue (RQ)** 管理知識庫同步等耗時的背景任務，確保網頁介面隨時保持回應速度。
 - **多格式檔案支援**：知識庫可透過上傳 `.pdf`、`.xlsx`、`.csv` 等多種格式的檔案來更新。
-- **Gradio 現代化網頁介面**：簡潔易用的介面，方便與 AI 助手互動。
+- **手機優先 React 介面**：獨立登入、串流聊天、來源展開、對話清除、文件上傳與工作狀態，支援安全區與深色模式。
 - **語意快取（Prompt Caching）**：以 Redis 實作的語意相似度快取，針對相似問題可降低 API 成本並將回應時間縮短最多 80%。
 
 ---
@@ -72,7 +73,7 @@ docker-compose up --build
 
 系統採用 Docker Compose 編排的解耦架構：
 
-- **`web`**：FastAPI/Gradio 介面，負責將任務丟進 Redis 佇列。
+- **`web`**：FastAPI 提供 `/api/v1/*`、NDJSON 聊天串流及 React 靜態成品。
 - **`redis`**：訊息代理，同時承載任務佇列與語意快取。
 - **`worker`**：背景 RQ worker，執行耗時任務。
 - **`mongodb`**：對話紀錄資料庫。
@@ -80,3 +81,37 @@ docker-compose up --build
 - **`redis-insight`**：Redis 管理介面，用於檢視 prompt cache（port 8001）。
 
 ![架構圖](assets/system_architecture.svg)
+
+---
+
+## 前端開發與驗證
+
+正式 Docker image 會在 Node build stage 執行前端建置，runtime 只保留 Python 與 `frontend/dist`。需要單獨開發介面時：
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+Vite 會把 `/api` 與 `/health` proxy 到 `http://localhost:8000`。前端檢查：
+
+```bash
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+主要 API：
+
+- `POST /api/v1/chat/stream`：`application/x-ndjson` 串流事件。
+- `GET|DELETE /api/v1/conversations/current/messages`：目前 session 的短期對話。
+- `POST /api/v1/admin/manuals`、`GET /api/v1/admin/jobs/{job_id}`：上傳手冊與查詢同步狀態。
+
+## Side project 範圍
+
+- 使用共用 `APP_API_KEY`，同一底層 key 共用預設 60 RPM，不含多帳號與 RBAC。
+- Redis 對話脈絡閒置 30 分鐘後過期；清除目前對話不會刪除 MongoDB 稽核紀錄、prompt cache 或 LangSmith trace。
+- 「停止」會立即停止瀏覽器接收；已在後端完成的回答仍可能完成保存，不保證強制取消模型工作。
+- 部署維持單一 Cloud Run instance，尚未宣稱高併發容量；擴大公開使用前需另做壓測與背壓設計。
+- 手冊上傳包含副檔名/MIME/大小/路徑基本驗證，但不含惡意檔案掃描或完整內容治理。
