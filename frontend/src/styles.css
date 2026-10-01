@@ -86,9 +86,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .form-error, .inline-error { color: var(--danger); font-size: 14px; }
 .form-error { margin: 9px 0 0; }
 
-.app-shell { min-height: 100dvh; padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+.app-shell {
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .topbar {
   min-height: 62px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -113,18 +120,35 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   font-size: 20px;
 }
 
+.app-shell > main {
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+}
+
 .page {
   width: min(760px, 100%);
-  min-height: calc(100dvh - 134px);
+  min-height: 0;
+  flex: 1 1 auto;
   margin: 0 auto;
   padding: 18px max(13px, env(safe-area-inset-right)) 14px max(13px, env(safe-area-inset-left));
+  overflow-y: auto;
 }
 
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 16px; }
 .page-heading h1 { margin: 0 0 3px; font-size: 20px; font-weight: 600; }
 .page-heading p { margin: 0; color: var(--muted); font-size: 13px; }
-.chat-page { display: flex; flex-direction: column; }
-.thread { display: grid; gap: 14px; }
+.chat-page { display: flex; flex-direction: column; overflow: hidden; }
+.thread {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
 .empty-state { padding: 64px 20px; text-align: center; color: var(--muted); }
 .empty-state h2 { margin: 15px 0 6px; color: var(--text); font-size: 19px; }
 .empty-state p { margin: 0; line-height: 1.6; }
@@ -165,7 +189,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .message-meta { display: flex; gap: 10px; margin-top: 10px; color: var(--muted); font-size: 11px; }
 .stream-status { margin: 0 0 0 38px; color: var(--muted); font-size: 13px; }
 .inline-error { padding: 10px 12px; background: #fff1ef; border-radius: 9px; }
-.composer-zone { margin-top: auto; padding-top: 18px; }
+.composer-zone { flex: 0 0 auto; margin-top: auto; padding-top: 18px; }
 .suggestions { display: flex; gap: 7px; margin-bottom: 9px; overflow-x: auto; scrollbar-width: none; }
 .suggestions button {
   flex: 0 0 auto;
@@ -225,11 +249,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .job-card p { margin: 0; color: var(--muted); font-size: 12px; }
 
 .bottom-nav {
-  position: fixed;
+  position: static;
   z-index: 10;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  width: min(760px, 100%);
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
@@ -243,10 +266,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .bottom-nav button[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
 
 @media (min-width: 800px) {
-  .app-shell { padding-bottom: 0; }
   .topbar { padding-inline: 24px; }
-  .page { min-height: calc(100dvh - 63px); padding: 28px 24px 36px; }
-  .bottom-nav { position: static; width: min(760px, 100%); margin: 0 auto; border: 1px solid var(--border); border-bottom: 0; border-radius: 14px 14px 0 0; }
+  .page { padding: 28px 24px 36px; }
+  .bottom-nav { margin: 0 auto; border: 1px solid var(--border); border-bottom: 0; border-radius: 14px 14px 0 0; }
   .message-bubble { max-width: 620px; }
 }
 
