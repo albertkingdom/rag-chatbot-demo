@@ -17,9 +17,9 @@ def _upload(name: str, content_type: str, body: bytes) -> UploadFile:
     )
 
 
-def test_save_manual_uses_server_generated_name_and_strips_path(tmp_path, monkeypatch):
+def test_save_manual_uses_server_generated_name(tmp_path, monkeypatch):
     monkeypatch.setattr(manual_service, "DATA_SOURCE_DIR", str(tmp_path))
-    upload = _upload("../../manual.csv", "text/csv", b"question,answer\nq,a\n")
+    upload = _upload("manual.csv", "text/csv", b"question,answer\nq,a\n")
 
     saved = asyncio.run(manual_service.save_manual(upload))
 
@@ -57,4 +57,12 @@ def test_oversized_upload_is_removed(tmp_path, monkeypatch):
             manual_service.save_manual(_upload("manual.csv", "text/csv", b"four"))
         )
 
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("filename", ["../../manual.csv", "..\\..\\manual.csv", "/tmp/manual.csv"])
+def test_path_traversal_is_rejected_without_saving(tmp_path, monkeypatch, filename):
+    monkeypatch.setattr(manual_service, "DATA_SOURCE_DIR", str(tmp_path))
+    with pytest.raises(manual_service.ManualUploadError):
+        asyncio.run(manual_service.save_manual(_upload(filename, "text/csv", b"q,a")))
     assert not list(tmp_path.iterdir())

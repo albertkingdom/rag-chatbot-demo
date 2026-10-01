@@ -226,7 +226,7 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
     def _reject(request: Request):
         """401 JSON for programmatic clients, 302 to /login for browsers."""
         accept = request.headers.get("accept", "")
-        if "text/html" in accept:
+        if "text/html" in accept and not request.url.path.startswith("/api/"):
             return RedirectResponse("/login", status_code=302)
         return JSONResponse({"detail": "Missing or invalid credential"}, status_code=401)
 

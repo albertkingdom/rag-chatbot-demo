@@ -90,6 +90,7 @@ export async function* parseNdjson(
     }
     if (buffer.trim()) throw new Error("串流回應不完整");
   } finally {
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
@@ -102,5 +103,11 @@ export async function* streamChat(message: string, signal: AbortSignal): AsyncGe
     signal,
   });
   if (!response.body) throw new Error("瀏覽器不支援串流回應");
-  yield* parseNdjson(response.body);
+  let terminal = false;
+  for await (const event of parseNdjson(response.body)) {
+    if (terminal) throw new Error("串流完成後收到額外事件");
+    terminal = event.type === "done" || event.type === "error";
+    yield event;
+  }
+  if (!terminal) throw new Error("串流回應不完整");
 }

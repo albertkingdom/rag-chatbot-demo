@@ -44,7 +44,11 @@ def _decode_gcp_job(job_id: str) -> str:
 
 
 async def save_manual(upload: UploadFile) -> Path:
-    original_name = Path(upload.filename or "").name
+    supplied_name = upload.filename or ""
+    if "/" in supplied_name or "\\" in supplied_name:
+        await upload.close()
+        raise ManualUploadError("檔名不可包含路徑")
+    original_name = Path(supplied_name).name
     suffix = Path(original_name).suffix.lower()
     if not original_name or suffix not in _ALLOWED_CONTENT_TYPES:
         raise ManualUploadError("只支援 PDF、XLSX、CSV 檔案")

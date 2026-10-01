@@ -115,3 +115,18 @@ pnpm build
 - 「停止」會立即停止瀏覽器接收；已在後端完成的回答仍可能完成保存，不保證強制取消模型工作。
 - 部署維持單一 Cloud Run instance，尚未宣稱高併發容量；擴大公開使用前需另做壓測與背壓設計。
 - 手冊上傳包含副檔名/MIME/大小/路徑基本驗證，但不含惡意檔案掃描或完整內容治理。
+
+## 前端驗收
+
+元件與 parser 測試：`cd frontend && pnpm exec vitest run --maxWorkers=1`。完整驗收證據與尚未完成項目見 `openspec/changes/replace-gradio-frontend/validation.md`。
+
+瀏覽器驗收腳本 `frontend/e2e/acceptance.mjs` 使用 Playwright 與本機 Chrome，mock API，不會呼叫真實 LLM 或提交真實上傳。先建置前端，再從 `frontend/dist` 啟動本機靜態 server（預設 `http://127.0.0.1:18173`）。在有 Playwright 的環境執行 `node frontend/e2e/acceptance.mjs`；也可用 `PLAYWRIGHT_MODULE_PATH` 指向現有 Playwright 的 `index.mjs`。`ACCEPTANCE_URL` 可指定測試 URL，`ACCEPTANCE_OUTPUT` 可指定截圖目錄。
+
+Docker smoke test 使用 image 內的 Python 與 fake chat/job provider：
+
+```bash
+docker build -t rag-react-acceptance .
+docker run --rm --mount type=bind,source="$PWD/scripts/frontend_docker_smoke.py",target=/tmp/frontend_docker_smoke.py,readonly rag-react-acceptance python /tmp/frontend_docker_smoke.py
+```
+
+這些自動化測試不取代實際手機虛擬鍵盤、真實 provider 容量或正式 Cloud Run revision 的切換與 rollback 驗收。

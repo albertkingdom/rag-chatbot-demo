@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -104,17 +104,22 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [statusText, setStatusText] = useState("");
   const [error, setError] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [clearing, setClearing] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    let active = true;
     getMessages()
-      .then(setMessages)
+      .then((items) => { if (active) setMessages(items); })
       .catch((reason) => {
+        if (!active) return;
         if (reason instanceof ApiError && reason.status === 401) onUnauthorized();
         else setError(reason instanceof Error ? reason.message : "無法載入對話");
-      });
-    return () => abortRef.current?.abort();
+      })
+      .finally(() => { if (active) setLoadingHistory(false); });
+    return () => { active = false; abortRef.current?.abort(); };
   }, [onUnauthorized]);
 
   useEffect(() => {
@@ -123,7 +128,7 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
 
   async function submitMessage(text = draft) {
     const message = text.trim();
-    if (!message || message.length > 2000 || streaming) return;
+    if (!message || message.length > 2000 || streaming || loadingHistory || clearing) return;
 
     const assistantId = uid();
     setMessages((current) => [
@@ -182,12 +187,18 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
   }
 
   async function clearConversation() {
+    if (streaming || loadingHistory || clearing) return;
     if (!window.confirm("清除目前對話脈絡？此操作不會刪除系統稽核紀錄。")) return;
+    setClearing(true);
+    setError("");
     try {
       await clearMessages();
       setMessages([]);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "無法清除對話");
+      if (reason instanceof ApiError && reason.status === 401) onUnauthorized();
+      else setError(reason instanceof Error ? reason.message : "無法清除對話");
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -195,7 +206,7 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
     <section className="page chat-page">
       <header className="page-heading">
         <div><h1>知識問答</h1><p>根據操作手冊提供回答</p></div>
-        <button className="icon-button" type="button" aria-label="清除對話" onClick={clearConversation}>⌫</button>
+        <button className="icon-button" type="button" aria-label="清除對話" onClick={clearConversation} disabled={streaming || loadingHistory || clearing}>⌫</button>
       </header>
 
       <div className="thread" aria-live="polite">
@@ -215,7 +226,7 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
       <div className="composer-zone">
         <div className="suggestions" aria-label="建議問題">
           {suggestions.map((suggestion) => (
-            <button key={suggestion} type="button" onClick={() => submitMessage(suggestion)} disabled={streaming}>
+            <button key={suggestion} type="button" onClick={() => submitMessage(suggestion)} disabled={streaming || loadingHistory || clearing}>
               {suggestion}
             </button>
           ))}
@@ -234,7 +245,7 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
                 submitMessage();
               }
             }}
-            disabled={streaming}
+            disabled={streaming || loadingHistory || clearing}
           />
           {streaming ? (
             <button className="stop-button" type="button" onClick={() => abortRef.current?.abort()} aria-label="停止接收">■</button>
@@ -248,26 +259,46 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
   );
 }
 
-function DocumentsView() {
+function DocumentsView({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [job, setJob] = useState<SyncJob | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pollAttempt, setPollAttempt] = useState(0);
+  const [pollStopped, setPollStopped] = useState(false);
 
   useEffect(() => {
     if (!job || !["queued", "running"].includes(job.status)) return;
-    const timer = window.setInterval(async () => {
-      try {
-        const latest = await getSyncJob(job.jobId);
-        setJob(latest);
-        if (["succeeded", "failed"].includes(latest.status)) window.clearInterval(timer);
-      } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "無法取得同步狀態");
-        window.clearInterval(timer);
+    let active = true;
+    let timer: number;
+    const deadline = Date.now() + 10 * 60 * 1000;
+    setPollStopped(false);
+    async function poll() {
+      if (!active) return;
+      if (Date.now() >= deadline) {
+        setError("同步狀態查詢逾時，可手動重新查詢。");
+        setPollStopped(true);
+        return;
       }
-    }, document.hidden ? 5000 : 2000);
-    return () => window.clearInterval(timer);
-  }, [job?.jobId, job?.status]);
+      try {
+        const latest = await getSyncJob(job!.jobId);
+        if (!active) return;
+        setJob(latest);
+        if (!["succeeded", "failed"].includes(latest.status)) {
+          timer = window.setTimeout(poll, document.hidden ? 5000 : 2000);
+        }
+      } catch (reason) {
+        if (!active) return;
+        if (reason instanceof ApiError && reason.status === 401) onUnauthorized();
+        else {
+          setError(reason instanceof Error ? reason.message : "無法取得同步狀態");
+          setPollStopped(true);
+        }
+      }
+    }
+    timer = window.setTimeout(poll, document.hidden ? 5000 : 2000);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [job?.jobId, pollAttempt, onUnauthorized]);
 
   async function upload() {
     if (!file || busy) return;
@@ -276,7 +307,8 @@ function DocumentsView() {
     try {
       setJob(await uploadManual(file));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "上傳失敗");
+      if (reason instanceof ApiError && reason.status === 401) onUnauthorized();
+      else setError(reason instanceof Error ? reason.message : "上傳失敗");
     } finally {
       setBusy(false);
     }
@@ -305,7 +337,7 @@ function DocumentsView() {
 
   return (
     <section className="page documents-page">
-      <header className="page-heading"><div><h1>文件管理</h1><p>上傳並同步操作手冊</p></div></header>
+      <header className="page-heading"><div><h1>文件管理</h1><p>管理功能 · 所有登入者皆可上傳</p></div></header>
       <div className="upload-card">
         <div className="upload-mark" aria-hidden="true">⇧</div>
         <h2>選擇裝置中的文件</h2>
@@ -313,6 +345,7 @@ function DocumentsView() {
         <label className="file-picker">
           <span>{file ? file.name : "選擇檔案"}</span>
           <input
+            aria-label="選擇手冊檔案"
             type="file"
             accept=".pdf,.xlsx,.csv"
             onChange={(event) => selectFile(event.target.files?.[0] ?? null)}
@@ -330,12 +363,23 @@ function DocumentsView() {
         </div>
       )}
       {error && <p className="inline-error" role="alert">{error}</p>}
+      {pollStopped && <button type="button" className="primary-button" onClick={() => { setError(""); setPollAttempt((value) => value + 1); }}>重新查詢同步狀態</button>}
     </section>
   );
 }
 
-function Shell({ onLogout, onUnauthorized }: { onLogout: () => void; onUnauthorized: () => void }) {
-  const [view, setView] = useState<View>("chat");
+function Shell({ onLogout, onUnauthorized, logoutError }: { onLogout: () => void; onUnauthorized: () => void; logoutError: string }) {
+  const fromPath = () => window.location.pathname === "/admin" ? "documents" : "chat";
+  const [view, setView] = useState<View>(fromPath);
+  useEffect(() => {
+    const update = () => setView(fromPath());
+    window.addEventListener("popstate", update);
+    return () => window.removeEventListener("popstate", update);
+  }, []);
+  function navigate(next: View) {
+    window.history.pushState(null, "", next === "documents" ? "/admin" : "/");
+    setView(next);
+  }
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -343,12 +387,13 @@ function Shell({ onLogout, onUnauthorized }: { onLogout: () => void; onUnauthori
         <div className="brand-title"><strong>碳管理知識助手</strong><span>安全連線 · 已登入</span></div>
         <button className="icon-button" type="button" onClick={onLogout} aria-label="登出">↪</button>
       </header>
-      <main>{view === "chat" ? <ChatView onUnauthorized={onUnauthorized} /> : <DocumentsView />}</main>
+      {logoutError && <p className="inline-error" role="alert">{logoutError}</p>}
+      <main>{view === "chat" ? <ChatView onUnauthorized={onUnauthorized} /> : <DocumentsView onUnauthorized={onUnauthorized} />}</main>
       <nav className="bottom-nav" aria-label="主要功能">
-        <button type="button" aria-current={view === "chat" ? "page" : undefined} onClick={() => setView("chat")}>
+        <button type="button" aria-current={view === "chat" ? "page" : undefined} onClick={() => navigate("chat")}>
           <span aria-hidden="true">□</span>知識問答
         </button>
-        <button type="button" aria-current={view === "documents" ? "page" : undefined} onClick={() => setView("documents")}>
+        <button type="button" aria-current={view === "documents" ? "page" : undefined} onClick={() => navigate("documents")}>
           <span aria-hidden="true">▱</span>文件管理
         </button>
       </nav>
@@ -358,6 +403,8 @@ function Shell({ onLogout, onUnauthorized }: { onLogout: () => void; onUnauthori
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState>("checking");
+  const [logoutError, setLogoutError] = useState("");
+  const unauthorized = useCallback(() => setAuth("unauthenticated"), []);
 
   useEffect(() => {
     getSession()
@@ -369,11 +416,16 @@ export default function App() {
   if (auth === "unauthenticated") return <LoginView onSuccess={() => setAuth("authenticated")} />;
 
   return (
+    <>
     <Shell
-      onUnauthorized={() => setAuth("unauthenticated")}
+      logoutError={logoutError}
+      onUnauthorized={unauthorized}
       onLogout={async () => {
-        try { await logout(); } finally { setAuth("unauthenticated"); }
+        setLogoutError("");
+        try { await logout(); setAuth("unauthenticated"); }
+        catch (reason) { setLogoutError(reason instanceof Error ? reason.message : "登出失敗，請重試"); }
       }}
     />
+    </>
   );
 }
