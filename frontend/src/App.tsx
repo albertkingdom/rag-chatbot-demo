@@ -259,9 +259,9 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
             disabled={streaming || loadingHistory || clearing}
           />
           {streaming ? (
-            <Button className="stop-button" type="button" onClick={() => abortRef.current?.abort()} aria-label="停止接收">■</Button>
+            <Button className="stop-button" onPointerDown={(event) => event.preventDefault()} type="button" onClick={() => abortRef.current?.abort()} aria-label="停止接收">■</Button>
           ) : (
-            <Button className="send-button" type="submit" disabled={!draft.trim() || coolingDown} aria-label="送出問題">↑</Button>
+            <Button className="send-button" onPointerDown={(event) => event.preventDefault()} type="submit" disabled={!draft.trim() || coolingDown} aria-label="送出問題">↑</Button>
           )}
         </form>
         <p className="safety-note">請勿輸入密碼、API key 或個人敏感資料</p>

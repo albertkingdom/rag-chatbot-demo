@@ -91,6 +91,20 @@ describe("chat acceptance", () => {
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     expect(api.streamChat).not.toHaveBeenCalled();
   });
+  it("keeps the composer focused when tapping send before submitting", async () => {
+    answer(); await openChat();
+    const input = screen.getByRole("textbox", { name: "輸入問題" });
+    fireEvent.change(input, { target: { value: "手機送出" } });
+    input.focus();
+    const button = screen.getByRole("button", { name: "送出問題" });
+    const pointer = new Event("pointerdown", { bubbles: true, cancelable: true });
+    // Browser default focus transfer dismisses iOS's keyboard before click.
+    if (button.dispatchEvent(pointer)) button.focus();
+    expect(input).toHaveFocus();
+    fireEvent.click(button);
+    expect(await screen.findByText("完成回答")).toBeInTheDocument();
+    expect(api.streamChat).toHaveBeenCalledWith("手機送出", expect.any(AbortSignal));
+  });
   it("returns to login on chat 401", async () => {
     vi.mocked(api.streamChat).mockImplementation(async function* () { yield* []; throw new api.ApiError("已過期", 401); });
     await openChat(); await send();

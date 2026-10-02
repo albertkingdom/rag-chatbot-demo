@@ -49,7 +49,7 @@
 - [x] 7.2 將 Dockerfile 改為 Node frontend build + Python runtime 多階段，固定 Node major 與 package lock，runtime 不包含 node_modules/Node process。
 - [x] 7.3 更新 `docker-compose.yml` 本機開發方式、`.dockerignore`/build context 與 cache layer，依「Compose 共用同步資料」與「Local web and worker share synchronization data」驗證代碼 mount 不遮蔽必要 frontend build，web/worker 共用文件與 BM25 volumes。
 - [x] 7.4 新增 Playwright 主流程與 Docker smoke test，使用 fake provider/job runner 避免真實 LLM/GCP 依賴。
-- [ ] 7.5 在切換前完成 side-project 基本驗收：XSS、cookie/origin、message 2,000 字邊界、upload traversal/size、1/2 位同時 RAG smoke test，以及前端 bundle 與首次載入檢查；不設定企業級容量 SLO。
+- [x] 7.5 在切換前完成 side-project 基本驗收：XSS、cookie/origin、message 2,000 字邊界、upload traversal/size、1/2 位同時 RAG smoke test，以及前端 bundle 與首次載入檢查；不設定企業級容量 SLO。
 
 ## 8. 切換、清理與文件
 

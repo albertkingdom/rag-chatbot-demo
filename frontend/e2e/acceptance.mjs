@@ -8,7 +8,7 @@ await mkdir(output, { recursive: true });
 let passed = 0;
 const longAnswer = "## 測試回答\n\n" + "這是一段驗證捲動與閱讀的回答。\n\n".repeat(45) + '\n<img src=x onerror="window.hacked=true">\n\n[危險](javascript:alert(1))';
 try {
-for (const viewport of [{width:360,height:740},{width:360,height:420},{width:1440,height:900}]) {
+for (const viewport of [{width:360,height:740},{width:360,height:420},{width:874,height:294},{width:1440,height:900}]) {
   const context = await browser.newContext({ viewport });
   let authenticated = false;
   let history = [];
@@ -55,7 +55,7 @@ for (const viewport of [{width:360,height:740},{width:360,height:420},{width:144
     const composer=document.querySelector(".composer").getBoundingClientRect();
     const nav=document.querySelector(".bottom-nav").getBoundingClientRect();
     const thread=document.querySelector(".thread");
-    const buttons=[...document.querySelectorAll("button:not([disabled]),summary")].map(e=>({label:e.textContent,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height}));
+    const buttons=[...document.querySelectorAll("button:not([disabled]),summary")].filter(e=>e.getClientRects().length).map(e=>({label:e.textContent,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height}));
     return {width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,composerBottom:composer.bottom,navTop:nav.top,navBottom:nav.bottom,scrollable:thread.scrollHeight>thread.clientHeight,font:getComputedStyle(document.querySelector("textarea")).fontSize,pageWidth:document.querySelector(".page").getBoundingClientRect().width,buttons};
   });
   assert.ok(layout.scrollWidth <= layout.width, JSON.stringify(layout));

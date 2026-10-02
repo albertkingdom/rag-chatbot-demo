@@ -39,3 +39,6 @@ terraform/.terraform/
 *.tfstate.*
 crash.log
 terraform/terraform.tfvars
+
+# Local documentation images and acceptance screenshots
+docs/**/*.png

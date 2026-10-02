@@ -303,3 +303,15 @@ body.app-active { overflow: hidden; }
 .keyboard-open .bottom-nav, .keyboard-open .suggestions, .keyboard-open .safety-note { display: none; }
 .keyboard-open .composer-zone { padding-top: 8px; }
 .keyboard-open .page { padding-bottom: 8px; }
+
+
+/* Landscape phones have little space after Safari's browser controls. */
+@media (max-height: 500px) and (min-width: 600px) {
+  .topbar { min-height: 52px; padding-block: 4px; }
+  .page { padding-block: 8px; }
+  .page-heading { flex: 0 0 auto; margin-bottom: 6px; }
+  .chat-page .page-heading p, .chat-page .suggestions, .chat-page .safety-note { display: none; }
+  .composer-zone { padding-top: 6px; }
+  .bottom-nav { padding-block: 4px; }
+  .bottom-nav button { min-height: 44px; }
+}

@@ -149,11 +149,7 @@ docker run --rm --mount type=bind,source="$PWD/scripts/frontend_docker_smoke.py"
 
 這些自動化測試不取代實際手機虛擬鍵盤、真實 provider 容量或正式 Cloud Run revision 的切換與 rollback 驗收。
 
-## 畫面與部署
-
-![手機聊天](docs/acceptance/replace-gradio-frontend/chat-360x740.png)
-
-![文件管理](docs/acceptance/replace-gradio-frontend/documents-360x740.png)
+## 部署
 
 Cloud Run revision 驗證、正式流量切換與回復指令見 [部署手冊](docs/deployment/replace-gradio-frontend.md)。正式環境使用 `FRONTEND_MODE=spa`、`JOB_RUNNER=gcp`，web 與 sync job 共用 GCS 掛載的 `DATA_SOURCE_DIR`/`BM25_INDEX_DIR`；模型快取 `MODEL_CACHE_DIR` 保留 image 內路徑。`GCP_PROJECT_ID`、`GCP_REGION`、`SYNC_JOB_NAME` 指定背景 job。
 
