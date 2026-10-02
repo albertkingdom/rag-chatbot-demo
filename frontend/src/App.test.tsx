@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.mocked(api.getMessages).mockResolvedValue([]);
   vi.mocked(api.clearMessages).mockResolvedValue();
   vi.mocked(api.logout).mockResolvedValue();
-  Element.prototype.scrollIntoView = vi.fn();
+  Element.prototype.scrollTo = vi.fn();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
@@ -92,7 +92,7 @@ describe("chat acceptance", () => {
     expect(api.streamChat).not.toHaveBeenCalled();
   });
   it("returns to login on chat 401", async () => {
-    vi.mocked(api.streamChat).mockImplementation(async function* () { throw new api.ApiError("已過期", 401); });
+    vi.mocked(api.streamChat).mockImplementation(async function* () { yield* []; throw new api.ApiError("已過期", 401); });
     await openChat(); await send();
     expect(await screen.findByLabelText("APP 登入密碼")).toBeInTheDocument();
   });
@@ -156,4 +156,86 @@ it("restores the admin route on refresh", async () => {
   window.history.replaceState(null, "", "/admin");
   render(<App />);
   expect(await screen.findByRole("heading", { name: "文件管理" })).toBeInTheDocument();
+});
+
+
+describe("remaining acceptance scenarios", () => {
+  async function startJob(result: api.SyncJob) {
+    vi.mocked(api.uploadManual).mockResolvedValue(result);
+    await openChat();
+    fireEvent.click(screen.getByRole("button", { name: "文件管理" }));
+    vi.useFakeTimers();
+    fireEvent.drop(document.querySelector(".upload-card")!, { dataTransfer: { files: [new File(["q,a"], "drop.csv", { type: "text/csv" })] } });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "上傳並更新知識庫" })));
+  }
+  it("validates a dropped file and exposes indeterminate upload progress", async () => {
+    let finish!: (value: api.SyncJob) => void;
+    vi.mocked(api.uploadManual).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    await openChat(); fireEvent.click(screen.getByRole("button", { name: "文件管理" }));
+    const card = document.querySelector(".upload-card")!;
+    fireEvent.drop(card, { dataTransfer: { files: [new File(["x"], "bad.exe")] } });
+    expect(screen.getByRole("alert")).toHaveTextContent("只支援");
+    fireEvent.drop(card, { dataTransfer: { files: [new File(["q,a"], "drop.csv", { type: "text/csv" })] } });
+    fireEvent.click(screen.getByRole("button", { name: "上傳並更新知識庫" }));
+    expect(screen.getByRole("progressbar", { name: "上傳中" })).not.toHaveAttribute("value");
+    expect(screen.getByLabelText("選擇手冊檔案")).toBeDisabled();
+    await act(async () => finish({ jobId: "done-job", status: "succeeded" }));
+    expect(screen.getByText("succeeded")).toBeInTheDocument();
+  });
+  it.each([404, 503])("stops on job HTTP %s and offers retry", async (status) => {
+    vi.mocked(api.getSyncJob).mockRejectedValue(new api.ApiError("查詢失敗", status));
+    await startJob({ jobId: "job", status: "queued" });
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(screen.getByRole("alert")).toHaveTextContent("查詢失敗");
+    expect(screen.getByRole("button", { name: "重新查詢同步狀態" })).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(10000));
+    expect(api.getSyncJob).toHaveBeenCalledTimes(1);
+  });
+  it("returns to login on polling 401", async () => {
+    vi.mocked(api.getSyncJob).mockRejectedValue(new api.ApiError("已過期", 401));
+    await startJob({ jobId: "job", status: "queued" });
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(screen.getByLabelText("APP 登入密碼")).toBeInTheDocument();
+  });
+  it("stops on terminal job failure", async () => {
+    vi.mocked(api.getSyncJob).mockResolvedValue({ jobId: "job", status: "failed", message: "同步失敗" });
+    await startJob({ jobId: "job", status: "queued" });
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(screen.getByText("failed")).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(10000));
+    expect(api.getSyncJob).toHaveBeenCalledTimes(1);
+  });
+  it("times out after ten minutes and supports manual restart", async () => {
+    vi.mocked(api.getSyncJob).mockResolvedValue({ jobId: "job", status: "running" });
+    await startJob({ jobId: "job", status: "queued" });
+    await act(async () => vi.advanceTimersByTimeAsync(602000));
+    expect(screen.getByRole("alert")).toHaveTextContent("逾時");
+    const calls = vi.mocked(api.getSyncJob).mock.calls.length;
+    await act(async () => vi.advanceTimersByTimeAsync(10000));
+    expect(api.getSyncJob).toHaveBeenCalledTimes(calls);
+    vi.mocked(api.getSyncJob).mockResolvedValue({ jobId: "job", status: "succeeded" });
+    fireEvent.click(screen.getByRole("button", { name: "重新查詢同步狀態" }));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(screen.getByText("succeeded")).toBeInTheDocument();
+  });
+  it("slows polling while the page is hidden", async () => {
+    const spy = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    vi.mocked(api.getSyncJob).mockResolvedValue({ jobId: "job", status: "succeeded" });
+    await startJob({ jobId: "job", status: "queued" });
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(api.getSyncJob).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(api.getSyncJob).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+  it("observes Retry-After without automatically resubmitting", async () => {
+    vi.mocked(api.streamChat).mockImplementation(async function* () { yield* []; throw new api.ApiError("請於 12 秒後重試", 429, 12); });
+    await openChat(); vi.useFakeTimers();
+    await act(async () => send());
+    fireEvent.change(screen.getByRole("textbox", { name: "輸入問題" }), { target: { value: "重試" } });
+    expect(screen.getByRole("button", { name: "送出問題" })).toBeDisabled();
+    await act(async () => vi.advanceTimersByTimeAsync(12000));
+    expect(screen.getByRole("button", { name: "送出問題" })).toBeEnabled();
+    expect(api.streamChat).toHaveBeenCalledTimes(1);
+  });
 });

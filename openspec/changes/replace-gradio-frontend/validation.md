@@ -1,8 +1,10 @@
 # 前端替換驗收 — 2026-10-01
 
-## 結論
+## 最新結論（2026-10-02）
 
-本次已執行的自動化功能、安全與版面驗收通過。完整 change 尚未完成：checklist 為 **21/37**，保留 draft PR，未封存、未合併、未切換正式流量。
+自動化功能、安全、版面、同源 socket 與最新 image 驗收通過。Checklist **33/37**；尚待真實 provider 授權測試、完整手機逐項确认與 Cloud Run 切換/回復，Gradio 移除依切換驗收後執行。PR 尚無外部 review，未合併、未封存、未切換正式流量。
+
+下列較早紀錄保留為執行歷史，最新結果以本節與文末 2026-10-02 補充為準。
 
 ## 驗證證據
 
@@ -65,3 +67,47 @@ Spectra 3.0.0 的 `status` / `instructions apply` / `archive --preview` 找不�
 ![手機文件管理](../../../docs/acceptance/replace-gradio-frontend/documents-360x740.png)
 
 重跑方式見 README 的「前端驗收」。
+
+## 2026-10-01 手機實測追蹤
+
+使用者以 iPhone Safari 實測測試站，回報中文鍵盤開啟時底部分頁被推高、留下大片空白，以及深色模式露出白底。修正如下：
+
+- App shell 依 VisualViewport 的 height/offsetTop 定位；鍵盤開啟時收起底部分頁、建議問題和提示，收起鍵盤後恢復。
+- 自動捲動僅操作 thread，不再以 scrollIntoView 捲动頁面祖先。
+- html 與 app shell 背景均使用主題 token，theme-color 隨深淺模式設定。
+- 新增鍵盤縮高、Safari viewport 位移、恢復與縮放清理測試。前端 39 tests、lint、typecheck、production build 通過。Playwright 確認深色 html/body/shell 均為 rgb(16,20,17)，淺色均為 rgb(242,245,241)。
+
+使用者在修正後回覆「測試ok」，確認本次手機版面與停止接收測試通過。這項確認不外推為未逐項回報的手機上傳、history clear、登入登出或正式 Cloud Run cutover 驗收。
+
+## 最新回歸補充
+
+2026-10-01 修正 MetadataEvent JSON alias 後，獨立 Docker 容器 bind mount 最新 branch 執行完整非 integration 回歸：**270 passed / 2 deselected**（9.58s），保留既有 dependency/marker warnings。新情境涵蓋一致 API error schema、409 session guard、transport close、Gradio adapter 四種路由 parity、檔名 collision，以及 local/GCP job status adapter。
+
+1.1、1.3、2.4、3.7、4.1–4.3、6.1、6.3 已由新增 parity 文件、實作與後端/前端測試完成；上方較早的未完成清單是當時快照，這些項目已不再待辦。真實 provider smoke、部署切換/回復、Gradio 移除及最終整合交付仍待完成。
+
+最新 frontend build 的 Playwright 重跑通過 360×740、360×420、1440×900 三組 journey：登入、聊天/來源、內部捲動、XSS、clear、truncated/429/401、upload/poll、登出；截圖存於 `/tmp/rag-final-acceptance`。這些為 fake API 瀏覽器回歸，與使用者手機實測證據分別記錄。
+
+
+## 2026-10-02 最終本機交付驗收
+
+| 檢查 | 最新結果 |
+| --- | --- |
+| Backend | 271 passed / 2 integration deselected；加入 API key + 未驗證 cookie 不能選 history 的失敗重現與回歸修正 |
+| Frontend | lint、40 tests、typecheck/build 通過（含橫向旋轉不誤判鍵盤） |
+| Bundle | JS 390.34 kB / gzip 120.26 kB；CSS 8.89 kB / gzip 2.57 kB |
+| Mock browser journeys | 360×740、360×420、1440×900 三組通過；最新截圖已更新 docs/acceptance |
+| Same-origin socket | 真實 HTTP transport + fake providers：登入/HttpOnly SameSite cookie、來源、history refresh/clear、stop abort、upload/job、logout 全部通過 |
+| Keyboard geometry | Layout viewport 740px 不變，VisualViewport height 360px / offsetTop 80px；composer bottom 432px，nav 收起、恢復正確 |
+| First load | 最新 image 本機 Chrome/mobile viewport DOMContentLoaded 52ms；JS transfer 390645 bytes / 8ms，CSS 9190 bytes / 6ms。僅本機 HTTP、非 production/network SLO |
+| Image | `rag-react-acceptance:20261002` 最新後端／前端 image build 通過；SHA `49df42eb24bbc91d62198275ef932c4bfbfb09756658f04dde3afceccdfb7652` |
+| Image smoke | 最新 image health/SPA/deep links/assets/API404/typed events/2000字邊界/fake並行/upload安全/job/Python-only runtime 通過 |
+| Compose | 合併 dev config 通過；src-only mount smoke 通過；兩個獨立容器共用 temporary upload/BM25 volumes 可讀寫，assets 保留；temporary volumes 已清理 |
+| Cloud | 僅讀取 describe：舊 revision `carbon-assistant-web-00014-pw9` 仍為 100%；部署/rollback 手冊完成，未執行切換 |
+
+README 補齊 lint、固定 lockfile 開發、Compose 共用文件/index、auth API、手機鍵盤主題、Stop/clear/權限限制與部署手冊（8.4）。8.5 的要求已由最新本機全套自動驗收滿足；真實 provider、實機與部署驗收分別由 7.5/8.1/8.2 保持追蹤。
+
+剩餘四項：7.5（真實 RAG 1/2 concurrent 等待外部 provider/data 授權）、8.1（完整手機逐項回報）、8.2（review 後候選 revision / cutover / rollback）、8.3（依 8.2 完成後移除 Gradio）。使用者已在 2026-10-01 確認鍵盤、配色與停止正常；未虛構其他實機回報。
+
+Spectra CLI 將 linked worktree 映射至主 repo，仍無法直接找到本 change；以完整 openspec/.spectra.yaml 複製至無 git 的 temporary snapshot 執行 `status`/`validate`，schema/artifacts 與格式 valid。Analyze 無 Critical；既有 12 項 concrete-example Suggestions 保留，Compose heading/requirement 的 task matching 已對齊。沒有 archive 或修改主 repo specs；status 的 isComplete 表示 artifacts 已具備，不表示所有 tasks 完成。
+
+真實 provider 的第一個 tool action 被自動審查拒絕，未執行、未取得或印出憑證；已詢問使用者明確授權三次問題與知識庫檢索內容送至 OpenAI/Pinecone/OpenRouter。`scripts/real_rag_smoke.py` 已準備，需 ALLOW_LIVE_RAG_SMOKE=true 且授權後才執行，資料寫入與 tracing 隔離；目前沒有 real smoke 通過證據。

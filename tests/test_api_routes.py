@@ -15,6 +15,8 @@ from src.chat_events import DeltaEvent, DoneEvent, MetadataEvent, StatusEvent
 
 def _app(*, enabled: bool = False, redis=None) -> FastAPI:
     application = FastAPI()
+    from src.api_errors import install_api_error_handlers
+    install_api_error_handlers(application)
     application.state.auth_config = AuthConfig(
         enabled=enabled,
         api_key="test-key" if enabled else None,

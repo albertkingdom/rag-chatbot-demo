@@ -23,6 +23,10 @@ class ManualUploadError(ValueError):
     pass
 
 
+class ManualConflictError(ManualUploadError):
+    pass
+
+
 class ManualTooLargeError(ManualUploadError):
     pass
 
@@ -60,6 +64,7 @@ async def save_manual(upload: UploadFile) -> Path:
     final_path = save_dir / f"{uuid.uuid4().hex}-{original_name}"
     temp_path = save_dir / f".{uuid.uuid4().hex}.upload"
     total = 0
+    reserved = False
     try:
         with temp_path.open("xb") as output:
             while chunk := await upload.read(1024 * 1024):
@@ -69,10 +74,18 @@ async def save_manual(upload: UploadFile) -> Path:
                         f"檔案不可超過 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB"
                     )
                 output.write(chunk)
+        try:
+            with final_path.open("xb"):
+                pass
+            reserved = True
+        except FileExistsError as exc:
+            raise ManualConflictError("檔案名稱衝突，請重新上傳") from exc
         os.replace(temp_path, final_path)
         return final_path
     except Exception:
         temp_path.unlink(missing_ok=True)
+        if reserved:
+            final_path.unlink(missing_ok=True)
         raise
     finally:
         await upload.close()

@@ -31,11 +31,11 @@ class SourcesEvent(ChatEvent):
 
 class MetadataEvent(ChatEvent):
     type: Literal["metadata"] = "metadata"
-    elapsed_ms: int = Field(serialization_alias="elapsedMs")
+    elapsed_ms: int = Field(alias="elapsedMs")
     response_source: Literal["rag", "direct", "cache", "guardrail"] = Field(
-        serialization_alias="responseSource"
+        alias="responseSource"
     )
-    cache_hit: bool = Field(serialization_alias="cacheHit")
+    cache_hit: bool = Field(alias="cacheHit")
 
 
 class DoneEvent(ChatEvent):

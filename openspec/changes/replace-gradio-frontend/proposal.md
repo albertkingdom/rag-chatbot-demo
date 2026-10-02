@@ -11,6 +11,7 @@
 - 將 `chat_stream` 內的業務流程與 Gradio request/UI 形狀解耦，產生 `status`/`delta`/`sources`/`metadata`/`done`/`error` 等結構化事件，由 API 以 NDJSON 傳輸。
 - 將前端成品整合到 Docker 多階段 build，產品環境由 FastAPI 同源提供；本機開發由 Vite dev server proxy `/api` 至 FastAPI。
 - 在新介面通過功能同等、整合測試與可回復驗收後，移除 `src/ui.py`、Gradio mount 與 Gradio dependency。
+- 本機 Compose web/worker 共用手冊與 BM25 index volumes，source mount 不遮蔽編譯前端，確保上傳後背景同步可讀取同一資料。
 - 更新 `README.md`、環境變數範例、本機開發與部署說明。
 
 ## Non-Goals

@@ -13,12 +13,14 @@ import {
   uploadManual,
   type SyncJob,
 } from "./api";
+import { Button, Input, ErrorMessage, StatusMessage } from "./ui";
+import { useKeyboardViewport } from "./useKeyboardViewport";
 import type { ChatMessage } from "./types";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 type View = "chat" | "documents";
 
-const suggestions = ["如何切換盤查邊界？", "忘記密碼怎麼辦？", "系統有哪些角色？"];
+const suggestions = ["忘記密碼怎麼辦？", "如何在多廠區管理中切換邊界？", "什麼是固定式燃料源排放？", "報告和清冊的格式是什麼？", "系統有哪些角色？", "門檻值設定該如何填寫？"];
 const maxManualBytes = 25 * 1024 * 1024;
 const allowedManualExtensions = [".pdf", ".xlsx", ".csv"];
 
@@ -54,7 +56,7 @@ function LoginView({ onSuccess }: { onSuccess: () => void }) {
         <h1>碳管理知識助手</h1>
         <p>使用 APP 登入密碼進入知識問答系統。</p>
         <label htmlFor="api-key">APP 登入密碼</label>
-        <input
+        <Input
           id="api-key"
           type="password"
           autoComplete="current-password"
@@ -62,10 +64,10 @@ function LoginView({ onSuccess }: { onSuccess: () => void }) {
           onChange={(event) => setApiKey(event.target.value)}
           required
         />
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="primary-button" type="submit" disabled={submitting}>
+        {error && <ErrorMessage className="form-error">{error}</ErrorMessage>}
+        <Button className="primary-button" type="submit" disabled={submitting}>
           {submitting ? "登入中…" : "登入"}
-        </button>
+        </Button>
       </form>
     </main>
   );
@@ -106,8 +108,15 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [streaming, setStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [clearing, setClearing] = useState(false);
+  const [retryUntil, setRetryUntil] = useState(0);
+  const coolingDown = retryUntil > Date.now();
+  useEffect(() => {
+    if (!retryUntil) return;
+    const timer = window.setTimeout(() => setRetryUntil(0), Math.max(0, retryUntil - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [retryUntil]);
   const abortRef = useRef<AbortController | null>(null);
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const threadRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -123,12 +132,13 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
   }, [onUnauthorized]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const thread = threadRef.current;
+    thread?.scrollTo({ top: thread.scrollHeight, behavior: "smooth" });
   }, [messages, statusText]);
 
   async function submitMessage(text = draft) {
     const message = text.trim();
-    if (!message || message.length > 2000 || streaming || loadingHistory || clearing) return;
+    if (!message || message.length > 2000 || streaming || loadingHistory || clearing || coolingDown) return;
 
     const assistantId = uid();
     setMessages((current) => [
@@ -176,6 +186,7 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
       } else if (reason instanceof ApiError && reason.status === 401) {
         onUnauthorized();
       } else {
+        if (reason instanceof ApiError && reason.status === 429 && reason.retryAfter) setRetryUntil(Date.now() + reason.retryAfter * 1000);
         setError(reason instanceof Error ? reason.message : "回答失敗，請稍後再試");
         setMessages((current) => current.filter((item) => item.id !== assistantId || item.content));
       }
@@ -188,7 +199,7 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
 
   async function clearConversation() {
     if (streaming || loadingHistory || clearing) return;
-    if (!window.confirm("清除目前對話脈絡？此操作不會刪除系統稽核紀錄。")) return;
+    if (!window.confirm("清除目前對話脈絡？此操作不會刪除 MongoDB 紀錄、回答快取或追蹤紀錄。")) return;
     setClearing(true);
     setError("");
     try {
@@ -206,10 +217,10 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
     <section className="page chat-page">
       <header className="page-heading">
         <div><h1>知識問答</h1><p>根據操作手冊提供回答</p></div>
-        <button className="icon-button" type="button" aria-label="清除對話" onClick={clearConversation} disabled={streaming || loadingHistory || clearing}>⌫</button>
+        <Button className="icon-button" type="button" aria-label="清除對話" onClick={clearConversation} disabled={streaming || loadingHistory || clearing}>⌫</Button>
       </header>
 
-      <div className="thread" aria-live="polite">
+      <div className="thread" ref={threadRef} aria-live="polite">
         {messages.length === 0 && (
           <div className="empty-state">
             <span className="assistant-mark large" aria-hidden="true">C</span>
@@ -218,17 +229,17 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
           </div>
         )}
         {messages.map((message) => <MessageBubble key={message.id} message={message} />)}
-        {statusText && <p className="stream-status">{statusText}</p>}
-        {error && <p className="inline-error" role="alert">{error}</p>}
-        <div ref={endRef} />
+        {statusText && <StatusMessage>{statusText}</StatusMessage>}
+        {error && <ErrorMessage>{error}</ErrorMessage>}
+        <div />
       </div>
 
       <div className="composer-zone">
         <div className="suggestions" aria-label="建議問題">
           {suggestions.map((suggestion) => (
-            <button key={suggestion} type="button" onClick={() => submitMessage(suggestion)} disabled={streaming || loadingHistory || clearing}>
+            <Button key={suggestion} type="button" onClick={() => submitMessage(suggestion)} disabled={streaming || loadingHistory || clearing || coolingDown}>
               {suggestion}
-            </button>
+            </Button>
           ))}
         </div>
         <form className="composer" onSubmit={(event) => { event.preventDefault(); submitMessage(); }}>
@@ -248,9 +259,9 @@ function ChatView({ onUnauthorized }: { onUnauthorized: () => void }) {
             disabled={streaming || loadingHistory || clearing}
           />
           {streaming ? (
-            <button className="stop-button" type="button" onClick={() => abortRef.current?.abort()} aria-label="停止接收">■</button>
+            <Button className="stop-button" type="button" onClick={() => abortRef.current?.abort()} aria-label="停止接收">■</Button>
           ) : (
-            <button className="send-button" type="submit" disabled={!draft.trim()} aria-label="送出問題">↑</button>
+            <Button className="send-button" type="submit" disabled={!draft.trim() || coolingDown} aria-label="送出問題">↑</Button>
           )}
         </form>
         <p className="safety-note">請勿輸入密碼、API key 或個人敏感資料</p>
@@ -266,9 +277,12 @@ function DocumentsView({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [busy, setBusy] = useState(false);
   const [pollAttempt, setPollAttempt] = useState(0);
   const [pollStopped, setPollStopped] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const jobId = job?.jobId;
+  const shouldPoll = !!job && ["queued", "running"].includes(job.status);
 
   useEffect(() => {
-    if (!job || !["queued", "running"].includes(job.status)) return;
+    if (!jobId || !shouldPoll) return;
     let active = true;
     let timer: number;
     const deadline = Date.now() + 10 * 60 * 1000;
@@ -281,7 +295,7 @@ function DocumentsView({ onUnauthorized }: { onUnauthorized: () => void }) {
         return;
       }
       try {
-        const latest = await getSyncJob(job!.jobId);
+        const latest = await getSyncJob(jobId!);
         if (!active) return;
         setJob(latest);
         if (!["succeeded", "failed"].includes(latest.status)) {
@@ -298,7 +312,7 @@ function DocumentsView({ onUnauthorized }: { onUnauthorized: () => void }) {
     }
     timer = window.setTimeout(poll, document.hidden ? 5000 : 2000);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [job?.jobId, pollAttempt, onUnauthorized]);
+  }, [jobId, shouldPoll, pollAttempt, onUnauthorized]);
 
   async function upload() {
     if (!file || busy) return;
@@ -316,6 +330,7 @@ function DocumentsView({ onUnauthorized }: { onUnauthorized: () => void }) {
 
   function selectFile(selected: File | null) {
     setError("");
+    setPollStopped(false);
     setJob(null);
     if (!selected) {
       setFile(null);
@@ -338,22 +353,28 @@ function DocumentsView({ onUnauthorized }: { onUnauthorized: () => void }) {
   return (
     <section className="page documents-page">
       <header className="page-heading"><div><h1>文件管理</h1><p>管理功能 · 所有登入者皆可上傳</p></div></header>
-      <div className="upload-card">
+      <div className={`upload-card${dragging ? " drag-active" : ""}`}
+        onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => { event.preventDefault(); setDragging(false); if (!busy) selectFile(event.dataTransfer.files[0] ?? null); }}
+      >
         <div className="upload-mark" aria-hidden="true">⇧</div>
-        <h2>選擇裝置中的文件</h2>
+        <h2>拖曳文件到此處，或選擇檔案</h2>
         <p>支援 PDF、XLSX、CSV，單檔上限 25 MB</p>
         <label className="file-picker">
           <span>{file ? file.name : "選擇檔案"}</span>
-          <input
+          <Input
             aria-label="選擇手冊檔案"
+            disabled={busy}
             type="file"
             accept=".pdf,.xlsx,.csv"
             onChange={(event) => selectFile(event.target.files?.[0] ?? null)}
           />
         </label>
-        <button className="primary-button" type="button" onClick={upload} disabled={!file || busy}>
+        <Button className="primary-button" type="button" onClick={upload} disabled={!file || busy}>
           {busy ? "上傳中…" : "上傳並更新知識庫"}
-        </button>
+        </Button>
+        {busy && <progress aria-label="上傳中" />}
       </div>
       {job && (
         <div className="job-card" aria-live="polite">
@@ -362,13 +383,14 @@ function DocumentsView({ onUnauthorized }: { onUnauthorized: () => void }) {
           <p>{job.message ?? "離開此頁不會中斷背景作業。"}</p>
         </div>
       )}
-      {error && <p className="inline-error" role="alert">{error}</p>}
-      {pollStopped && <button type="button" className="primary-button" onClick={() => { setError(""); setPollAttempt((value) => value + 1); }}>重新查詢同步狀態</button>}
+      {error && <ErrorMessage>{error}</ErrorMessage>}
+      {pollStopped && <Button type="button" className="primary-button" onClick={() => { setError(""); setPollAttempt((value) => value + 1); }}>重新查詢同步狀態</Button>}
     </section>
   );
 }
 
 function Shell({ onLogout, onUnauthorized, logoutError }: { onLogout: () => void; onUnauthorized: () => void; logoutError: string }) {
+  const viewport = useKeyboardViewport();
   const fromPath = () => window.location.pathname === "/admin" ? "documents" : "chat";
   const [view, setView] = useState<View>(fromPath);
   useEffect(() => {
@@ -381,21 +403,21 @@ function Shell({ onLogout, onUnauthorized, logoutError }: { onLogout: () => void
     setView(next);
   }
   return (
-    <div className="app-shell">
+    <div className={`app-shell${viewport.keyboardOpen ? " keyboard-open" : ""}`} style={viewport.style}>
       <header className="topbar">
         <div className="brand-mark small" aria-hidden="true">C</div>
         <div className="brand-title"><strong>碳管理知識助手</strong><span>安全連線 · 已登入</span></div>
-        <button className="icon-button" type="button" onClick={onLogout} aria-label="登出">↪</button>
+        <Button className="icon-button" type="button" onClick={onLogout} aria-label="登出">↪</Button>
       </header>
-      {logoutError && <p className="inline-error" role="alert">{logoutError}</p>}
+      {logoutError && <ErrorMessage>{logoutError}</ErrorMessage>}
       <main>{view === "chat" ? <ChatView onUnauthorized={onUnauthorized} /> : <DocumentsView onUnauthorized={onUnauthorized} />}</main>
       <nav className="bottom-nav" aria-label="主要功能">
-        <button type="button" aria-current={view === "chat" ? "page" : undefined} onClick={() => navigate("chat")}>
+        <Button type="button" aria-current={view === "chat" ? "page" : undefined} onClick={() => navigate("chat")}>
           <span aria-hidden="true">□</span>知識問答
-        </button>
-        <button type="button" aria-current={view === "documents" ? "page" : undefined} onClick={() => navigate("documents")}>
+        </Button>
+        <Button type="button" aria-current={view === "documents" ? "page" : undefined} onClick={() => navigate("documents")}>
           <span aria-hidden="true">▱</span>文件管理
-        </button>
+        </Button>
       </nav>
     </div>
   );
@@ -409,7 +431,7 @@ export default function App() {
   useEffect(() => {
     getSession()
       .then((session) => setAuth(session.authenticated ? "authenticated" : "unauthenticated"))
-      .catch((reason) => setAuth(reason instanceof ApiError && reason.status === 401 ? "unauthenticated" : "unauthenticated"));
+      .catch(() => setAuth("unauthenticated"));
   }, []);
 
   if (auth === "checking") return <main className="loading-page" aria-live="polite">載入中…</main>;

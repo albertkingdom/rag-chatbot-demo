@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, parseNdjson, streamChat } from "./api";
+import { ApiError, clearMessages, parseNdjson, streamChat } from "./api";
 
 function byteStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -82,5 +82,38 @@ describe("stream completion and HTTP errors", () => {
       expect(error).toBeInstanceOf(ApiError);
       expect(error).toMatchObject({ status: 429, retryAfter: 12 });
     }
+  });
+});
+
+
+describe("remaining parser/client boundaries", () => {
+  it("decodes Unicode split inside a UTF-8 character", async () => {
+    const bytes = new TextEncoder().encode('{"type":"delta","text":"碳"}\n');
+    const start = bytes.indexOf(0xe7);
+    const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes.slice(0, start + 1)); controller.enqueue(bytes.slice(start + 1)); controller.close(); } });
+    const events = []; for await (const event of parseNdjson(stream)) events.push(event);
+    expect(events).toEqual([{ type: "delta", text: "碳" }]);
+  });
+  it.each(['{"type":"unknown"}', '{"type":"delta","text":1}', '{"type":"metadata","elapsedMs":-1,"cacheHit":false,"responseSource":"rag"}'])("rejects unsupported event schema %s", async (line) => {
+    async function consume() { for await (const event of parseNdjson(byteStream([line + "\n"]))) void event; }
+    await expect(consume()).rejects.toThrow("串流事件格式無效");
+  });
+  it("aborts a pending read and cancels the response body", async () => {
+    const cancel = vi.fn(); const controller = new AbortController();
+    const events = parseNdjson(new ReadableStream<Uint8Array>({ cancel }), controller.signal);
+    const pending = events.next(); controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+  it("returns 401 to the caller without retrying", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "Expired session", code: "unauthorized" }), { status: 401 }));
+    vi.stubGlobal("fetch", fetch);
+    async function consume() { for await (const event of streamChat("q", new AbortController().signal)) void event; }
+    await expect(consume()).rejects.toMatchObject({ status: 401 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("does not accept a clear response other than 204", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 200 })));
+    await expect(clearMessages()).rejects.toThrow("尚未確認對話已清除");
   });
 });

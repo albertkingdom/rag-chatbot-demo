@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict';
+const {chromium}=await import(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
+const browser=await chromium.launch({channel:'chrome',headless:true});
+const origin=process.env.ACCEPTANCE_URL || 'http://127.0.0.1:18201';
+try {
+ const page=await browser.newPage({viewport:{width:390,height:740},colorScheme:'dark'});
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const started=Date.now();
+ await page.goto(origin);
+ await page.getByLabel('APP 登入密碼').waitFor();
+ const load=await page.evaluate(()=>{const n=performance.getEntriesByType('navigation')[0];return {domContentLoadedMs:Math.round(n.domContentLoadedEventEnd),resources:performance.getEntriesByType('resource').map(r=>({type:r.initiatorType,bytes:r.transferSize,ms:Math.round(r.duration)}))};});
+ await page.getByLabel('APP 登入密碼').fill('mobile-test-2026');
+ await page.getByRole('button',{name:'登入',exact:true}).click();
+ const input=page.getByRole('textbox',{name:'輸入問題'});
+ await input.waitFor();
+ await page.waitForFunction(()=>!document.querySelector('textarea').disabled);
+ const cookies=await page.context().cookies();
+ assert.ok(cookies.some(c=>c.name==='session_id'&&c.httpOnly&&c.sameSite==='Lax'));
+ assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).backgroundColor),'rgb(16, 20, 17)');
+ // Regression: shrink only VisualViewport and pan it; layout viewport stays 740px.
+ await input.focus();
+ await page.evaluate(()=>{const v=window.visualViewport;Object.defineProperty(v,'height',{configurable:true,value:360});Object.defineProperty(v,'offsetTop',{configurable:true,value:80});v.dispatchEvent(new Event('resize'));});
+ await page.waitForFunction(()=>document.querySelector('.app-shell').classList.contains('keyboard-open'));
+ const geometry=await page.evaluate(()=>({bottom:document.querySelector('.composer').getBoundingClientRect().bottom,nav:getComputedStyle(document.querySelector('.bottom-nav')).display,windowHeight:innerHeight}));
+ assert.equal(geometry.windowHeight,740);assert.equal(geometry.nav,'none');assert.ok(Math.abs(geometry.bottom-432)<=2,JSON.stringify(geometry));
+ await page.evaluate(()=>{const v=window.visualViewport;Object.defineProperty(v,'height',{configurable:true,value:740});Object.defineProperty(v,'offsetTop',{configurable:true,value:0});v.dispatchEvent(new Event('resize'));});
+ await page.waitForFunction(()=>!document.querySelector('.app-shell').classList.contains('keyboard-open'));
+ await input.fill('socket 完整流程');await input.press('Enter');
+ await page.getByText('查看 1 筆參考資料').waitFor({timeout:20000});
+ await page.getByText('查看 1 筆參考資料').click();
+ await page.getByText('手機驗收模擬手冊',{exact:true}).waitFor();
+ await page.reload();await input.waitFor();
+ await page.getByText('socket 完整流程',{exact:true}).waitFor();
+ page.on('dialog',d=>d.accept());
+ await page.getByRole('button',{name:'清除對話'}).click();await page.getByText('想了解什麼？').waitFor();
+ await page.reload();await page.getByText('想了解什麼？').waitFor();
+ await input.fill('socket 停止流程');await input.press('Enter');
+ await page.getByRole('button',{name:'停止接收'}).waitFor();await page.waitForTimeout(400);
+ await page.getByRole('button',{name:'停止接收'}).click();await page.getByText('已停止接收',{exact:true}).waitFor();
+ await page.reload();await page.getByText('想了解什麼？').waitFor();
+ await page.getByRole('button',{name:'文件管理',exact:true}).click();
+ await page.getByLabel('選擇手冊檔案').setInputFiles({name:'socket-test.csv',mimeType:'text/csv',buffer:Buffer.from('question,answer\nq,a')});
+ await page.getByRole('button',{name:'上傳並更新知識庫'}).click();await page.getByText('succeeded',{exact:true}).waitFor({timeout:15000});
+ await page.getByRole('button',{name:'登出'}).click();await page.getByLabel('APP 登入密碼').waitFor();
+ const response=await page.request.get(`${origin}/api/v1/conversations/current/messages`);assert.equal(response.status(),401);
+ assert.deepEqual(errors,[]);
+ console.log(JSON.stringify({result:'PASS same-origin socket login/cookie, visual viewport keyboard/pan, sources, history refresh/clear, stop/abort, upload/job, logout',seconds:(Date.now()-started)/1000,firstLoad:load}));
+} finally {await browser.close();}

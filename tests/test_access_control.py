@@ -161,7 +161,7 @@ class TestAuthentication:
     def test_missing_credential_returns_401(self, client):
         r = client.get("/protected")
         assert r.status_code == 401
-        assert r.json() == {"detail": "Missing or invalid credential"}
+        assert r.json() == {"detail": "Missing or invalid credential", "code": "unauthorized"}
 
     def test_invalid_header_returns_401(self, client):
         r = client.get("/protected", headers={"X-API-Key": "wrong"})

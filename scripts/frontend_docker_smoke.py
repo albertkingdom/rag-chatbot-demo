@@ -43,7 +43,7 @@ with tempfile.TemporaryDirectory() as data_dir:
         assert any(path.suffix=='.js' for path in assets)
         for asset in assets: assert client.get('/assets/'+asset.name).status_code==200
         assert client.get('/api/unknown').status_code==404
-        assert client.get('/api/unknown').json()=={'detail':'Not Found'}
+        assert client.get('/api/unknown').json()=={'detail':'Not Found','code':'not_found'}
         def ask(message):
             response=client.post('/api/v1/chat/stream',json={'message':message})
             assert response.status_code==200

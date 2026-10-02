@@ -66,3 +66,14 @@ def test_path_traversal_is_rejected_without_saving(tmp_path, monkeypatch, filena
     with pytest.raises(manual_service.ManualUploadError):
         asyncio.run(manual_service.save_manual(_upload(filename, "text/csv", b"q,a")))
     assert not list(tmp_path.iterdir())
+
+
+def test_name_collision_does_not_overwrite_existing_file(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(manual_service, "DATA_SOURCE_DIR", str(tmp_path))
+    monkeypatch.setattr(manual_service.uuid, "uuid4", lambda: SimpleNamespace(hex="fixed"))
+    first = asyncio.run(manual_service.save_manual(_upload("manual.csv", "text/csv", b"original")))
+    with pytest.raises(manual_service.ManualConflictError):
+        asyncio.run(manual_service.save_manual(_upload("manual.csv", "text/csv", b"replacement")))
+    assert first.read_bytes() == b"original"
+    assert not list(tmp_path.glob(".*.upload"))

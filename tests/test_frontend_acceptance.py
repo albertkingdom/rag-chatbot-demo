@@ -70,5 +70,5 @@ def test_spa_deep_link_and_api_404(tmp_path,monkeypatch):
     client=TestClient(create_app())
     assert 'acceptance SPA' in client.get('/admin').text
     assert client.get('/api/unknown').status_code==404
-    assert client.get('/api/unknown').json()=={'detail':'Not Found'}
+    assert client.get('/api/unknown').json()=={'detail':'Not Found','code':'not_found'}
     assert client.get('/health').json()=={'status':'ok'}

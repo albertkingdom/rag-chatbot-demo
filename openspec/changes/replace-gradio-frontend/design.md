@@ -223,3 +223,18 @@ API 使用 `/api/v1` 版本前綴。聊天採 `POST` + `application/x-ndjson` �
 - Node build 增加 CI 時間與 dependency surface：使用 lockfile、固定 Node major version、runtime image 不攜帶 node_modules。
 - 共用 `APP_API_KEY` 不是完整企業身分方案：本案清楚標示為相容過渡，未來多人/對外使用前另案引入 SSO/RBAC。
 - 本 side project 接受單 instance、共用 60 RPM bucket、所有登入者皆可上傳、Stop 僅停止前端接收，以及 MongoDB/cache/trace 不隨「清除對話」刪除等限制；README 必須列出，若轉為正式多人服務則重新評估。
+
+
+## 驗收補充決策（2026-10-01）
+
+- HTTP 錯誤統一為 `{ "detail": "安全可讀訊息", "code": "穩定錯誤碼" }`；validation 不回傳含原始輸入的 error list，避免登入金鑰被反射。OpenAPI 與 contract tests 鎖定此 schema。
+- 409 使用單一 process 的 session activity guard：同一 cookie session 已有 chat stream 時，拒絕第二次 chat 或 clear；完成、error、disconnect 均釋放。Anonymous request 不共用鎖。這不提供跨 process / multi-instance 的 distributed lock，也不改變 provider 取消保證。
+- 先保留並驗證 Gradio typed-event adapter。移除 Gradio 與重新產生 Python lockfile 的前提仍是正式 cutover/rollback 驗收完成；不以模擬測試假定該前提成立。
+
+### Compose 共用同步資料
+
+web/worker 共用 manual_data 與 bm25_data volumes，並設定相同 DATA_SOURCE_DIR/BM25_INDEX_DIR；dev override 只掛 src。驗收以兩個獨立容器確認上傳檔案及 index pointer 共用、compiled assets 未被遮蔽，避免背景同步看不到 web 保存的文件。
+
+### 2026-10-02 Header / cookie ownership 補充
+
+X-API-Key 認證成功不代表同時攜帶的 cookie 已驗證。使用該 cookie 選 history 前必須查 Redis session；未知值不能查詢任何 history，session backend 失敗回安全 503。新增回歸案例鎖定此邊界。

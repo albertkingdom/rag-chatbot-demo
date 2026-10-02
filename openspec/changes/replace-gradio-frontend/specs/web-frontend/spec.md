@@ -74,6 +74,18 @@ The system SHALL derive the current conversation history key from the authentica
 - **WHEN** a client disconnects or aborts while the assistant answer is still incomplete
 - **THEN** no partial assistant turn is appended to Redis history, response cache, or the conversation database; if the server has already completed a full valid answer, that answer SHALL be persisted according to the existing route behavior
 
+#### Scenario: Header authentication does not validate an arbitrary history cookie
+
+- **GIVEN** a request has a valid X-API-Key header and an unknown session_id cookie
+- **WHEN** the current conversation API selects its history key
+- **THEN** the unknown cookie SHALL NOT be used to read or mutate Redis history
+
+##### Example: Unknown cookie is ignored for history selection
+
+- **GIVEN** session:unvalidated-client-value is absent from Redis
+- **WHEN** GET /api/v1/conversations/current/messages is authenticated by X-API-Key and carries session_id=unvalidated-client-value
+- **THEN** the API returns an empty items list and never reads chat_history:unvalidated-client-value
+
 ### Requirement: Manual upload is validated and reports background job status
 
 The system SHALL accept only configured supported manual file types and sizes, SHALL normalize the client filename to prevent path traversal, and SHALL avoid silently overwriting an existing file. A valid upload SHALL return a job identifier and the frontend SHALL show queued, running, succeeded, or failed status until a terminal result or polling timeout.

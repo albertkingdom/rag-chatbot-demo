@@ -9,9 +9,10 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from .api_errors import api_error, install_api_error_handlers
 from .access_control import mount_auth
 from .api import router as api_router
 
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
         raise ValueError("FRONTEND_MODE must be 'gradio' or 'spa'")
 
     application = FastAPI()
+    install_api_error_handlers(application)
     mount_auth(application, include_legacy_routes=frontend_mode == "gradio")
     application.include_router(api_router)
 
@@ -43,6 +45,10 @@ def create_app() -> FastAPI:
         from .ui import demo
 
         return gr.mount_gradio_app(application, demo, path="/")
+
+    @application.post("/login", include_in_schema=False)
+    async def legacy_login_redirect():
+        return RedirectResponse("/login", status_code=303)
 
     dist_dir = Path(
         os.environ.get(
@@ -57,7 +63,7 @@ def create_app() -> FastAPI:
     @application.get("/{path:path}", include_in_schema=False)
     async def spa_fallback(path: str):
         if path == "api" or path.startswith("api/"):
-            return JSONResponse({"detail": "Not Found"}, status_code=404)
+            return api_error(404, "Not Found")
         index_file = dist_dir / "index.html"
         if not index_file.is_file():
             return JSONResponse(

@@ -32,3 +32,21 @@ Importing any module under `src/` SHALL NOT trigger network calls, model loading
 
 - **WHEN** the Python application starts from a production image
 - **THEN** it serves existing compiled frontend artifacts and does not invoke npm, Vite, or another frontend build tool at runtime
+
+## ADDED Requirements
+
+### Requirement: Local web and worker share synchronization data
+
+Docker Compose web and worker services SHALL use the same persistent volumes and DATA_SOURCE_DIR/BM25_INDEX_DIR values for uploaded manuals and BM25 index versions. Source-only development mounts SHALL NOT replace compiled frontend assets or model-cache files.
+
+#### Scenario: A worker reads a manual uploaded by the web service
+
+- **GIVEN** web saves a manual in its configured upload directory
+- **WHEN** the worker runs the synchronization task
+- **THEN** the same file is readable from the worker and its updated BM25 pointer is visible to web
+
+##### Example: Shared local data mounts
+
+- **GIVEN** both services mount manual_data at /app/uploaded_files and bm25_data at /app/bm25
+- **WHEN** web writes /app/uploaded_files/manual.csv and worker writes /app/bm25/bm25_current.txt
+- **THEN** each service can read the other's data and /app/frontend/dist/assets remains available from the image

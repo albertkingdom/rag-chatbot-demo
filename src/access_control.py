@@ -25,6 +25,8 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from .api_errors import api_error
+
 logger = logging.getLogger("access_control")
 
 # Redis key prefixes.
@@ -228,7 +230,7 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         accept = request.headers.get("accept", "")
         if "text/html" in accept and not request.url.path.startswith("/api/"):
             return RedirectResponse("/login", status_code=302)
-        return JSONResponse({"detail": "Missing or invalid credential"}, status_code=401)
+        return api_error(401, "Missing or invalid credential")
 
     # Rate limiting ---------------------------------------------------
     def _check_rate_limit(self, key_hash_value: str) -> tuple[bool, int]:
@@ -256,11 +258,7 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _throttle(retry_after: int):
-        return JSONResponse(
-            {"detail": "Rate limit exceeded"},
-            status_code=429,
-            headers={"Retry-After": str(retry_after)},
-        )
+        return api_error(429, "Rate limit exceeded", {"Retry-After": str(retry_after)})
 
     async def dispatch(self, request: Request, call_next):
         if not self.config.enabled:
