@@ -1,6 +1,6 @@
 # React frontend revision 驗證、切換與回復
 
-此手冊是待執行操作；2026-10-02 讀取時正式流量仍在 Gradio revision `carbon-assistant-web-00014-pw9`（100%）。先完成本地驗收與 PR code review，再執行正式切換。不要因本地 image smoke 通過而勾選 Cloud Run 驗收。
+2026-10-03 已依本手冊完成部署：`release/v1.0.2` 的 CI 成功，正式流量為 React revision `carbon-assistant-web-00016-mpd`（100%），preview tag 已移除。候選及正式 URL 驗收通過；使用者已於 2026-10-03 確認實體手機驗收完成。舊 Gradio revision `carbon-assistant-web-00014-pw9` 與 image 保留，可依第 5 節指令回復，尚未實際演練流量回復。
 
 ## 1. 保存當前狀態
 
@@ -16,6 +16,8 @@ gcloud run services describe "$service" --project "$project" --region "$region" 
 ```
 
 確認目前舊 revision 名稱與 immutable image tag。2026-10-02 基線 image 是 `asia-east1-docker.pkg.dev/carbon-rag-assistant-prod-2026/carbon-assistant/carbon-assistant:bd9c42b652d556caccb66891c9f28d2051c042ea`。切換期間不要刪除該 image/revision。
+
+清理後的新程式只有 React SPA，無須設定 `FRONTEND_MODE`。回復 Gradio 時使用保留的舊 revision/image。
 
 ## 2. 建置候選 image
 
@@ -38,7 +40,7 @@ suffix="spa-$(git rev-parse --short=8 HEAD)"
 gcloud run services update-traffic "$service" --project "$project" --region "$region" \
   --to-revisions="$old_revision=100"
 gcloud run services update "$service" --project "$project" --region "$region" \
-  --image="$image" --update-env-vars=FRONTEND_MODE=spa \
+  --image="$image" --update-env-vars=MAX_UPLOAD_BYTES=26214400 \
   --revision-suffix="$suffix" --no-traffic --tag=spa-preview
 ```
 

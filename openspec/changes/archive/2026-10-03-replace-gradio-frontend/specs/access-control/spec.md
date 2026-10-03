@@ -56,3 +56,45 @@ A session token SHALL be cryptographically random with at least 128 bits of entr
 
 - **WHEN** a non-browser client sends a valid `X-API-Key` to a state-changing API endpoint without an `Origin` header
 - **THEN** authentication can succeed without cookie CSRF checks
+
+
+### Requirement: Per-API-key rate limiting via Redis
+
+The system SHALL enforce a per-API-key request rate limit using Redis. The rate-limit bucket key SHALL be the first 16 hex characters of the SHA-256 hash of the underlying API key, so that all sessions and header requests originating from the same key share one quota. The limit SHALL be expressed as a configurable number of requests per minute (`RATE_LIMIT_RPM`, default 60). Requests exceeding the limit SHALL be rejected with HTTP 429 and a `Retry-After` header indicating the seconds until the window resets. Rate limiting SHALL apply to protected API routes and SHALL NOT apply to public SPA documents/assets, `/health`, `POST /api/v1/auth/login`, or `POST /api/v1/auth/logout`. If Redis is unavailable, the system SHALL fail open (allow the request) and log an error, so that the credential gate remains the primary access control.
+
+#### Scenario: requests within limit succeed
+
+- **WHEN** a client with a valid credential sends up to `RATE_LIMIT_RPM` requests in one minute
+- **THEN** every request proceeds to the route handler
+
+#### Scenario: requests over limit are throttled
+
+- **WHEN** a client with a valid credential sends more than `RATE_LIMIT_RPM` requests in one minute
+- **THEN** requests beyond the limit respond HTTP 429 with a `Retry-After` header
+
+#### Scenario: rate limit is per underlying key, not per session
+
+- **WHEN** a user logs in twice (two sessions issued from the same API key) and one session exhausts the quota
+- **THEN** the other session from the same key is also throttled, while a session from a different key is not affected
+
+#### Scenario: redis unavailable fails open
+
+- **WHEN** Redis is unreachable and a valid-credential request arrives
+- **THEN** the request proceeds to the route handler and an error is logged
+
+
+### Requirement: Cloud Run Service IAM invoker and secret injection
+
+The Terraform configuration SHALL grant `roles/run.invoker` to `allUsers` on the Cloud Run Service, hardcoded (not a configurable variable). Access control for this Service is enforced at the application layer (API key + session, see `AuthRateLimitMiddleware`), not via IAM — end users authenticate with a shared `APP_API_KEY` and have no GCP principal, so restricting `roles/run.invoker` at the IAM layer would block them from ever reaching the app-layer login page. The `APP_API_KEY` secret SHALL be added to the set of Secret Manager secrets and injected into the Cloud Run Service container environment alongside the existing secrets. The Service SHALL read the API key from `APP_API_KEY` at startup.
+
+*Correction (2026-07-02): the original version of this requirement (SHALL NOT grant `allUsers`, configurable `allowed_invoker_members` defaulting to empty) was found to conflict with the app's own access model — an empty invoker list blocks the Cloud Run Service at the IAM layer before any request reaches the app-layer login page, making the Service unreachable for real users rather than more secure. Corrected to hardcode `allUsers` and rely on the app-layer credential as the actual gate.*
+
+#### Scenario: invoker is public, app layer is the real gate
+
+- **WHEN** Terraform is applied
+- **THEN** an `allUsers` invoker binding exists on the Cloud Run Service, and unauthenticated requests reach the application, where protected API requests receive HTTP 401 JSON and browser document navigation is handled by the SPA auth guard
+
+#### Scenario: api key injected from Secret Manager
+
+- **WHEN** the Cloud Run Service starts
+- **THEN** the `APP_API_KEY` environment variable is populated from Secret Manager and the application reads it

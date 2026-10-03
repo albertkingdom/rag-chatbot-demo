@@ -119,14 +119,6 @@ class TestRedisConn:
         assert a is b is fake
         services._redis_conn._value = None
 
-    def test_importing_ui_does_not_call_redis_from_url(self):
-        """import src.ui must not establish a Redis connection (no side effect)."""
-        import importlib
-
-        with patch("src.services.redis.from_url") as spy:
-            importlib.reload(importlib.import_module("src.ui"))
-        spy.assert_not_called()
-
     def test_get_redis_conn_concurrent_single_init(self):
         from src import services
 

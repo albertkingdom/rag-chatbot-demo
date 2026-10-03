@@ -21,7 +21,7 @@ from typing import Optional
 
 import redis
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
@@ -40,20 +40,9 @@ SESSION_COOKIE = "session_id"
 # (method, path) tuples; method None means any method.
 _EXEMPT_ROUTES: tuple[tuple[Optional[str], str], ...] = (
     ("GET", "/health"),
-    ("GET", "/login"),
-    ("POST", "/login"),
-    ("POST", "/logout"),
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/logout"),
 )
-
-# Path prefixes for static build assets (Gradio's bundled JS/CSS/fonts).
-# These still require a credential (so the UI isn't served to anonymous
-# callers) but are exempt from rate limiting: a single Gradio page load
-# fires 100+ of these requests, which blows through a per-minute budget
-# sized for API calls and leaves the page stuck loading.
-_RATE_LIMIT_EXEMPT_PREFIXES: tuple[str, ...] = ("/assets/", "/static/")
-
 
 # ---------------------------------------------------------------------------
 # Session store helpers
@@ -107,7 +96,6 @@ class AuthConfig:
     rate_limit_rpm: int
     session_ttl_seconds: int
     redis: "redis.Redis"
-    spa_public: bool = False
 
 
 def build_auth_config() -> AuthConfig:
@@ -143,7 +131,6 @@ def build_auth_config() -> AuthConfig:
         rate_limit_rpm=rate_limit_rpm,
         session_ttl_seconds=session_ttl_seconds,
         redis=get_redis_conn(),
-        spa_public=os.environ.get("FRONTEND_MODE", "gradio").lower() == "spa",
     )
 
 
@@ -167,13 +154,10 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
       2. ``session_id`` cookie -> Redis ``session:<id>`` lookup; on hit,
          rate-limit bucket = the ``key_hash`` stored at creation.
 
-    On missing/invalid credential: 401 JSON (programmatic) or 302 to /login
-    (browser, detected via ``Accept: text/html``). Exempt routes bypass both
-    auth and rate limiting; static asset paths (``_RATE_LIMIT_EXEMPT_PREFIXES``)
-    still require a credential but bypass rate limiting only — a single page
-    load fires far more asset requests than a per-minute API budget allows.
-    When ``AuthConfig.enabled`` is False, everything
-    is allowed (dev/test mode). Redis errors fail open (allow + log).
+    API requests without valid credentials receive 401 JSON. Public SPA
+    documents and assets bypass authentication and rate limiting; the browser
+    auth guard controls navigation. When AuthConfig.enabled is False,
+    everything is allowed (dev/test mode). Redis errors fail open (allow + log).
     """
 
     def __init__(self, app, config: AuthConfig):
@@ -188,10 +172,6 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
             if (em is None or em == m) and path == ep:
                 return True
         return False
-
-    @staticmethod
-    def _is_rate_limit_exempt(path: str) -> bool:
-        return path.startswith(_RATE_LIMIT_EXEMPT_PREFIXES)
 
     # Credential extraction -------------------------------------------
     def _authenticate(self, request: Request) -> Optional[str]:
@@ -226,10 +206,7 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
     # Response helpers -------------------------------------------------
     @staticmethod
     def _reject(request: Request):
-        """401 JSON for programmatic clients, 302 to /login for browsers."""
-        accept = request.headers.get("accept", "")
-        if "text/html" in accept and not request.url.path.startswith("/api/"):
-            return RedirectResponse("/login", status_code=302)
+        """Return the API error contract, including for HTML Accept headers."""
         return api_error(401, "Missing or invalid credential")
 
     # Rate limiting ---------------------------------------------------
@@ -264,10 +241,10 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         if not self.config.enabled:
             return await call_next(request)
 
-        # In SPA mode the application shell and hashed assets must load before
+        # The application shell and hashed assets must load before
         # the browser has a session. Authentication remains enforced on the
         # versioned API surface.
-        if self.config.spa_public and not request.url.path.startswith("/api/"):
+        if request.url.path != "/api" and not request.url.path.startswith("/api/"):
             return await call_next(request)
 
         if self._is_exempt(request.method, request.url.path):
@@ -283,9 +260,6 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
 
         if kh is None:
             return self._reject(request)
-
-        if self._is_rate_limit_exempt(request.url.path):
-            return await call_next(request)
 
         allowed, retry_after = self._check_rate_limit(kh)
         if not allowed:
@@ -304,174 +278,12 @@ def _health(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
-_LOGIN_HTML = """<!doctype html>
-<html lang="zh-Hant">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RAG Demo — 登入</title>
-<style>
-  :root{{
-    --bg:#f4f5f3;
-    --panel:#ffffff;
-    --border:#e2e5e1;
-    --accent:#2f6b4a;
-    --text:#1c231f;
-    --muted:#6b756f;
-    --err:#b3261e;
-  }}
-  *{{box-sizing:border-box}}
-  body{{
-    margin:0;
-    background:var(--bg);
-    color:var(--text);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    min-height:100vh;
-    padding:24px;
-  }}
-
-  .panel{{
-    width:100%;
-    max-width:360px;
-    background:var(--panel);
-    border:1px solid var(--border);
-    border-radius:10px;
-    padding:36px 32px;
-    box-shadow:0 1px 3px rgba(0,0,0,0.04);
-  }}
-
-  h1{{
-    font-size:20px;
-    font-weight:600;
-    margin:0 0 24px;
-    color:var(--text);
-  }}
-
-  label{{
-    display:block;
-    font-size:13px;
-    font-weight:500;
-    color:var(--muted);
-    margin-bottom:6px;
-  }}
-  input{{
-    width:100%;
-    padding:10px 12px;
-    margin:0 0 20px;
-    font-size:14px;
-    color:var(--text);
-    background:#fff;
-    border:1px solid var(--border);
-    border-radius:6px;
-    outline:none;
-    transition:border-color .15s ease;
-  }}
-  input:focus{{
-    border-color:var(--accent);
-  }}
-
-  button{{
-    width:100%;
-    padding:11px;
-    background:var(--accent);
-    color:#fff;
-    border:none;
-    border-radius:6px;
-    font-size:14px;
-    font-weight:600;
-    cursor:pointer;
-  }}
-  button:hover{{background:#26583c}}
-
-  .err{{
-    color:var(--err);
-    font-size:13px;
-    margin:-8px 0 20px;
-  }}
-</style>
-</head>
-<body>
-<main class="panel">
-  <h1>RAG Demo 登入</h1>
-  {error}
-  <form method="post" action="/login">
-    <label for="key">APP登入密碼</label>
-    <input id="key" name="api_key" type="password" autocomplete="off" autofocus required>
-    <button type="submit">登入</button>
-  </form>
-</main>
-</body></html>"""
-
-
-def _login_form(error: str = "", status: int = 200) -> Response:
-    err_block = f'<p class="err">{error}</p>' if error else ""
-    return Response(
-        _LOGIN_HTML.format(error=err_block),
-        media_type="text/html",
-        status_code=status,
-    )
-
-
-def _login_get(request: Request) -> Response:
-    return _login_form()
-
-
-async def _login_post(request: Request, config: AuthConfig) -> Response:
-    """Validate the submitted API key; on success issue a session cookie.
-
-    The raw key is compared with ``hmac.compare_digest`` and never written to
-    the cookie — only the session id is. On failure, no session is created
-    and no cookie is set; the form is re-rendered with HTTP 401.
-    """
-    form = await request.form()
-    submitted = form.get("api_key", "")
-
-    if (
-        submitted
-        and config.api_key
-        and hmac.compare_digest(submitted.encode("utf-8"), config.api_key.encode("utf-8"))
-    ):
-        kh = _key_hash(submitted)
-        sid = create_session(config.redis, kh, config.session_ttl_seconds)
-        resp = RedirectResponse("/", status_code=302)
-        resp.set_cookie(
-            SESSION_COOKIE, sid,
-            httponly=True, samesite="lax", path="/",
-        )
-        return resp
-
-    return _login_form(error="APP登入密碼無效", status=401)
-
-
-async def _logout_post(request: Request, config: AuthConfig) -> Response:
-    """Revoke the session and clear the cookie, then redirect to /login."""
-    sid = request.cookies.get(SESSION_COOKIE)
-    if sid:
-        revoke_session(config.redis, sid)
-    resp = RedirectResponse("/login", status_code=302)
-    resp.delete_cookie(SESSION_COOKIE, path="/")
-    return resp
-
-
-def mount_auth(app: FastAPI, *, include_legacy_routes: bool = True) -> AuthConfig:
-    """Attach the auth/rate-limit middleware and register auth routes.
-
-    MUST be called before gr.mount_gradio_app so the middleware wraps Gradio
-    routes too.
-    """
-    from functools import partial
-
+def mount_auth(app: FastAPI) -> AuthConfig:
+    """Attach API auth/rate-limit middleware and the public health route."""
     config = build_auth_config()
     app.state.auth_config = config
     app.add_middleware(AuthRateLimitMiddleware, config=config)
     app.add_route("/health", _health, methods=["GET"])
-    if include_legacy_routes:
-        app.add_route("/login", _login_get, methods=["GET"])
-        app.add_route("/login", partial(_login_post, config=config), methods=["POST"])
-        app.add_route("/logout", partial(_logout_post, config=config), methods=["POST"])
     if not config.enabled:
         logger.warning("AUTH DISABLED — not for production")
     return config

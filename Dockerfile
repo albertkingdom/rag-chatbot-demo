@@ -45,7 +45,6 @@ RUN python -c "import os, urllib.request; os.makedirs(os.path.dirname(os.environ
 COPY . .
 COPY --from=frontend-build /frontend/dist /app/frontend/dist
 
-ENV FRONTEND_MODE=spa
 
 # Documentation only; Cloud Run routes to $PORT. Default 8080 to match it.
 EXPOSE 8080

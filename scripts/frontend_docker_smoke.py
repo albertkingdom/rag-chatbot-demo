@@ -3,6 +3,7 @@
 Uses fake chat/job providers; no LLM, GCP, or datastore requests.
 """
 import json
+import importlib.util
 import os
 import shutil
 import sys
@@ -12,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, os.getcwd())
-os.environ.update(FRONTEND_MODE="spa", AUTH_ENABLED="false", LANGCHAIN_TRACING_V2="false", LANGSMITH_TRACING="false")
+os.environ.update(AUTH_ENABLED="false", LANGCHAIN_TRACING_V2="false", LANGSMITH_TRACING="false")
 from fastapi.testclient import TestClient
 from src.chat_events import DeltaEvent, DoneEvent, MetadataEvent
 
@@ -30,6 +31,7 @@ from src import manual_service
 routes.enqueue_sync = lambda: "fake-job"
 routes.get_sync_status = lambda job: {"jobId":job,"status":"succeeded"}
 
+assert importlib.util.find_spec("gradio") is None, "runtime unexpectedly includes Gradio"
 assert shutil.which("node") is None, "runtime unexpectedly includes Node"
 assert not Path("/app/frontend/node_modules").exists()
 with tempfile.TemporaryDirectory() as data_dir:

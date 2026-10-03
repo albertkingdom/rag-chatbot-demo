@@ -8,7 +8,7 @@ import types
 import uuid
 
 sys.path.insert(0, '/app')
-os.environ.update(FRONTEND_MODE='spa', AUTH_ENABLED='true', APP_API_KEY='mobile-test-2026', LANGCHAIN_TRACING_V2='false', LANGSMITH_TRACING='false')
+os.environ.update(AUTH_ENABLED='true', APP_API_KEY='mobile-test-2026', LANGCHAIN_TRACING_V2='false', LANGSMITH_TRACING='false')
 
 class MemoryRedis:
     def __init__(self): self.values={}; self.deadlines={}

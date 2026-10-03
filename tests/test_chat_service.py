@@ -85,3 +85,39 @@ def test_two_fake_rag_requests_complete_independently(providers):
     results = asyncio.run(scenario())
     assert all(events[-1].type == "done" for events in results)
     assert providers.database.async_save_conversation.await_count == 2
+
+
+@pytest.mark.parametrize("route", ["rag", "direct", "cache"])
+def test_server_history_reaches_router_and_success_persists_plain_answer(providers, route):
+    history = [{"role": "user", "content": "earlier"}, {"role": "assistant", "content": "answer"}]
+    providers.history.get_history.return_value = history
+    if route == "direct": providers.router.return_value.route = "direct"
+    if route == "cache": providers.cache.get_cached_response.return_value = {"answer": "快取回答", "sources": ["手冊"], "similarity": 0.99}
+    events = asyncio.run(collect())
+    providers.history.get_history.assert_called_once_with("server-session")
+    providers.router.assert_awaited_once_with("question", history)
+    answer = "".join(e.text for e in events if e.type == "delta")
+    providers.history.append_turn.assert_called_once_with("server-session", "question", answer)
+    assert providers.database.async_save_conversation.call_args.kwargs["assistant_response"] == answer
+    assert "參考資料：" not in answer and "回應時間：" not in answer
+
+
+@pytest.mark.parametrize("route", ["rag", "direct", "cache"])
+def test_output_guardrail_never_stores_rejected_answer_in_history_or_cache(providers, monkeypatch, route):
+    if route == "direct": providers.router.return_value.route = "direct"
+    if route == "cache": providers.cache.get_cached_response.return_value = {"answer": "rejected", "sources": [], "similarity": 0.99}
+    monkeypatch.setattr(chat, "detect_pii", lambda *_: (True, "test-pii"))
+    events = asyncio.run(collect())
+    assert events[-1].type == "done"
+    assert next(e for e in events if e.type == "metadata").response_source == "guardrail"
+    providers.history.append_turn.assert_not_called()
+    providers.cache.set_cached_response.assert_not_called()
+    assert providers.database.async_save_conversation.call_args.kwargs["response_source"] == "guardrail"
+
+
+@pytest.mark.parametrize("text", ["", "short", "繁體中文" * 17])
+def test_answer_deltas_reconstruct_exact_body_without_accumulated_prefixes(text):
+    async def run(): return [e async for e in chat._answer_events(text)]
+    events = asyncio.run(run())
+    assert "".join(e.text for e in events) == text
+    assert all(e.type == "delta" and 0 < len(e.text) <= chat._STREAM_CHUNK_SIZE for e in events)

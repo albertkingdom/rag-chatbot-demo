@@ -16,7 +16,6 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - MONGODB_URL=mongodb://mongodb:27017/chatbot
       - JOB_RUNNER=local
-      - FRONTEND_MODE=spa
       - DATA_SOURCE_DIR=/app/uploaded_files
       - BM25_INDEX_DIR=/app/bm25
       - APP_PUBLIC_ORIGIN=${APP_PUBLIC_ORIGIN:-}

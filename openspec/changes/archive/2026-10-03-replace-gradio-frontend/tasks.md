@@ -53,8 +53,8 @@
 
 ## 8. 切換、清理與文件
 
-- [ ] 8.1 依 design 的「Responsive, accessibility, and deployment」與 parity checklist，在 360px/桌面及至少一台實際手機驗收登入、聊天、來源、history、清除、上傳、登出、44px touch target、16px 輸入字體與虛擬鍵盤操作。
-- [ ] 8.2 依 design 的「Compatibility」以不同 image/Cloud Run revision 驗收 SPA，通過後切換根路徑流量；保留可回復的 Gradio revision/image，記錄最小 rollback 程序。
-- [ ] 8.3 驗收通過後移除 `src/ui.py`、暫時 Gradio adapter、`tests/test_ui_clear_history.py`、Gradio dependency 與無用 static/rate-limit 特例，重新產生 pinned `requirements.txt`。
+- [x] 8.1 依 design 的「Responsive, accessibility, and deployment」與 parity checklist，在 360px/桌面及至少一台實際手機驗收登入、聊天、來源、history、清除、上傳、登出、44px touch target、16px 輸入字體與虛擬鍵盤操作。
+- [x] 8.2 依 design 的「Compatibility」以不同 image/Cloud Run revision 驗收 SPA，通過後切換根路徑流量；保留可回復的 Gradio revision/image，記錄最小 rollback 程序。
+- [x] 8.3 驗收通過後移除 `src/ui.py`、暫時 Gradio adapter、`tests/test_ui_clear_history.py`、Gradio dependency 與無用 static/rate-limit 特例，重新產生 pinned `requirements.txt`。
 - [x] 8.4 更新 `README.md` 的技術棧、畫面、開發/build/test/部署指令、環境變數、API 摘要與 side-project 已知限制（單 instance、共用 60 RPM、無 RBAC/PII 治理、所有登入者可上傳、清除範圍與 Stop 語意）。
 - [x] 8.5 執行 backend test、frontend lint/typecheck/unit tests、Playwright、Docker smoke test，保存結果並將本 checklist 只依可驗證證據逐項勾選。

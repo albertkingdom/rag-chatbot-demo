@@ -64,7 +64,7 @@ def test_job_errors_are_safe(status,exception,monkeypatch):
 
 
 def test_spa_deep_link_and_api_404(tmp_path,monkeypatch):
-    monkeypatch.setenv('FRONTEND_MODE','spa');monkeypatch.setenv('AUTH_ENABLED','false');monkeypatch.setenv('FRONTEND_DIST_DIR',str(tmp_path))
+    monkeypatch.setenv('AUTH_ENABLED','false');monkeypatch.setenv('FRONTEND_DIST_DIR',str(tmp_path))
     (tmp_path/'index.html').write_text('<html>acceptance SPA</html>')
     from src.app import create_app
     client=TestClient(create_app())

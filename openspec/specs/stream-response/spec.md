@@ -8,31 +8,24 @@ TBD - created by archiving change 'optimize-stream-response'. Update Purpose aft
 
 ### Requirement: Text responses are streamed in fixed-size chunks
 
-The `chat_stream` function SHALL yield text responses in chunks of `_STREAM_CHUNK_SIZE` characters (default 10) with a delay of `_STREAM_CHUNK_DELAY` seconds (default 0.005) between each yield. Each yield SHALL contain the full accumulated text from the beginning of the response up to the current chunk boundary. The final yield SHALL contain the complete response text regardless of whether the total length is a multiple of the chunk size.
+The chat application service SHALL emit answer text as append-only `delta` events whose `text` values concatenate to the completed answer. The HTTP chat endpoint SHALL serialize each typed event as one newline-delimited JSON object with media type `application/x-ndjson`. Status, sources, metadata, completion, and error information SHALL use separate event types and SHALL NOT be encoded by overloading answer text. Every successful stream SHALL end with exactly one `done` event; a post-start failure SHALL end with one safe `error` event and no `done` event.
 
-#### Scenario: Response length is a multiple of chunk size
+#### Scenario: delta values reconstruct the answer
 
-- **WHEN** the response text is exactly 30 characters and chunk size is 10
-- **THEN** the system yields 3 times: characters 1-10, characters 1-20, characters 1-30
+- **WHEN** a completed answer is emitted across multiple `delta` events
+- **THEN** concatenating each `delta.text` in order exactly reproduces the answer without duplicated prefixes or missing text
 
-##### Example: 30-character response with chunk size 10
+#### Scenario: response metadata is not appended to answer text
 
-- **GIVEN** response text "AAAAABBBBBCCCCCDDDDDEEEEEF" (30 chars) and chunk size 10
-- **WHEN** the system streams the response
-- **THEN** yield 1 contains the first 10 characters, yield 2 contains the first 20 characters, yield 3 contains all 30 characters, and the total number of yields is 3
+- **WHEN** a RAG response has sources and elapsed-time metadata
+- **THEN** sources and metadata are emitted through their dedicated event types and the concatenated answer deltas contain only the answer body
 
-#### Scenario: Response length is not a multiple of chunk size
+#### Scenario: successful stream has one terminal event
 
-- **WHEN** the response text is 25 characters and chunk size is 10
-- **THEN** the system yields 3 times: characters 1-10, characters 1-20, characters 1-25, where the final yield contains the complete text
+- **WHEN** any RAG, direct, cached, or guardrail response completes successfully
+- **THEN** the event sequence contains exactly one final `done` event after all answer and optional source/metadata events
 
-##### Example: 25-character response with chunk size 10
+#### Scenario: post-start failure has a safe terminal error
 
-- **GIVEN** response text of length 25 and chunk size 10
-- **WHEN** the system streams the response
-- **THEN** yield 1 contains 10 characters, yield 2 contains 20 characters, yield 3 contains all 25 characters, and the total number of yields is 3
-
-#### Scenario: All yield sites use the shared streaming function
-
-- **WHEN** the `chat_stream` function yields a text response in any code path (RAG response, direct response, cached response, guardrail response)
-- **THEN** it SHALL use the shared `_stream_text` async generator and SHALL NOT use inline character-by-character yield loops
+- **WHEN** an exception occurs after HTTP streaming has begun
+- **THEN** the server emits one `error` event with a stable public code and safe message, emits no stack trace or secret, and does not emit `done`

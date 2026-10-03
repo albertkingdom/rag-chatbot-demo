@@ -23,7 +23,6 @@ def _app(*, enabled: bool = False, redis=None) -> FastAPI:
         rate_limit_rpm=60,
         session_ttl_seconds=86400,
         redis=redis or MagicMock(),
-        spa_public=True,
     )
     application.include_router(router)
     return application
@@ -48,6 +47,24 @@ class TestLoginAndSession:
         )
 
         assert response.status_code == 401
+
+    def test_logout_revokes_only_presented_session(self):
+        store = {}
+        redis = MagicMock()
+        redis.setex.side_effect = lambda key, ttl, value: store.update({key: value})
+        redis.get.side_effect = store.get
+        redis.delete.side_effect = lambda key: store.pop(key, None)
+        app = _app(enabled=True, redis=redis)
+        from src.access_control import AuthRateLimitMiddleware
+        redis.pipeline.return_value.execute.return_value = [1, True]
+        app.add_middleware(AuthRateLimitMiddleware, config=app.state.auth_config)
+        a, b = TestClient(app), TestClient(app)
+        for client in (a, b):
+            assert client.post("/api/v1/auth/login", json={"apiKey": "test-key"}).status_code == 204
+        assert a.cookies.get(SESSION_COOKIE) != b.cookies.get(SESSION_COOKIE)
+        assert a.post("/api/v1/auth/logout", headers={"Origin": "http://testserver"}).status_code == 204
+        assert a.get("/api/v1/auth/session").status_code == 401
+        assert b.get("/api/v1/auth/session").status_code == 200
 
     def test_auth_disabled_session_is_authenticated(self):
         response = TestClient(_app()).get("/api/v1/auth/session")

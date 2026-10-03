@@ -8,64 +8,22 @@ TBD - created by archiving change 'add-access-control'. Update Purpose after arc
 
 ### Requirement: Request authentication via API key or session token
 
-Every request to a non-exempt application route SHALL present a valid credential. The system SHALL accept one of two credential forms: (a) an `X-API-Key` HTTP header containing the raw API key, compared against the configured key using a constant-time comparison; or (b) an `session_id` HTTP-only cookie containing a session token issued by `POST /login`, validated against the session store in Redis. A request without a valid credential SHALL be rejected with HTTP 401 and a JSON body `{"detail":"Missing or invalid credential"}`. When the request `Accept` header indicates HTML (`text/html`), the system SHALL instead respond with HTTP 302 redirecting to `/login`. The raw API key SHALL never be stored in a cookie.
+Every request to a non-exempt API route SHALL present a valid credential. The system SHALL accept either an `X-API-Key` header containing the raw configured key, compared using a constant-time function, or an HttpOnly `session_id` cookie whose opaque token is valid in Redis. Protected API requests without a valid credential SHALL receive HTTP 401 with the documented JSON error shape. Browser document navigation SHALL be handled by the SPA auth guard rather than by content negotiation redirects from API middleware. The raw API key SHALL never be stored in a cookie, URL, Web Storage, or client log.
 
-#### Scenario: valid key in header grants access
+#### Scenario: valid header key grants API access
 
-- **WHEN** a client sends a request to any application route with header `X-API-Key: <valid key>`
-- **THEN** the request proceeds to the route handler
+- **WHEN** a client calls a protected API route with the valid `X-API-Key` header
+- **THEN** the request proceeds without requiring a browser session cookie
 
-#### Scenario: valid session cookie grants access
+#### Scenario: valid session cookie grants API access
 
-- **WHEN** a browser sends a request with an `session_id` cookie whose session exists in Redis
-- **THEN** the request proceeds to the route handler without re-checking the raw API key
+- **WHEN** a browser calls a protected API route with a session cookie whose Redis record is valid
+- **THEN** the request proceeds without re-sending the raw API key
 
-#### Scenario: missing credential is rejected
+#### Scenario: protected API without credential is rejected
 
-- **WHEN** a client sends a request to a non-exempt route without an `X-API-Key` header or `session_id` cookie
-- **THEN** the system responds with HTTP 401 and JSON `{"detail":"Missing or invalid credential"}`
-
-#### Scenario: invalid header key is rejected
-
-- **WHEN** a client sends a request with `X-API-Key: <wrong value>`
-- **THEN** the system responds with HTTP 401 and JSON `{"detail":"Missing or invalid credential"}`
-
-#### Scenario: expired or unknown session cookie is rejected
-
-- **WHEN** a browser sends a request with an `session_id` cookie whose session does not exist in Redis (expired or revoked)
-- **THEN** the system responds HTTP 401 (programmatic) or 302 to `/login` (browser)
-
-#### Scenario: constant-time raw key comparison
-
-- **WHEN** the system compares a presented `X-API-Key` header value against the configured key
-- **THEN** the comparison SHALL use a constant-time function so that response timing does not leak key prefix information
-
-
-<!-- @trace
-source: add-access-control
-updated: 2026-07-01
-code:
-  - docs/industry-standard-gaps.md
-  - architecture-diagram.svg
-  - README.md
-  - terraform/main.tf
-  - architecture-diagram.png
-  - docs/deployment-handoff.md
-  - project-architecture-slide.html
-  - terraform/variables.tf
-  - scripts/dev_auth_smoke.py
-  - project-intro-slide.html
-  - architecture-diagram.drawio
-  - project-architecture-slide.standalone.html
-  - docker-compose.yml
-  - src/access_control.py
-  - src/app.py
-  - src/config.py
-  - TODO.md
-tests:
-  - tests/test_access_control.py
-  - tests/test_health_endpoint.py
--->
+- **WHEN** a client calls a protected API route without a valid header or cookie
+- **THEN** the server returns HTTP 401 JSON and does not return an HTML login form or redirect response
 
 ---
 ### Requirement: Health check endpoint exempt from authentication and rate limiting
@@ -112,7 +70,7 @@ tests:
 ---
 ### Requirement: Per-API-key rate limiting via Redis
 
-The system SHALL enforce a per-API-key request rate limit using Redis. The rate-limit bucket key SHALL be the first 16 hex characters of the SHA-256 hash of the underlying API key, so that all sessions and header requests originating from the same key share one quota. The limit SHALL be expressed as a configurable number of requests per minute (`RATE_LIMIT_RPM`, default 60). Requests exceeding the limit SHALL be rejected with HTTP 429 and a `Retry-After` header indicating the seconds until the window resets. Rate limiting SHALL NOT apply to exempt routes (`/health`, `GET /login`, `POST /login`, `POST /logout`). If Redis is unavailable, the system SHALL fail open (allow the request) and log an error, so that the credential gate remains the primary access control.
+The system SHALL enforce a per-API-key request rate limit using Redis. The rate-limit bucket key SHALL be the first 16 hex characters of the SHA-256 hash of the underlying API key, so that all sessions and header requests originating from the same key share one quota. The limit SHALL be expressed as a configurable number of requests per minute (`RATE_LIMIT_RPM`, default 60). Requests exceeding the limit SHALL be rejected with HTTP 429 and a `Retry-After` header indicating the seconds until the window resets. Rate limiting SHALL apply to protected API routes and SHALL NOT apply to public SPA documents/assets, `/health`, `POST /api/v1/auth/login`, or `POST /api/v1/auth/logout`. If Redis is unavailable, the system SHALL fail open (allow the request) and log an error, so that the credential gate remains the primary access control.
 
 #### Scenario: requests within limit succeed
 
@@ -164,106 +122,42 @@ tests:
 ---
 ### Requirement: Browser login endpoint issuing session tokens
 
-The system SHALL expose `GET /login` returning an HTML form that accepts an API key, exempt from authentication. The system SHALL expose `POST /login` that validates the submitted key using a constant-time comparison; on success it SHALL create a session token, store it in Redis under `session:<id>` with the configured TTL and the SHA-256 hash of the originating key (for rate limiting), set an HTTP-only `session_id` cookie (scoped to the application path, with `SameSite=Lax`) containing the session id, and respond with HTTP 302 redirecting to `/`. The raw API key SHALL NOT be placed in the cookie. On an invalid key, `POST /login` SHALL respond HTTP 401 with the login form and an error message, and SHALL set no `session_id` cookie. The login form SHALL submit via `POST` so that the key is not placed in a URL or log.
+The system SHALL expose `POST /api/v1/auth/login` accepting a JSON application key. It SHALL validate the key using a constant-time comparison and, on success, create a cryptographically random Redis-backed session with the configured TTL, set an HttpOnly `session_id` cookie scoped to the application with `SameSite=Lax`, and return HTTP 204. The cookie SHALL be `Secure` in production HTTPS operation. Invalid credentials SHALL return HTTP 401 without creating a session or setting a cookie. `GET /api/v1/auth/session` SHALL allow the SPA to determine authenticated or auth-disabled state without exposing the raw key or session record.
 
-#### Scenario: login form is reachable without a credential
+#### Scenario: successful JSON login
 
-- **WHEN** an unauthenticated browser requests `GET /login`
-- **THEN** the system responds HTTP 200 with an HTML form containing a key input and a submit button
+- **WHEN** a browser sends a valid key to `POST /api/v1/auth/login`
+- **THEN** the server returns HTTP 204, creates a TTL-bound Redis session, and sets an opaque HttpOnly cookie without returning or storing the raw key client-side
 
-#### Scenario: successful login issues session cookie and redirects
+#### Scenario: failed JSON login
 
-- **WHEN** a browser submits `POST /login` with a valid key
-- **THEN** the system creates a session record in Redis, sets an HTTP-only `session_id` cookie (not the raw key), and responds HTTP 302 to `/`
+- **WHEN** a browser sends an invalid key to `POST /api/v1/auth/login`
+- **THEN** the server returns HTTP 401, creates no session, and sets no session cookie
 
-#### Scenario: failed login does not set cookie
+#### Scenario: session bootstrap is unauthenticated but non-disclosing
 
-- **WHEN** a browser submits `POST /login` with an invalid key
-- **THEN** the system responds HTTP 401 with the login form and an error message, and sets no `session_id` cookie and creates no session record
-
-
-<!-- @trace
-source: add-access-control
-updated: 2026-07-01
-code:
-  - docs/industry-standard-gaps.md
-  - architecture-diagram.svg
-  - README.md
-  - terraform/main.tf
-  - architecture-diagram.png
-  - docs/deployment-handoff.md
-  - project-architecture-slide.html
-  - terraform/variables.tf
-  - scripts/dev_auth_smoke.py
-  - project-intro-slide.html
-  - architecture-diagram.drawio
-  - project-architecture-slide.standalone.html
-  - docker-compose.yml
-  - src/access_control.py
-  - src/app.py
-  - src/config.py
-  - TODO.md
-tests:
-  - tests/test_access_control.py
-  - tests/test_health_endpoint.py
--->
+- **WHEN** an unauthenticated SPA calls `GET /api/v1/auth/session`
+- **THEN** the endpoint returns HTTP 401 when authentication is enabled and does not reveal the configured key, key hash, other sessions, or internal Redis data
 
 ---
 ### Requirement: Session token lifecycle and revocation
 
-A session token SHALL be a cryptographically random value of at least 128 bits. The system SHALL store each session in Redis under key `session:<id>` with a configurable TTL (`SESSION_TTL_SECONDS`, default 86400) and a value containing the SHA-256 hash of the originating API key. Each non-exempt request presenting an `session_id` cookie SHALL validate that `session:<id>` exists in Redis; an expired or missing record SHALL be treated as an invalid credential. The system SHALL expose `POST /logout` (exempt from authentication) that deletes `session:<id>` from Redis and clears the `session_id` cookie, so that a session can be revoked without rotating the API key. Sessions SHALL expire automatically via the Redis TTL without explicit deletion.
+A session token SHALL be cryptographically random with at least 128 bits of entropy and SHALL be stored in Redis at `session:<id>` with the configured TTL and originating key hash needed for rate limiting. The system SHALL expose `POST /api/v1/auth/logout` that idempotently revokes the presented session and clears its cookie. State-changing requests authenticated by cookie SHALL pass same-origin `Origin` or `Referer` validation; requests authenticated solely by `X-API-Key` SHALL not depend on browser-origin headers.
 
-#### Scenario: session is random and at least 128 bits
+#### Scenario: logout is idempotent
 
-- **WHEN** the system creates a new session id
-- **THEN** the id is generated by a cryptographically secure random generator and is at least 32 hex characters long
+- **WHEN** a browser calls logout with a valid, expired, or absent session cookie
+- **THEN** the server returns HTTP 204, clears the cookie, and leaves no valid presented session
 
-#### Scenario: session stored in Redis with TTL
+#### Scenario: cross-origin cookie mutation is rejected
 
-- **WHEN** `POST /login` succeeds
-- **THEN** a `session:<id>` key exists in Redis with TTL equal to `SESSION_TTL_SECONDS` and a value containing the originating key hash
+- **WHEN** a state-changing API request relies on a valid session cookie but has an origin that does not match the configured application origin
+- **THEN** the server rejects the request without performing the mutation
 
-#### Scenario: expired session is rejected
+#### Scenario: API-key automation remains compatible
 
-- **WHEN** a session's Redis TTL has elapsed and the browser presents the `session_id` cookie
-- **THEN** the request is treated as unauthenticated (401 or 302 to `/login`)
-
-#### Scenario: logout revokes the session
-
-- **WHEN** a browser submits `POST /logout` with an `session_id` cookie
-- **THEN** the system deletes `session:<id>` from Redis, clears the cookie, and subsequent requests with that cookie are rejected
-
-#### Scenario: revoking one session does not revoke others
-
-- **WHEN** a user logs out one browser while another browser holds a different session from the same key
-- **THEN** the other browser's session remains valid
-
-
-<!-- @trace
-source: add-access-control
-updated: 2026-07-01
-code:
-  - docs/industry-standard-gaps.md
-  - architecture-diagram.svg
-  - README.md
-  - terraform/main.tf
-  - architecture-diagram.png
-  - docs/deployment-handoff.md
-  - project-architecture-slide.html
-  - terraform/variables.tf
-  - scripts/dev_auth_smoke.py
-  - project-intro-slide.html
-  - architecture-diagram.drawio
-  - project-architecture-slide.standalone.html
-  - docker-compose.yml
-  - src/access_control.py
-  - src/app.py
-  - src/config.py
-  - TODO.md
-tests:
-  - tests/test_access_control.py
-  - tests/test_health_endpoint.py
--->
+- **WHEN** a non-browser client sends a valid `X-API-Key` to a state-changing API endpoint without an `Origin` header
+- **THEN** authentication can succeed without cookie CSRF checks
 
 ---
 ### Requirement: Cloud Run Service IAM invoker and secret injection
@@ -275,7 +169,7 @@ The Terraform configuration SHALL grant `roles/run.invoker` to `allUsers` on the
 #### Scenario: invoker is public, app layer is the real gate
 
 - **WHEN** Terraform is applied
-- **THEN** an `allUsers` invoker binding exists on the Cloud Run Service, and unauthenticated requests reach the application, where `AuthRateLimitMiddleware` rejects them with a 401 or redirect to `/login`
+- **THEN** an `allUsers` invoker binding exists on the Cloud Run Service, and unauthenticated requests reach the application, where protected API requests receive HTTP 401 JSON and browser document navigation is handled by the SPA auth guard
 
 #### Scenario: api key injected from Secret Manager
 
