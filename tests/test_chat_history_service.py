@@ -91,15 +91,15 @@ class TestClearHistory:
 
     def test_deletes_stored_history(self, chat_history_service):
         chat_history_service.append_turn("session-1", "q1", "a1")
-        chat_history_service.clear_history("session-1")
+        assert chat_history_service.clear_history("session-1") is True
         assert chat_history_service.get_history("session-1") == []
 
     def test_none_history_key_is_noop(self, chat_history_service, mock_redis):
-        chat_history_service.clear_history(None)
+        assert chat_history_service.clear_history(None) is True
         mock_redis.delete.assert_not_called()
 
     def test_clearing_empty_history_does_not_raise(self, chat_history_service):
-        chat_history_service.clear_history("session-with-no-history")
+        assert chat_history_service.clear_history("session-with-no-history") is True
 
 
 class TestRedisFailure:
@@ -115,4 +115,4 @@ class TestRedisFailure:
 
     def test_clear_history_does_not_raise(self, chat_history_service, mock_redis):
         mock_redis.delete.side_effect = Exception("boom")
-        chat_history_service.clear_history("session-1")
+        assert chat_history_service.clear_history("session-1") is False

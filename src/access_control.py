@@ -6,7 +6,7 @@ full design.
 
 Public surface used by src/app.py:
     - build_auth_config() -> AuthConfig
-    - mount_auth(app) -> None
+    - mount_auth(app) -> AuthConfig
 """
 
 import hashlib
@@ -25,6 +25,8 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from .api_errors import api_error
+
 logger = logging.getLogger("access_control")
 
 # Redis key prefixes.
@@ -41,6 +43,8 @@ _EXEMPT_ROUTES: tuple[tuple[Optional[str], str], ...] = (
     ("GET", "/login"),
     ("POST", "/login"),
     ("POST", "/logout"),
+    ("POST", "/api/v1/auth/login"),
+    ("POST", "/api/v1/auth/logout"),
 )
 
 # Path prefixes for static build assets (Gradio's bundled JS/CSS/fonts).
@@ -103,6 +107,7 @@ class AuthConfig:
     rate_limit_rpm: int
     session_ttl_seconds: int
     redis: "redis.Redis"
+    spa_public: bool = False
 
 
 def build_auth_config() -> AuthConfig:
@@ -138,6 +143,7 @@ def build_auth_config() -> AuthConfig:
         rate_limit_rpm=rate_limit_rpm,
         session_ttl_seconds=session_ttl_seconds,
         redis=get_redis_conn(),
+        spa_public=os.environ.get("FRONTEND_MODE", "gradio").lower() == "spa",
     )
 
 
@@ -222,9 +228,9 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
     def _reject(request: Request):
         """401 JSON for programmatic clients, 302 to /login for browsers."""
         accept = request.headers.get("accept", "")
-        if "text/html" in accept:
+        if "text/html" in accept and not request.url.path.startswith("/api/"):
             return RedirectResponse("/login", status_code=302)
-        return JSONResponse({"detail": "Missing or invalid credential"}, status_code=401)
+        return api_error(401, "Missing or invalid credential")
 
     # Rate limiting ---------------------------------------------------
     def _check_rate_limit(self, key_hash_value: str) -> tuple[bool, int]:
@@ -252,14 +258,16 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _throttle(retry_after: int):
-        return JSONResponse(
-            {"detail": "Rate limit exceeded"},
-            status_code=429,
-            headers={"Retry-After": str(retry_after)},
-        )
+        return api_error(429, "Rate limit exceeded", {"Retry-After": str(retry_after)})
 
     async def dispatch(self, request: Request, call_next):
         if not self.config.enabled:
+            return await call_next(request)
+
+        # In SPA mode the application shell and hashed assets must load before
+        # the browser has a session. Authentication remains enforced on the
+        # versioned API surface.
+        if self.config.spa_public and not request.url.path.startswith("/api/"):
             return await call_next(request)
 
         if self._is_exempt(request.method, request.url.path):
@@ -448,7 +456,7 @@ async def _logout_post(request: Request, config: AuthConfig) -> Response:
     return resp
 
 
-def mount_auth(app: FastAPI) -> None:
+def mount_auth(app: FastAPI, *, include_legacy_routes: bool = True) -> AuthConfig:
     """Attach the auth/rate-limit middleware and register auth routes.
 
     MUST be called before gr.mount_gradio_app so the middleware wraps Gradio
@@ -457,10 +465,13 @@ def mount_auth(app: FastAPI) -> None:
     from functools import partial
 
     config = build_auth_config()
+    app.state.auth_config = config
     app.add_middleware(AuthRateLimitMiddleware, config=config)
     app.add_route("/health", _health, methods=["GET"])
-    app.add_route("/login", _login_get, methods=["GET"])
-    app.add_route("/login", partial(_login_post, config=config), methods=["POST"])
-    app.add_route("/logout", partial(_logout_post, config=config), methods=["POST"])
+    if include_legacy_routes:
+        app.add_route("/login", _login_get, methods=["GET"])
+        app.add_route("/login", partial(_login_post, config=config), methods=["POST"])
+        app.add_route("/logout", partial(_logout_post, config=config), methods=["POST"])
     if not config.enabled:
         logger.warning("AUTH DISABLED — not for production")
+    return config

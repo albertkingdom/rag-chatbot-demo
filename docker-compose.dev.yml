@@ -1,0 +1,9 @@
+# Use with docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build.
+# Mount only Python source. Keep the image's frontend/dist intact.
+services:
+  web:
+    volumes:
+      - ./src:/app/src:ro
+  worker:
+    volumes:
+      - ./src:/app/src:ro

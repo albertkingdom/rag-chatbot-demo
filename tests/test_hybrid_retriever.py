@@ -1,4 +1,5 @@
 """Unit tests for HybridRetriever. Covers tasks 3.1-3.4."""
+import asyncio
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
@@ -213,3 +214,49 @@ class TestCandidateAssembly:
 
         assert len(result["candidates"]) == 0
         vs.similarity_search.assert_not_called()
+
+
+class TestConcurrentVectorSearch:
+    @pytest.mark.asyncio
+    async def test_shared_session_is_not_closed_during_another_search(self, bm25_index):
+        class SessionScopedStore:
+            active = False
+
+            async def asimilarity_search_with_score(self, query, *, k):
+                # PineconeVectorStore scopes its shared HTTP session per query.
+                if self.active:
+                    raise RuntimeError("shared session already in use")
+                self.active = True
+                try:
+                    await asyncio.sleep(0.02)
+                    return [(Document(page_content=query, metadata={"doc_id": query}), 0.9)]
+                finally:
+                    self.active = False
+
+        retriever = HybridRetriever(bm25_index, SessionScopedStore())
+        first, second = await asyncio.gather(
+            retriever._vector_search("first", 3),
+            retriever._vector_search("second", 3),
+        )
+        assert first[1]["first"].page_content == "first"
+        assert second[1]["second"].page_content == "second"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_search_releases_session_for_next_request(self, bm25_index):
+        started = asyncio.Event()
+
+        async def search(query, *, k):
+            if query == "cancel":
+                started.set()
+                await asyncio.Event().wait()
+            return [(Document(page_content=query, metadata={"doc_id": query}), 0.9)]
+
+        store = MagicMock(asimilarity_search_with_score=AsyncMock(side_effect=search))
+        retriever = HybridRetriever(bm25_index, store)
+        task = asyncio.create_task(retriever._vector_search("cancel", 3))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        _, lookup = await asyncio.wait_for(retriever._vector_search("next", 3), timeout=1)
+        assert lookup["next"].page_content == "next"

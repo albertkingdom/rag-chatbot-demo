@@ -1,4 +1,13 @@
-# Use an official Python runtime as a parent image
+FROM node:22-alpine AS frontend-build
+
+WORKDIR /frontend
+RUN corepack enable && corepack prepare pnpm@11.19.0 --activate
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/ ./
+RUN pnpm build
+
+# Use an official Python runtime as the production image.
 FROM python:3.13-slim
 
 # Set the working directory in the container
@@ -34,12 +43,15 @@ RUN python -c "import os, urllib.request; os.makedirs(os.path.dirname(os.environ
 
 # Copy the rest of the application's code into the container
 COPY . .
+COPY --from=frontend-build /frontend/dist /app/frontend/dist
+
+ENV FRONTEND_MODE=spa
 
 # Documentation only; Cloud Run routes to $PORT. Default 8080 to match it.
 EXPOSE 8080
 
 # Run the web server. Shell form so ${PORT} is expanded at runtime:
 # Cloud Run injects PORT=8080; local docker-compose leaves it unset -> 80.
-# Single worker with async event loop (Gradio requires shared state);
-# CPU-bound operations use asyncio.to_thread() to avoid blocking.
+# Single worker with async event loop; CPU-bound reranking uses
+# asyncio.to_thread() to avoid blocking the event loop.
 CMD ["sh", "-c", "uvicorn src.app:app --host 0.0.0.0 --port ${PORT:-80}"]

@@ -27,6 +27,9 @@ class HybridRetriever:
         """
         self.bm25_index = bm25_index
         self.vector_store = vector_store
+        # PineconeVectorStore closes its shared async HTTP session per query.
+        # Keep one query's cleanup from closing another request's session.
+        self._vector_search_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # RRF
@@ -66,10 +69,13 @@ class HybridRetriever:
         Falls back to ``similarity_search_with_score`` when
         ``asimilarity_search_with_score`` is unavailable.
         """
-        try:
-            results = await self.vector_store.asimilarity_search_with_score(query, k=top_n)
-        except AttributeError:
-            results = self.vector_store.similarity_search_with_score(query, k=top_n)
+        async with self._vector_search_lock:
+            try:
+                results = await self.vector_store.asimilarity_search_with_score(query, k=top_n)
+            except AttributeError:
+                results = await asyncio.to_thread(
+                    self.vector_store.similarity_search_with_score, query, k=top_n,
+                )
 
         scored: list[tuple[str, float]] = []
         doc_lookup: dict[str, Document] = {}

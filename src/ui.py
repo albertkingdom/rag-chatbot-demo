@@ -18,7 +18,7 @@ from .access_control import SESSION_COOKIE
 from .build_vector_store import sync_vector_store
 from .chat_history_service import ChatHistoryService
 from .config import DATA_SOURCE_DIR
-from .rag_pipeline import chat_stream
+from .gradio_adapter import chat_stream
 from .services import get_redis_conn
 
 # Task execution mode: "local" uses RQ + Redis worker; "gcp" calls the

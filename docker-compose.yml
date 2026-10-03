@@ -4,8 +4,6 @@ services:
     container_name: rag-demo-app
     ports:
       - "8000:80"
-    volumes:
-      - .:/app
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PINECONE_API_KEY=${PINECONE_API_KEY}
@@ -18,10 +16,20 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - MONGODB_URL=mongodb://mongodb:27017/chatbot
       - JOB_RUNNER=local
+      - FRONTEND_MODE=spa
+      - DATA_SOURCE_DIR=/app/uploaded_files
+      - BM25_INDEX_DIR=/app/bm25
+      - APP_PUBLIC_ORIGIN=${APP_PUBLIC_ORIGIN:-}
+      - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-26214400}
       - APP_API_KEY=${APP_API_KEY:-}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}
       - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-86400}
+      - CHAT_HISTORY_TTL_SECONDS=${CHAT_HISTORY_TTL_SECONDS:-1800}
+      - CHAT_HISTORY_MAX_TURNS=${CHAT_HISTORY_MAX_TURNS:-3}
+    volumes:
+      - manual_data:/app/uploaded_files
+      - bm25_data:/app/bm25
     depends_on:
       - redis
       - mongodb
@@ -64,8 +72,6 @@ services:
     build: .
     container_name: rag-demo-worker
     command: rq worker --with-scheduler -u redis://redis:6379/0
-    volumes:
-      - .:/app
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PINECONE_API_KEY=${PINECONE_API_KEY}
@@ -77,13 +83,22 @@ services:
       - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
       - REDIS_URL=redis://redis:6379/0
       - MONGODB_URL=mongodb://mongodb:27017/chatbot
+      - DATA_SOURCE_DIR=/app/uploaded_files
+      - BM25_INDEX_DIR=/app/bm25
       - APP_API_KEY=${APP_API_KEY:-}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}
       - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-86400}
+      - CHAT_HISTORY_TTL_SECONDS=${CHAT_HISTORY_TTL_SECONDS:-1800}
+      - CHAT_HISTORY_MAX_TURNS=${CHAT_HISTORY_MAX_TURNS:-3}
+    volumes:
+      - manual_data:/app/uploaded_files
+      - bm25_data:/app/bm25
     depends_on:
       - redis
       - mongodb
 
 volumes:
+  manual_data:
+  bm25_data:
   mongodb_data:
