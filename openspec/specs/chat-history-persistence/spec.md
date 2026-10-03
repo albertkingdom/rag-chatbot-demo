@@ -188,34 +188,14 @@ tests:
 ---
 ### Requirement: Clearing the visible conversation also clears the session's stored history
 
-When the user triggers the chat UI's built-in conversation-clear control, the system SHALL delete that session's Redis-stored history in addition to clearing the visible conversation, so that a subsequent message does not silently reuse the cleared conversation's context.
+The chat-history service used by the versioned API SHALL report whether clearing Redis history succeeded. `DELETE /api/v1/conversations/current/messages` SHALL return HTTP 204 only after Redis confirms deletion or absence of the current session history. If Redis clearing fails, the API SHALL return a safe HTTP 503 response and the frontend SHALL retain the visible conversation and offer retry. The failure SHALL be logged without exposing Redis internals to the user.
 
-#### Scenario: Clearing the conversation deletes the stored history
+#### Scenario: Clear history succeeds
 
-- **WHEN** the user triggers the chat UI's conversation-clear control for a session whose `history_key` has a stored Redis history
-- **THEN** the system SHALL delete that session's Redis-stored history so that a subsequent chat request for the same `history_key` behaves as a new session with no stored history
+- **WHEN** an authenticated user clears the current conversation and Redis confirms deletion or that the key is absent
+- **THEN** the API returns HTTP 204 and the frontend removes the visible conversation
 
-#### Scenario: Clearing an already-empty conversation is a no-op
+#### Scenario: Redis clear fails
 
-- **WHEN** the user triggers the chat UI's conversation-clear control for a session whose `history_key` has no stored Redis history
-- **THEN** the system SHALL NOT raise an error; the operation SHALL have no observable effect on Redis
-
-#### Scenario: Clear failure does not interrupt the UI
-
-- **WHEN** deleting the session's stored history from Redis raises an exception
-- **THEN** the system SHALL log the failure and continue without propagating the exception to the UI
-
-<!-- @trace
-source: persist-chat-history-redis
-updated: 2026-07-04
-code:
-  - docs/interview-guide.md
-  - src/config.py
-  - src/ui.py
-  - src/rag_pipeline.py
-  - src/chat_history_service.py
-tests:
-  - tests/test_rag_pipeline_history.py
-  - tests/test_chat_history_service.py
-  - tests/test_ui_clear_history.py
--->
+- **WHEN** Redis raises an error while clearing the current conversation
+- **THEN** the API returns HTTP 503, the frontend retains the visible conversation, and the next question is not falsely presented as having no prior context
