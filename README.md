@@ -23,7 +23,6 @@ OPENROUTER_API_KEY="your_openrouter_api_key_here"
 # 存取控制
 APP_API_KEY="a_long_random_string_you_choose"   # 共用金鑰，用於 /login 及 X-API-Key
 AUTH_ENABLED=true                               # 本機開發/測試可設為 false
-FRONTEND_MODE=spa                               # 新 React 介面；gradio 為暫時 rollback 模式
 ```
 
 ### 2. 啟動應用程式
@@ -151,8 +150,8 @@ docker run --rm --mount type=bind,source="$PWD/scripts/frontend_docker_smoke.py"
 
 ## 部署
 
-Cloud Run revision 驗證、正式流量切換與回復指令見 [部署手冊](docs/deployment/replace-gradio-frontend.md)。正式環境使用 `FRONTEND_MODE=spa`、`JOB_RUNNER=gcp`，web 與 sync job 共用 GCS 掛載的 `DATA_SOURCE_DIR`/`BM25_INDEX_DIR`；模型快取 `MODEL_CACHE_DIR` 保留 image 內路徑。`GCP_PROJECT_ID`、`GCP_REGION`、`SYNC_JOB_NAME` 指定背景 job。
+Cloud Run revision 驗證、正式流量切換與回復指令見 [部署手冊](docs/deployment/replace-gradio-frontend.md)。正式環境使用 React SPA 與 `JOB_RUNNER=gcp`，web 與 sync job 共用 GCS 掛載的 `DATA_SOURCE_DIR`/`BM25_INDEX_DIR`；模型快取 `MODEL_CACHE_DIR` 保留 image 內路徑。`GCP_PROJECT_ID`、`GCP_REGION`、`SYNC_JOB_NAME` 指定背景 job。
 
 其他環境變數與預設值見 `.env.example`，包括 `RATE_LIMIT_RPM`、`SESSION_TTL_SECONDS`、`CHAT_HISTORY_TTL_SECONDS`、`CHAT_HISTORY_MAX_TURNS`。正式部署必須設定共用登入 key；HttpOnly session cookie 在 HTTPS 下使用 Secure，變更 API 使用同源 Origin/Referer 驗證。
 
-目前 PR 尚待 review，正式 revision 尚未切換；保留 Gradio 直到切換與 rollback 驗收完成。
+React 已於 2026-10-03 正式上線，實體手機驗收完成。新程式不再包含 Gradio；舊 Cloud Run revision/image 保留供回復，無須在新版本重新啟用舊介面。

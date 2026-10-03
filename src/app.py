@@ -1,4 +1,4 @@
-"""FastAPI entry point for the versioned API and selected frontend.
+"""FastAPI entry point for the versioned API and React frontend.
 
 Provider functions are re-exported here for backward compatibility with
 existing imports like `from src.app import get_embeddings`.
@@ -31,20 +31,10 @@ from .rag_pipeline import get_retrieval_chain, get_generation_chain  # noqa: F40
 
 
 def create_app() -> FastAPI:
-    frontend_mode = os.environ.get("FRONTEND_MODE", "gradio").lower()
-    if frontend_mode not in {"gradio", "spa"}:
-        raise ValueError("FRONTEND_MODE must be 'gradio' or 'spa'")
-
     application = FastAPI()
     install_api_error_handlers(application)
-    mount_auth(application, include_legacy_routes=frontend_mode == "gradio")
+    mount_auth(application)
     application.include_router(api_router)
-
-    if frontend_mode == "gradio":
-        import gradio as gr
-        from .ui import demo
-
-        return gr.mount_gradio_app(application, demo, path="/")
 
     @application.post("/login", include_in_schema=False)
     async def legacy_login_redirect():

@@ -26,7 +26,6 @@ PyMuPDF
 jinja2
 python-multipart
 fuzzywuzzy
-gradio
 python-dotenv
 rq
 redis

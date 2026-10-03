@@ -140,10 +140,6 @@ resource "google_cloud_run_v2_service" "web" {
         value = "gcp"
       }
       env {
-        name  = "FRONTEND_MODE"
-        value = "spa"
-      }
-      env {
         name  = "MAX_UPLOAD_BYTES"
         value = "26214400"
       }

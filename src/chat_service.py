@@ -1,7 +1,6 @@
 """Transport-independent chat application service.
 
-The service accepts plain identifiers instead of a Gradio/FastAPI request and
-emits typed events that can be serialized by any UI adapter.
+The service accepts plain identifiers and emits typed events for the API.
 """
 
 import asyncio
@@ -28,16 +27,19 @@ from .config import CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD, RETRIEVAL_MAX_RET
 from .conversation_db import get_conversation_db
 from .guardrails import detect_pii, detect_prompt_injection, get_guardrail_message
 from .query_router import route_query
-from .rag_pipeline import _STREAM_CHUNK_DELAY, _STREAM_CHUNK_SIZE, _today_str, format_history
+from .rag_pipeline import _today_str, format_history
 from .rag_pipeline import get_generation_chain, get_retrieval_chain
 from .retrieval_grader import grade_documents, rewrite_for_retry
 from .services import get_embeddings, get_redis_conn
 
 logger = logging.getLogger("chat_service")
 
+_STREAM_CHUNK_SIZE = 10
+_STREAM_CHUNK_DELAY = 0.005
+
 
 async def _answer_events(text: str) -> AsyncGenerator[DeltaEvent, None]:
-    """Emit append-only chunks rather than Gradio's accumulated strings."""
+    """Emit append-only chunks containing only the answer body."""
     for start in range(0, len(text), _STREAM_CHUNK_SIZE):
         yield DeltaEvent(text=text[start : start + _STREAM_CHUNK_SIZE])
         if start + _STREAM_CHUNK_SIZE < len(text):
@@ -74,7 +76,6 @@ async def chat_event_stream(
     *,
     history_key: str | None,
     session_id: str | None,
-    fallback_history: list[dict] | None = None,
 ) -> AsyncGenerator[ChatStreamEvent, None]:
     """Run one chat request and emit transport-neutral events.
 
@@ -82,9 +83,7 @@ async def chat_event_stream(
     never supplies either value directly.
     """
     history_service = ChatHistoryService(get_redis_conn())
-    history = history_service.get_history(history_key)
-    if not history:
-        history = fallback_history or []
+    history = history_service.get_history(history_key) or []
 
     start_time = time.monotonic()
     full_response = ""

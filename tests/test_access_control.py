@@ -37,7 +37,7 @@ def _make_config(enabled=True, api_key="test-key", redis_mock=None,
     )
 
 
-def _build_app(config, protected_path="/protected"):
+def _build_app(config, protected_path="/api/protected"):
     """FastAPI app with the middleware + one dummy protected route."""
     app = FastAPI()
 
@@ -154,41 +154,36 @@ class TestAuthentication:
     """Credential checking for non-exempt routes."""
 
     def test_valid_header_grants_access(self, client):
-        r = client.get("/protected", headers={"X-API-Key": "test-key"})
+        r = client.get("/api/protected", headers={"X-API-Key": "test-key"})
         assert r.status_code == 200
         assert r.json() == {"ok": True}
 
     def test_missing_credential_returns_401(self, client):
-        r = client.get("/protected")
+        r = client.get("/api/protected")
         assert r.status_code == 401
         assert r.json() == {"detail": "Missing or invalid credential", "code": "unauthorized"}
 
     def test_invalid_header_returns_401(self, client):
-        r = client.get("/protected", headers={"X-API-Key": "wrong"})
+        r = client.get("/api/protected", headers={"X-API-Key": "wrong"})
         assert r.status_code == 401
 
     def test_valid_session_cookie_grants_access(self, redis_mock, client):
         # Pre-seed a session in the mock redis.
         kh = "abc123def456abcd"
         redis_mock.get.return_value = json.dumps({"key_hash": kh}).encode()
-        r = client.get("/protected", cookies={SESSION_COOKIE: "some-session-id"})
+        r = client.get("/api/protected", cookies={SESSION_COOKIE: "some-session-id"})
         assert r.status_code == 200
         assert r.json() == {"ok": True}
 
     def test_expired_or_unknown_session_returns_401(self, redis_mock, client):
         redis_mock.get.return_value = None
-        r = client.get("/protected", cookies={SESSION_COOKIE: "stale"})
+        r = client.get("/api/protected", cookies={SESSION_COOKIE: "stale"})
         assert r.status_code == 401
 
-    def test_browser_redirects_to_login_when_unauthenticated(self):
-        redis_mock = MagicMock()
-        redis_mock.get.return_value = None
-        config = _make_config(enabled=True, api_key="test-key", redis_mock=redis_mock)
-        app = _build_app(config)
-        c = TestClient(app, follow_redirects=False)
-        r = c.get("/protected", headers={"Accept": "text/html"})
-        assert r.status_code == 302
-        assert r.headers["location"] == "/login"
+    def test_api_html_accept_still_returns_json_401(self, client):
+        r = client.get("/api/protected", headers={"Accept": "text/html"}, follow_redirects=False)
+        assert r.status_code == 401
+        assert r.headers["content-type"].startswith("application/json")
 
     def test_health_exempt_from_auth(self, enabled_config):
         app = _build_app(enabled_config)
@@ -209,7 +204,7 @@ class TestAuthentication:
 
 
 class TestMiddlewareMounting:
-    def test_middleware_mounted_before_gradio_protects_root(self, enabled_config):
+    def test_spa_shell_is_public_without_consuming_api_quota(self, enabled_config):
         # Simulate the app.py wiring: mount_auth then a root route.
         app = FastAPI()
 
@@ -219,9 +214,10 @@ class TestMiddlewareMounting:
 
         app.add_middleware(AuthRateLimitMiddleware, config=enabled_config)
         c = TestClient(app)
-        # Root without credential -> 401 (middleware wraps the gradio mount).
+        # SPA shell is public and never consumes the API quota.
         r = c.get("/")
-        assert r.status_code == 401
+        assert r.status_code == 200
+        enabled_config.redis.pipeline.assert_not_called()
         # Root with valid header -> passes through to handler.
         r = c.get("/", headers={"X-API-Key": "test-key"})
         assert r.status_code == 200
@@ -294,13 +290,13 @@ class TestRateLimiting:
     def test_within_limit_succeeds(self, redis_mock):
         redis_mock.pipeline.return_value = _pipeline_returning(1)
         c = self._app_with_limit(redis_mock, rpm=60)
-        r = c.get("/protected", headers={"X-API-Key": "test-key"})
+        r = c.get("/api/protected", headers={"X-API-Key": "test-key"})
         assert r.status_code == 200
 
     def test_over_limit_returns_429_with_retry_after(self, redis_mock):
         redis_mock.pipeline.return_value = _pipeline_returning(61)
         c = self._app_with_limit(redis_mock, rpm=60)
-        r = c.get("/protected", headers={"X-API-Key": "test-key"})
+        r = c.get("/api/protected", headers={"X-API-Key": "test-key"})
         assert r.status_code == 429
         assert "Retry-After" in r.headers
 
@@ -325,9 +321,9 @@ class TestRateLimiting:
             [62, None],   # B (same bucket incremented)
             [1, None],    # C (different bucket)
         ]
-        a = c.get("/protected", cookies={SESSION_COOKIE: "sid-A"})
-        b = c.get("/protected", cookies={SESSION_COOKIE: "sid-B"})
-        cc = c.get("/protected", cookies={SESSION_COOKIE: "sid-C"})
+        a = c.get("/api/protected", cookies={SESSION_COOKIE: "sid-A"})
+        b = c.get("/api/protected", cookies={SESSION_COOKIE: "sid-B"})
+        cc = c.get("/api/protected", cookies={SESSION_COOKIE: "sid-C"})
         assert a.status_code == 429
         assert b.status_code == 429, "same key must share quota"
         assert cc.status_code == 200, "different key must be independent"
@@ -347,48 +343,6 @@ class TestRateLimiting:
         redis_mock.pipeline.assert_not_called()
 
 
-class TestStaticAssetRateLimitExemption:
-    """A single Gradio page load fires 100+ /assets and /static requests —
-    far more than a per-minute API budget. These must bypass rate limiting
-    (but still require a credential, unlike /health)."""
-
-    def test_static_asset_bypasses_rate_limit(self, redis_mock):
-        redis_mock.pipeline.return_value = _pipeline_returning(999)
-        config = _make_config(enabled=True, api_key="test-key",
-                              redis_mock=redis_mock, rate_limit_rpm=2)
-        c = TestClient(_build_app(config, protected_path="/assets/App-abc123.js"))
-        for _ in range(5):
-            r = c.get("/assets/App-abc123.js", headers={"X-API-Key": "test-key"})
-            assert r.status_code == 200
-        redis_mock.pipeline.assert_not_called()
-
-    def test_static_font_bypasses_rate_limit(self, redis_mock):
-        redis_mock.pipeline.return_value = _pipeline_returning(999)
-        config = _make_config(enabled=True, api_key="test-key",
-                              redis_mock=redis_mock, rate_limit_rpm=2)
-        c = TestClient(_build_app(config, protected_path="/static/fonts/a.woff2"))
-        for _ in range(5):
-            r = c.get("/static/fonts/a.woff2", headers={"X-API-Key": "test-key"})
-            assert r.status_code == 200
-        redis_mock.pipeline.assert_not_called()
-
-    def test_static_asset_still_requires_credential(self, redis_mock):
-        config = _make_config(enabled=True, api_key="test-key", redis_mock=redis_mock)
-        c = TestClient(_build_app(config, protected_path="/assets/App-abc123.js"))
-        r = c.get("/assets/App-abc123.js")
-        assert r.status_code == 401
-
-    def test_non_static_path_still_rate_limited(self, redis_mock):
-        # Sanity check the exemption is prefix-scoped, not a global bypass.
-        redis_mock.pipeline.return_value = _pipeline_returning(61)
-        c = TestClient(_build_app(
-            _make_config(enabled=True, api_key="test-key",
-                        redis_mock=redis_mock, rate_limit_rpm=60)
-        ))
-        r = c.get("/protected", headers={"X-API-Key": "test-key"})
-        assert r.status_code == 429
-
-
 # ---------------------------------------------------------------------------
 # Fail-open when Redis is down (task 5.2)
 # ---------------------------------------------------------------------------
@@ -404,103 +358,9 @@ class TestRedisFailOpen:
         app = _build_app(config)
         with caplog.at_level(logging.ERROR, logger="access_control"):
             c = TestClient(app)
-            r = c.get("/protected", headers={"X-API-Key": "test-key"})
+            r = c.get("/api/protected", headers={"X-API-Key": "test-key"})
         assert r.status_code == 200, "fail-open must allow the request"
         assert any("fail-open" in r.message for r in caplog.records)
-
-
-# ---------------------------------------------------------------------------
-# Login / logout flows (tasks 6.1, 6.2)
-# ---------------------------------------------------------------------------
-
-
-def _build_full_app(config):
-    """App wired like mount_auth but with an injected test config."""
-    from functools import partial
-    from src.access_control import _health, _login_get, _login_post, _logout_post
-    app = FastAPI()
-    app.add_route("/health", _health, methods=["GET"])
-    app.add_route("/login", _login_get, methods=["GET"])
-    app.add_route("/login", partial(_login_post, config=config), methods=["POST"])
-    app.add_route("/logout", partial(_logout_post, config=config), methods=["POST"])
-
-    @app.get("/")
-    def _root():
-        return {"ok": True}
-
-    app.add_middleware(AuthRateLimitMiddleware, config=config)
-    return app
-
-
-class TestLoginLogout:
-    def test_get_login_form_reachable_without_credential(self, redis_mock):
-        config = _make_config(enabled=True, api_key="test-key", redis_mock=redis_mock)
-        c = TestClient(_build_full_app(config), follow_redirects=False)
-        r = c.get("/login")
-        assert r.status_code == 200
-        assert "text/html" in r.headers.get("content-type", "")
-        assert "api_key" in r.text  # form field present
-
-    def test_post_login_valid_issues_session_cookie_and_redirects(self, redis_mock):
-        config = _make_config(enabled=True, api_key="test-key", redis_mock=redis_mock)
-        c = TestClient(_build_full_app(config), follow_redirects=False)
-        r = c.post("/login", data={"api_key": "test-key"})
-        assert r.status_code == 302
-        assert r.headers["location"] == "/"
-        # session_id cookie set; value is a session id, NOT the raw key.
-        cookie = r.cookies.get(SESSION_COOKIE)
-        assert cookie is not None
-        assert cookie != "test-key"
-        # Redis has a session:<id> record (setex called with session prefix).
-        setex_args = redis_mock.setex.call_args
-        assert setex_args[0][0].startswith("session:")
-        assert setex_args[0][0] == f"session:{cookie}"
-        payload = json.loads(setex_args[0][2])
-        assert "key_hash" in payload
-
-    def test_post_login_invalid_no_cookie_no_session(self, redis_mock):
-        config = _make_config(enabled=True, api_key="test-key", redis_mock=redis_mock)
-        c = TestClient(_build_full_app(config), follow_redirects=False)
-        r = c.post("/login", data={"api_key": "wrong"})
-        assert r.status_code == 401
-        assert SESSION_COOKIE not in r.cookies
-        # No session record created.
-        redis_mock.setex.assert_not_called()
-
-    def test_logout_revokes_session(self, redis_mock):
-        config = _make_config(enabled=True, api_key="test-key", redis_mock=redis_mock)
-        c = TestClient(_build_full_app(config), follow_redirects=False)
-        # Log in to obtain a session cookie.
-        login = c.post("/login", data={"api_key": "test-key"})
-        sid = login.cookies.get(SESSION_COOKIE)
-        # Logout.
-        r = c.post("/logout", cookies={SESSION_COOKIE: sid})
-        assert r.status_code == 302
-        assert r.headers["location"] == "/login"
-        # Redis delete called for that session.
-        redis_mock.delete.assert_called_with(f"session:{sid}")
-        # Subsequent request with that cookie is rejected (session gone).
-        redis_mock.get.return_value = None
-        guarded = c.get("/", cookies={SESSION_COOKIE: sid})
-        assert guarded.status_code == 401
-
-    def test_logout_one_session_does_not_revoke_others(self, redis_mock):
-        config = _make_config(enabled=True, api_key="test-key", redis_mock=redis_mock)
-        c = TestClient(_build_full_app(config), follow_redirects=False)
-        # Two logins -> two distinct session ids.
-        sid_a = c.post("/login", data={"api_key": "test-key"}).cookies.get(SESSION_COOKIE)
-        sid_b = c.post("/login", data={"api_key": "test-key"}).cookies.get(SESSION_COOKIE)
-        assert sid_a != sid_b
-        # Logout only sid_a.
-        c.post("/logout", cookies={SESSION_COOKIE: sid_a})
-        # sid_b still valid: validate_session returns its key_hash.
-        kh = "somekeyhashxxxxxx"
-        redis_mock.get.side_effect = lambda key: (
-            json.dumps({"key_hash": kh}).encode()
-            if key == f"session:{sid_b}" else None
-        )
-        r = c.get("/", cookies={SESSION_COOKIE: sid_b})
-        assert r.status_code == 200, "other session must remain valid"
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +372,7 @@ class TestAuthDisabled:
     def test_auth_disabled_allows_all(self, redis_mock):
         config = _make_config(enabled=False, api_key=None, redis_mock=redis_mock)
         c = TestClient(_build_app(config))
-        r = c.get("/protected")  # no credential
+        r = c.get("/api/protected")  # no credential
         assert r.status_code == 200
 
     def test_auth_disabled_logs_warning(self, caplog):
