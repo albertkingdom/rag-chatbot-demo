@@ -110,7 +110,7 @@ flowchart TD
 > ⚠️ Redis set 沒有順序，快取超過 5 筆後，被檢查的 5 筆等同任意挑選，是否命中帶有隨機性。見[已知問題](#已知問題)。
 
 ### 4. 混合檢索（`hybrid_retriever.py`）
-- **BM25**：in-process `rank_bm25`，取前 `BM25_TOP_N`（10）筆。每次查詢前呼叫 `reload_if_stale()`，pointer 檔指向新版本時就重新載入，因此同步完成後 web 不需重啟即可使用新索引。索引不存在、為空或出錯時，自動降級為 `vector_only`。
+- **BM25**：in-process `rank_bm25`，取前 `BM25_TOP_N`（10）筆。查詢前最多每 `BM25_RELOAD_INTERVAL_SECONDS`（30 秒）檢查一次 pointer 檔（`reload_if_stale()`），指向新版本時就重新載入，因此同步完成後 web 不需重啟，最多約 30 秒內改用新索引。pointer 檔只在手冊同步完成時更新，正式環境又放在 GCS 掛載目錄，所以不每次查詢都讀。索引不存在、為空或出錯時，自動降級為 `vector_only`。
 - **向量檢索**：Pinecone，以非同步 `asimilarity_search_with_score` 取前 `VECTOR_TOP_N`（10）筆（不支援時才 fallback 為 `asyncio.to_thread`）。呼叫以 lock 序列化。
 - **執行順序**：BM25（同步、in-process）先跑完，再 await 向量檢索，兩者**不是並行**。
 - **RRF 融合**：以 Reciprocal Rank Fusion（`RRF_K=60`）合併兩路排名，取前 `FUSION_TOP_M`（5）筆（由 10 減半以縮短重排時間）。
@@ -232,7 +232,7 @@ flowchart TB
 - **PDF 每次同步都會全量重做**：PDF 的 ID 每次重新產生，所以既有 PDF 向量全部被刪除、再重新 embedding 與 upsert。
 - 若 Pinecone `list()` 失敗，視為索引為空：所有文件重新 upsert，且不刪除任何向量。
 - 無論有無差異，每次同步都會用完整的本地文件重建 BM25 index；重建失敗不影響已完成的向量同步。
-- web 端在每次 BM25 查詢前檢查 pointer 檔，同步完成後的下一個查詢就會載入新索引。
+- web 端最多每 30 秒檢查一次 pointer 檔，同步完成後約 30 秒內的查詢就會載入新索引。
 
 ## Key Parameters
 
@@ -243,6 +243,7 @@ flowchart TB
 | Fusion | `RRF_K` | 60 | `config.py` |
 | Fusion | `FUSION_TOP_M` | 5 | `config.py` |
 | Reranking | `RERANK_TOP_K` | 3 | `rerank_stage.py` |
+| BM25 Reload | `BM25_RELOAD_INTERVAL_SECONDS` | 30 | `config.py`（env 可覆寫） |
 | Retrieval Grader | `GRADE_SCORE_THRESHOLD` | 0.3 | `config.py`（env 可覆寫） |
 | Retrieval Grader | `RETRIEVAL_MAX_RETRIES` | 1 | `config.py`（env 可覆寫） |
 | Semantic Cache | `CACHE_SIMILARITY_THRESHOLD` / `CACHE_TTL_SECONDS` | 0.95（嚴格大於）/ 24 hours | `config.py` |
