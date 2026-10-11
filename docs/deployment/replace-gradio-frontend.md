@@ -49,7 +49,7 @@ gcloud run services update "$service" --project "$project" --region "$region" \
 ## 4. 驗收候選 URL
 
 - `/health` 200；`/`、`/login`、`/admin` 回 compiled SPA，hashed JS/CSS 可載入。
-- 未登入受保護 API 回安全 JSON 401，未知 `/api/*` 回 JSON 404。
+- 未登入受保護 API 回安全 JSON 401；未登入時未知 `/api/*` 也回 401（驗證在路由之前），登入後未知 `/api/*` 才回 JSON 404。
 - 登入、同源 cookie mutation、聊天各事件與來源、history restore/clear、登出正常。
 - 手機中文輸入、停止接收、深淺模式、來源閱讀與捲動正常。
 - 檢查 Cloud Run logs 的例外與失敗率，不在文件或 PR 貼出 secrets、session 或私人對話。

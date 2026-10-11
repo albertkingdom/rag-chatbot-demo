@@ -147,7 +147,7 @@ docker run --rm --mount type=bind,source="$PWD/scripts/frontend_docker_smoke.py"
 
 ## 部署
 
-Cloud Run revision 驗證、正式流量切換與回復指令見 [部署手冊](docs/deployment/replace-gradio-frontend.md)。正式環境使用 React SPA 與 `JOB_RUNNER=gcp`，web 與 sync job 共用 GCS 掛載的 `DATA_SOURCE_DIR`/`BM25_INDEX_DIR`；模型快取 `MODEL_CACHE_DIR` 保留 image 內路徑。`GCP_PROJECT_ID`、`GCP_REGION`、`SYNC_JOB_NAME` 指定背景 job。
+一般版本的發布流程與每版紀錄見 [發布紀錄](docs/deployment/releases.md)；React 切換時的完整手冊見 [部署手冊](docs/deployment/replace-gradio-frontend.md)。正式環境使用 React SPA 與 `JOB_RUNNER=gcp`，web 與 sync job 共用 GCS 掛載的 `DATA_SOURCE_DIR`/`BM25_INDEX_DIR`；模型快取 `MODEL_CACHE_DIR` 保留 image 內路徑。`GCP_PROJECT_ID`、`GCP_REGION`、`SYNC_JOB_NAME` 指定背景 job。
 
 其他環境變數與預設值見 `.env.example`，包括 `RATE_LIMIT_RPM`、`SESSION_TTL_SECONDS`、`CHAT_HISTORY_TTL_SECONDS`、`CHAT_HISTORY_MAX_TURNS`。正式部署必須設定共用登入 key；HttpOnly session cookie 在 HTTPS 下使用 Secure，變更 API 使用同源 Origin/Referer 驗證。
 
