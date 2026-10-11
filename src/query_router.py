@@ -35,14 +35,23 @@ class RouterResult(BaseModel):
 # Stage 1: rule-based routing constants
 # ---------------------------------------------------------------------------
 
-# Carbon-management domain keywords. Matched case-insensitively as substrings
-# of the (lower-cased) query. Keep this list the single source of truth for
-# "this query needs the knowledge base".
+# Knowledge-base keywords. Matched case-insensitively as substrings of the
+# (lower-cased) query. Keep this list the single source of truth for "this
+# query needs the knowledge base". The knowledge base is CarbonM system
+# operation Q&A, so it covers both carbon-accounting terms and the system's
+# own features (accounts, boundaries, review, reports).
 RAG_KEYWORDS = [
-    # Chinese
+    # Carbon accounting
     "碳", "esg", "溫室氣體", "碳足跡", "碳排", "碳盤查", "碳中和", "淨零",
-    "排放係數", "排放源", "盤查邊界", "活動數據", "固定源", "移動源",
+    "排放", "排放係數", "排放源", "盤查邊界", "活動數據", "固定源", "移動源",
     "生質能源", "汽電共生", "環境部登錄", "碳權", "碳交易",
+    "燃料", "冷媒", "化糞池", "廢棄物", "外購電力", "外購能源", "原燃物料",
+    "逸散", "gwp", "數據品質", "鑑別準則", "門檻值", "查證機構", "運輸路徑",
+    # CarbonM system operation: accounts, boundaries, review, reports
+    "密碼", "登入", "登出", "帳號", "服務條款",
+    "邊界", "多廠區", "管理者",
+    "數據條目", "審核", "清冊", "報告書", "戰情室", "儀表板", "cfv",
+    "系統預設", "基本資訊",
     # English / mixed
     "carbon", "emission", "ghg", "carbonm",
     "scope 1", "scope 2", "scope 3", "scope1", "scope2", "scope3",
