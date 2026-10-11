@@ -1,16 +1,16 @@
 {
   "metrics": {
-    "faithfulness": 0.9583,
-    "answer_relevancy": 0.8959,
+    "faithfulness": 0.8118,
+    "answer_relevancy": 0.9197,
     "context_precision": 1.0,
-    "context_recall": 1.0
+    "context_recall": 0.9444
   },
   "thresholds": {
-    "faithfulness": 1.0,
+    "faithfulness": 0.7,
     "answer_relevancy": 0.7,
     "context_precision": 0.7,
     "context_recall": 0.7
   },
-  "passed": false,
+  "passed": true,
   "num_cases": 6
 }

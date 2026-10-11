@@ -259,7 +259,9 @@ flowchart TB
 - `tests/generate_rag_eval_data.py`：從知識庫抽樣 Q&A，由 LLM 把問題改寫成口語問法，原答案作為 `ground_truth`，輸出到 draft 檔，經人工審核後才升為 `tests/rag_eval_data.json`。
 - `tests/evaluate_rag.py`：用 golden set 直接呼叫檢索 chain（hybrid + rerank）與生成 chain，不經過路由、語意快取、自省重試與 guardrail，也不帶對話歷史；以 RAGAS 評估 faithfulness、answer_relevancy、context_precision、context_recall，judge 沿用專案的 Gemini 與 OpenAI embeddings。報告寫入 `tests/rag_eval_report.json`；任一指標低於門檻（預設 0.7，可用 `RAG_EVAL_MIN_<METRIC>` 覆寫）時 exit code 為 1。
 - `tests/evaluate_rerank.py`：評估重排效果。
-- 目前 `tests/rag_eval_report.json` 產生於 2026-06-27，早於 prompt 加入 `{today}` 變數（2026-08-21）與之後的路由、檢索調整，需要重新執行評估才能反映現況。
+- ragas（0.2.x 到 0.4.3）在 import 時需要 langchain-community 0.4 已移除的 Vertex AI 類別，而 langchain-community 不能降回 0.3（會讓 reranker 無法 import）。`tests/ragas_compat.py` 在 import ragas 前補上不會被使用的替代類別，`tests/test_ragas_compat.py` 確保 ragas 與 reranker 都能 import。
+- 題庫內容與知識庫一致，都是 CarbonM 系統操作的 Q&A（例如密碼重設、角色權限）。
+- `tests/rag_eval_report.json` 於 2026-10-11 重新產生：faithfulness 0.81、answer_relevancy 0.92、context_precision 1.0、context_recall 0.94，全部高於 0.7 門檻。同一天連續兩次執行的 faithfulness 分別為 0.86 與 0.81，題數只有 6 題，評分帶有 LLM 隨機性，比較前後版本時應多跑幾次取平均。
 
 ## Performance Optimizations
 

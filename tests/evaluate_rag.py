@@ -111,6 +111,7 @@ def _build_judge_llm():
 
 def score_with_ragas(samples: list[dict]) -> dict:
     """Score collected samples with RAGAS, reusing the project's LLM/embeddings."""
+    from tests import ragas_compat  # noqa: F401  (must run before importing ragas)
     from ragas import evaluate, EvaluationDataset, SingleTurnSample
     from ragas.metrics import (
         faithfulness,
