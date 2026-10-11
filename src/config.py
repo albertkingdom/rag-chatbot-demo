@@ -40,6 +40,10 @@ BM25_TOP_N = 10        # Number of candidates to retrieve from BM25
 VECTOR_TOP_N = 10      # Number of candidates to retrieve from vector store
 RRF_K = 60             # Reciprocal Rank Fusion constant
 FUSION_TOP_M = 5       # Max candidates after fusion, fed to reranker (halved 10->5 to cut reranker inference time)
+# Minimum seconds between checks for a BM25 index rebuilt by the sync job.
+# The pointer file sits on a GCS mount in production, and it only changes
+# after a manual upload, so checking on every query is wasted I/O.
+BM25_RELOAD_INTERVAL_SECONDS = float(os.environ.get("BM25_RELOAD_INTERVAL_SECONDS", "30"))
 
 # Access Control Settings
 # Toggle for auth/rate-limiting; defaults to True so production is locked down.

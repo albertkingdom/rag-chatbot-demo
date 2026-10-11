@@ -7,26 +7,45 @@ a separate downstream stage (see ``rerank_candidates``).
 """
 
 import asyncio
-from typing import Any
+import time
+from typing import Any, Callable
 
 from langchain_core.documents import Document
 from langsmith import traceable
 
-from src.config import FUSION_TOP_M, BM25_TOP_N, VECTOR_TOP_N, RRF_K
+from src.config import (
+    BM25_RELOAD_INTERVAL_SECONDS,
+    BM25_TOP_N,
+    FUSION_TOP_M,
+    RRF_K,
+    VECTOR_TOP_N,
+)
 
 
 class HybridRetriever:
     """Orchestrates BM25 + vector retrieval and RRF fusion."""
 
-    def __init__(self, bm25_index, vector_store):
+    def __init__(
+        self,
+        bm25_index,
+        vector_store,
+        reload_interval: float = BM25_RELOAD_INTERVAL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         """
         Args:
             bm25_index: a :class:`BM25Index` instance (or compatible).
             vector_store: a LangChain vector store with ``similarity_search``
                 (sync) and ``asimilarity_search`` (async) semantics.
+            reload_interval: minimum seconds between checks for a rebuilt
+                BM25 index. 0 checks on every query.
+            clock: monotonic time source, injectable for tests.
         """
         self.bm25_index = bm25_index
         self.vector_store = vector_store
+        self._reload_interval = reload_interval
+        self._clock = clock
+        self._last_reload_check: float | None = None
         # PineconeVectorStore closes its shared async HTTP session per query.
         # Keep one query's cleanup from closing another request's session.
         self._vector_search_lock = asyncio.Lock()
@@ -147,12 +166,7 @@ class HybridRetriever:
         bm25_results: list[tuple[str, float]] = []
         bm25_error: str | None = None
         try:
-            # Pick up an index rebuilt by the sync job (RQ worker / Cloud Run
-            # Job) without restarting web. Only reads the small pointer file
-            # unless the version changed.
-            reload_if_stale = getattr(self.bm25_index, "reload_if_stale", None)
-            if callable(reload_if_stale):
-                reload_if_stale()
+            self._maybe_reload_bm25()
             if not self.bm25_index.is_built or self.bm25_index.corpus_size == 0:
                 bm25_error = "bm25_unavailable"
             else:
@@ -162,6 +176,24 @@ class HybridRetriever:
         except RuntimeError as exc:
             bm25_error = f"bm25_error: {exc}"
         return bm25_results, bm25_error
+
+    def _maybe_reload_bm25(self) -> None:
+        """Pick up an index rebuilt by the sync job without restarting web.
+
+        Checks the pointer file at most once per ``reload_interval`` seconds;
+        the first query always checks.
+        """
+        reload_if_stale = getattr(self.bm25_index, "reload_if_stale", None)
+        if not callable(reload_if_stale):
+            return
+        now = self._clock()
+        if (
+            self._last_reload_check is not None
+            and now - self._last_reload_check < self._reload_interval
+        ):
+            return
+        self._last_reload_check = now
+        reload_if_stale()
 
     @traceable(name="RRF Fusion")
     def _fuse_results(

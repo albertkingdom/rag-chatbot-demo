@@ -291,3 +291,48 @@ class TestBm25HotReload:
 
         result = await r.retrieve("範疇三")
         assert [d.metadata["doc_id"] for d in result["candidates"]] == ["NEW"]
+
+
+class TestBm25ReloadThrottle:
+    @pytest.fixture
+    def clock(self):
+        state = {"now": 1000.0}
+
+        def now():
+            return state["now"]
+
+        now.advance = lambda seconds: state.update(now=state["now"] + seconds)
+        return now
+
+    @pytest.mark.asyncio
+    async def test_checks_at_most_once_per_interval(self, bm25_index, vector_store, clock):
+        r = HybridRetriever(bm25_index, vector_store, reload_interval=30, clock=clock)
+
+        await r.retrieve("q1")
+        clock.advance(10)
+        await r.retrieve("q2")
+        clock.advance(19)
+        await r.retrieve("q3")
+        assert bm25_index.reload_if_stale.call_count == 1
+
+        clock.advance(1)  # 30s since the first check
+        await r.retrieve("q4")
+        assert bm25_index.reload_if_stale.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_zero_interval_checks_every_query(self, bm25_index, vector_store, clock):
+        r = HybridRetriever(bm25_index, vector_store, reload_interval=0, clock=clock)
+        for q in ("q1", "q2", "q3"):
+            await r.retrieve(q)
+        assert bm25_index.reload_if_stale.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_index_without_reload_support_is_ignored(self, vector_store, clock, sample_docs_map):
+        idx = MagicMock(spec=["is_built", "corpus_size", "search", "get_doc"])
+        idx.is_built = True
+        idx.corpus_size = 1
+        idx.search = MagicMock(return_value=[("A", 1.0)])
+        idx.get_doc = MagicMock(side_effect=lambda doc_id: sample_docs_map.get(doc_id))
+        r = HybridRetriever(idx, vector_store, reload_interval=30, clock=clock)
+        result = await r.retrieve("q")
+        assert result["candidates"]

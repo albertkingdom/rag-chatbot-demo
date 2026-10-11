@@ -106,7 +106,7 @@ Python source 開發可使用：
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-Dev override 只掛載 `src`，不覆蓋 image 內的 `frontend/dist`；Python 修改後重啟 web/worker。前端修改需 Vite dev server 或重新 build image。web/worker 共用 `manual_data` 與 `bm25_data` volumes，讓背景 worker 能讀取已上傳文件、web 在下一次查詢時自動載入 worker 重建的 BM25 index。移除 volumes 會清除這些本機資料。
+Dev override 只掛載 `src`，不覆蓋 image 內的 `frontend/dist`；Python 修改後重啟 web/worker。前端修改需 Vite dev server 或重新 build image。web/worker 共用 `manual_data` 與 `bm25_data` volumes，讓背景 worker 能讀取已上傳文件、web 會在約 30 秒內自動載入 worker 重建的 BM25 index（`BM25_RELOAD_INTERVAL_SECONDS`）。移除 volumes 會清除這些本機資料。
 
 主要 API：
 
