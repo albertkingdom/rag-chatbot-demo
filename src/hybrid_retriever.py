@@ -1,7 +1,7 @@
 """Hybrid retriever combining BM25 keyword search and dense vector retrieval.
 
-The two retrieval paths run in parallel (``asyncio.gather``); their
-rankings are fused via Reciprocal Rank Fusion (RRF) and the top-M
+BM25 runs first (synchronous, in-process), then the vector search is
+awaited; the two rankings are fused via Reciprocal Rank Fusion (RRF) and the top-M
 fused candidates are returned to the caller. Reranking is performed by
 a separate downstream stage (see ``rerank_candidates``).
 """
@@ -147,6 +147,12 @@ class HybridRetriever:
         bm25_results: list[tuple[str, float]] = []
         bm25_error: str | None = None
         try:
+            # Pick up an index rebuilt by the sync job (RQ worker / Cloud Run
+            # Job) without restarting web. Only reads the small pointer file
+            # unless the version changed.
+            reload_if_stale = getattr(self.bm25_index, "reload_if_stale", None)
+            if callable(reload_if_stale):
+                reload_if_stale()
             if not self.bm25_index.is_built or self.bm25_index.corpus_size == 0:
                 bm25_error = "bm25_unavailable"
             else:
