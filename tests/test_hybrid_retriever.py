@@ -260,3 +260,34 @@ class TestConcurrentVectorSearch:
             await task
         _, lookup = await asyncio.wait_for(retriever._vector_search("next", 3), timeout=1)
         assert lookup["next"].page_content == "next"
+
+
+# --- BM25 hot reload after sync --------------------------------------
+
+
+class TestBm25HotReload:
+    @pytest.mark.asyncio
+    async def test_retrieve_checks_for_newer_bm25_index(self, retriever, bm25_index):
+        await retriever.retrieve("query")
+        bm25_index.reload_if_stale.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_retrieve_picks_up_index_rebuilt_by_sync_job(self, tmp_path):
+        from src.bm25_index import BM25Index
+
+        index_dir = str(tmp_path / "bm25_index")
+        BM25Index(index_dir=index_dir).build_from_documents(
+            [Document(page_content="舊版 範疇一 說明", metadata={"doc_id": "OLD"})]
+        )
+        web_index = BM25Index(index_dir=index_dir)
+        vs = MagicMock()
+        vs.asimilarity_search_with_score = AsyncMock(return_value=[])
+        r = HybridRetriever(web_index, vs)
+
+        # A separate process (RQ worker / Cloud Run Job) writes a new version.
+        BM25Index(index_dir=index_dir).build_from_documents(
+            [Document(page_content="新版 範疇三 說明", metadata={"doc_id": "NEW"})]
+        )
+
+        result = await r.retrieve("範疇三")
+        assert [d.metadata["doc_id"] for d in result["candidates"]] == ["NEW"]

@@ -58,6 +58,7 @@ def load_thresholds() -> dict:
 async def collect_samples(cases: list[dict]) -> list[dict]:
     """Run each case through the existing retrieval + generation chains."""
     from src.app import get_retrieval_chain, get_generation_chain
+    from src.rag_pipeline import _today_str
 
     retrieval_chain = get_retrieval_chain()
     generation_chain = get_generation_chain()
@@ -69,7 +70,7 @@ async def collect_samples(cases: list[dict]) -> list[dict]:
         contexts = bundle.get("contexts", []) or []
         context_text = bundle.get("context", "")
         answer = await generation_chain.ainvoke(
-            {"context": context_text, "question": question, "history": ""}
+            {"context": context_text, "question": question, "history": "", "today": _today_str()}
         )
         samples.append(
             {
