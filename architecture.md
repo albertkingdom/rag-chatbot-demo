@@ -4,271 +4,287 @@
 
 ```mermaid
 flowchart TB
-    subgraph UI["Frontend (Gradio UI)"]
-        Chatbot[RAG Chatbot]
-        Upload[Upload Manual]
+    subgraph UI["Frontend (React + TypeScript, frontend/dist)"]
+        Chat[Chat 串流介面]
+        Upload[手冊上傳 / Job 狀態]
     end
 
-    subgraph Web["Web Service (FastAPI)"]
-        ChatStream[chat_stream]
-        SyncJob[sync_vector_store]
-        Guardrail[response_guardrail]
+    subgraph Web["web (FastAPI, src/api/routes.py)"]
+        Auth["/api/v1/auth/*"]
+        ChatAPI["/api/v1/chat/stream<br/>NDJSON"]
+        Admin["/api/v1/admin/manuals<br/>/api/v1/admin/jobs/{job_id}"]
+        ChatSvc[chat_service<br/>chat_event_stream]
     end
 
     subgraph Infra["Infrastructure"]
-        Redis[(Redis<br/>Semantic Cache)]
-        Worker[RQ Worker]
+        Redis[(Redis<br/>Semantic Cache · Chat History · RQ)]
+        Worker[RQ Worker<br/>JOB_RUNNER=local]
+        CRJob[Cloud Run Job<br/>JOB_RUNNER=gcp]
+        Mongo[(MongoDB<br/>對話稽核紀錄)]
+        BM25[(BM25 index<br/>bm25_data volume / GCS)]
+        Reranker[BGE Reranker v2-m3<br/>web 程序內推論]
     end
 
     subgraph External["External Services"]
-        OpenAI[OpenAI<br/>Embeddings]
-        Pinecone[(Pinecone<br/>Vector DB)]
-        HuggingFace[BGE Reranker<br/>v2-m3]
+        OpenAI[OpenAI Embeddings]
+        Pinecone[(Pinecone)]
         OpenRouter[OpenRouter<br/>Gemini 2.5 Flash]
         LangSmith[LangSmith]
     end
 
-    Chatbot --> ChatStream
-    Upload --> SyncJob
+    Chat --> Auth
+    Chat --> ChatAPI --> ChatSvc
+    Upload --> Admin
 
-    ChatStream --> Redis
-    ChatStream --> OpenAI
-    ChatStream --> Pinecone
-    ChatStream --> HuggingFace
-    ChatStream --> OpenRouter
-    ChatStream --> Guardrail
-    ChatStream -.-> LangSmith
+    ChatSvc --> Redis
+    ChatSvc --> Mongo
+    ChatSvc --> BM25
+    ChatSvc --> OpenAI
+    ChatSvc --> Pinecone
+    ChatSvc --> Reranker
+    ChatSvc --> OpenRouter
+    ChatSvc -.-> LangSmith
 
-    SyncJob --> Worker
+    Admin -- 入列 --> Redis
+    Redis -- RQ job --> Worker
+    Admin -- run_v2 --> CRJob
     Worker --> OpenAI
     Worker --> Pinecone
-    Worker -.-> LangSmith
+    Worker --> BM25
+    CRJob --> OpenAI
+    CRJob --> Pinecone
+    CRJob --> BM25
 ```
 
-## RAG 核心流程 (Presentation Slides)
+部署：本機以 Docker Compose 啟動 `web`、`worker`、`redis`、`mongodb`、`mongo-express`、`redis-insight`；正式環境為單一 Cloud Run service（React SPA 與 API 同源），背景同步改由 Cloud Run Job 執行，`DATA_SOURCE_DIR` / `BM25_INDEX_DIR` 以 GCS 掛載共用，基礎設施由 `terraform/` 管理。
 
-此架構採用 **意圖分類 (Intent Classification)**、**雙層檢索 (Two-Stage Retrieval)** 與 **語義快取 (Semantic Cache)** 技術，確保回應的高精準度與低延遲。
-
-### 0. **輸入防護與查詢理解層 (Input Guard & Query Understanding)**
-*   **輸入端注入偵測**: 在進入任何 LLM 流程前，先對使用者輸入進行 Prompt Injection 掃描，命中即直接阻擋。
-*   **查詢改寫 (Query Rewriting)**: 使用 **Gemini 2.5 Flash (via OpenRouter)** 將多輪對話中的追問（如「4.2 呢？」）改寫為獨立問題（如「類別 4.2 排放是什麼？」），提升檢索準確度。
-*   **問題過濾**: 使用 **Gemini 2.5 Flash (via OpenRouter)** 快速判斷問題是否與碳管理系統相關（信心度閾值 0.7）。
-*   **早期攔截**: 無關問題在檢索前即被攔截，節省 API 成本並提升使用者體驗。
-*   **響應時間**: **< 400ms**，成本 **~$0.0001/query**。
-
-### 1. **快速響應層 (Fast Path)**
-*   **語義快取 (Semantic Cache)**: 使用 **Redis** 儲存過往問答，當新問題相似度 **> 0.95** 時直接回傳，響應時間 **< 50ms**。
-
-### 2. **深度檢索層 (Deep Path)**
-*   **BM25 關鍵字檢索 (Keyword Recall)**: 以 in-process `rank_bm25` (BM25Okapi) 從本地 BM25 索引提取前 **`BM25_TOP_N`** 筆關鍵字命中候選文件。
-*   **向量檢索 (Dense Recall)**: 從 **Pinecone** 提取前 **`VECTOR_TOP_N`** 筆語意相近候選文件 (OpenAI Embeddings)。
-*   **分數融合 (Fusion)**: 以 **Reciprocal Rank Fusion (RRF)** 將 BM25 與向量兩路排名融合成單一排序列表，取前 **`FUSION_TOP_M`** 筆交予重排器。
-*   **精準重排 (Reranking)**: 導入 **`BGE Reranker v2-m3`** 對融合後 10 筆文件進行二次評分，篩選最精準的 **Top 3**。
-
-### 3. **多模態生成層 (Generation)**
-*   **上下文合成**: 將 Top 3 文本作為 Context 輸入 LLM。
-*   **對話歷史**: 將最近 3 輪對話加入 prompt，讓 LLM 理解上下文脈絡。
-*   **生成模型**: 採用 **Gemini 2.5 Flash (via OpenRouter)**，具備高效能與長上下文處理能力。
-
-### 4. **回覆防護層 (Response Guardrail)**
-*   **PII / 注入掃描**: 偵測回覆是否包含個資或提示注入內容，命中即阻擋。
-*   **安全回覆**: 回覆統一的安全訊息，並記錄 guardrail metadata 以供追蹤。
+## Chat 請求流程（`src/chat_service.py`）
 
 ```mermaid
-flowchart LR
-    %% 方向與元件定義
-    Q([使用者提問]) --> InputGuard{輸入防護<br/>注入偵測}
+flowchart TD
+    Q([使用者提問]) --> InGuard{輸入防護<br/>prompt injection}
+    InGuard -- 命中 --> GuardMsg([安全訊息<br/>source=guardrail])
+    InGuard -- 通過 --> Router{混合路由<br/>query_router}
 
-    InputGuard -- 命中 --> Reject([返回提示訊息])
-    InputGuard -- 通過 --> Rewrite[查詢改寫<br/>追問轉獨立問題]
+    Router -- direct --> DirectGen[Gemini 直接生成]
+    DirectGen --> OutGuard1{輸出防護<br/>PII / injection}
+    OutGuard1 -- 命中 --> GuardMsg
+    OutGuard1 -- 通過 --> SaveD[寫入 Redis 對話 · MongoDB] --> DirectAns([回覆 source=direct])
 
-    Rewrite --> Intent{意圖分類<br/>相關?}
+    Router -- rag --> Embed[rewritten_query 做 embedding]
+    Embed --> Cache{語意快取<br/>cosine > 0.95}
+    Cache -- hit --> OutGuard2{輸出防護}
+    OutGuard2 -- 命中 --> GuardMsg
+    OutGuard2 -- 通過 --> SaveC[寫入 Redis 對話 · MongoDB] --> CacheAns([回覆 source=cache])
 
-    Intent -- 無關 --> Reject
-    Intent -- 相關 --> Cache{語義快取<br/>命中?}
-
-    Redis[(Redis<br/>Semantic Cache)] <--> Cache
-
-    subgraph RAG ["深度檢索與生成流程"]
-        direction LR
-        Search[向量檢索<br/>k=10] --> Rerank[BGE 重排<br/>篩選 Top 3]
-        Rerank --> Gen[Gemini 2.5<br/>via OpenRouter<br/>生成回答]
-        Gen --> GuardDeep[Guardrail<br/>PII/注入]
-    end
-
-    Cache -- Miss --> Search
-    Cache -- Hit ----> GuardCache[Guardrail<br/>PII/注入檢查]
-
-    %% 回寫快取路徑
-    GuardDeep --> Store[更新快取]
-    Store --> Redis
-    Store --> Ans
-    GuardCache --> Ans
-
-    %% 樣式美化 (增強對比度以利簡報呈現)
-    classDef input fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#01579b
-    classDef logic fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#333
-    classDef core fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c
-    classDef storage fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c
-    classDef reject fill:#ffccbc,stroke:#d84315,stroke-width:2px,color:#bf360c
-
-    class Q,Ans input
-    class InputGuard,Rewrite,Intent,Cache,Store logic
-    class Search,Rerank,Gen,GuardDeep,GuardCache core
-    class Redis storage
-    class Reject reject
-
-    %% 子圖樣式
-    style RAG fill:#f9f9f9,stroke:#333,stroke-width:1px,color:#333
+    Cache -- miss --> Retrieve[Hybrid Retrieve<br/>BM25 top10 + Pinecone top10<br/>RRF k=60 → top5]
+    Retrieve --> Rerank[BGE Rerank → top3]
+    Rerank --> Grade{rerank top-1<br/>≥ 0.3?}
+    Grade -- 否, 未達重試上限 --> Retry[LLM 改寫查詢] --> Retrieve
+    Grade -- 是 / 已重試 1 次 --> Gen[Gemini 生成<br/>context + 最近 3 輪]
+    Gen --> OutGuard3{輸出防護}
+    OutGuard3 -- 命中 --> GuardMsg
+    OutGuard3 -- 通過 --> Save[寫入語意快取<br/>＋ Redis 對話 · MongoDB]
+    Save --> RagAns([回覆 source=rag])
 ```
 
-## Document Ingestion
+所有路徑都會寫入 MongoDB（guardrail 擋下的也會，並附上命中的 PII 類型或 injection pattern）；direct、cache、rag 三條正常回覆路徑都會把這一輪寫入 Redis 短期對話；只有 rag 路徑會寫入語意快取。
 
-```mermaid
-flowchart TB
-    subgraph Upload["File Upload"]
-        PDF[PDF]
-        XLSX[Excel]
-        CSV[CSV]
-    end
+### 0. 輸入防護（`guardrails.py`）
+以 regex 掃描 prompt injection（中英文規則，例如「ignore previous instructions」、「系統提示」、「繞過」）。命中即回覆統一安全訊息，並以 `response_source="guardrail"` 寫入 MongoDB，不呼叫任何 LLM。
 
-    subgraph Parse["Parsing"]
-        Extract[Extract Q&A Pairs]
-    end
+### 1. 混合路由與查詢改寫（`query_router.py`）
+- **Stage 1 規則層（零延遲）**：先比對碳管理領域關鍵字（碳、ESG、溫室氣體、scope 1/2/3…）→ `rag`；再比對一般問答模式（招呼、感謝、簡單算式、翻譯、寫程式、笑話）→ `direct`；其餘為 `uncertain`。領域關鍵字優先，避免同時符合兩者的查詢被誤判為 direct。
+- **規則命中且有對話歷史**：只呼叫 LLM 做查詢改寫（`_rewrite_only`），把追問（如「4.2 呢？」）改寫成獨立問題。
+- **Stage 2 LLM 層**：`uncertain` 的查詢交由 Gemini 2.5 Flash，以 Pydantic 結構化輸出（`RouterResult`）一次回傳 `route`、`rewritten_query`、`reasoning`。
+- **錯誤處理**：LLM 路由失敗時回退為 `direct`（不查知識庫）；`_rewrite_only` 失敗時沿用原始問題。
+- 規則命中 `direct` 且有對話歷史時，仍會呼叫一次 `_rewrite_only`，但 direct 路徑生成時使用原始問題，該改寫結果不會被用到。
+- 這層取代了舊的 intent classifier（舊版只能擋離題問題，不會分流到直接生成）。
 
-    subgraph Process["Processing"]
-        Uuid[Backfill / Read uuid<br/>as doc_id]
-        Compare{Compare with<br/>Existing}
-    end
+### 2. Direct 路徑
+不檢索、不查語意快取，直接以 QA prompt 生成（context 為空），生成後同樣經過輸出防護。
 
-    subgraph Embed["Batch Embedding"]
-        OpenAI[OpenAI API<br/>Batch: 100 docs/call]
-    end
+### 3. 語意快取（`cache_service.py`）
+以改寫後的查詢做 OpenAI embedding，從 Redis set（`smembers`）取出快取 key 後只檢查其中 `CACHE_MAX_SEARCH_RESULTS`（5）筆，在 Python 中計算 cosine similarity，**> 0.95** 視為命中（TTL 24 小時）。命中的答案仍須通過 PII / injection 檢查才回傳；寫入時以同一個 embedding 為 key。
 
-    subgraph Sync["Sync"]
-        Upsert[Batch Upsert<br/>100 vectors/batch]
-        Delete[Delete Outdated]
-    end
+> ⚠️ Redis set 沒有順序，快取超過 5 筆後，被檢查的 5 筆等同任意挑選，是否命中帶有隨機性。見[已知問題](#已知問題)。
 
-    Pinecone[(Pinecone)]
+### 4. 混合檢索（`hybrid_retriever.py`）
+- **BM25**：in-process `rank_bm25`，取前 `BM25_TOP_N`（10）筆。索引不存在、為空或出錯時，自動降級為 `vector_only`。
+- **向量檢索**：Pinecone，以非同步 `asimilarity_search_with_score` 取前 `VECTOR_TOP_N`（10）筆（不支援時才 fallback 為 `asyncio.to_thread`）。呼叫以 lock 序列化。
+- **執行順序**：BM25（同步、in-process）先跑完，再 await 向量檢索，兩者**不是並行**。
+- **RRF 融合**：以 Reciprocal Rank Fusion（`RRF_K=60`）合併兩路排名，取前 `FUSION_TOP_M`（5）筆（由 10 減半以縮短重排時間）。
+- BM25 與向量結果、融合分數、fallback 原因記錄於 `fusion_metadata`，供 LangSmith 追蹤。
 
-    PDF --> Extract
-    XLSX --> Extract
-    CSV --> Extract
-    Extract --> Uuid
-    Uuid --> Compare
-    Compare -->|New| OpenAI
-    Compare -->|Outdated| Delete
-    OpenAI --> Upsert
-    Upsert --> Pinecone
-    Delete --> Pinecone
-```
+### 5. 重排（`rerank_stage.py`、`rag_pipeline.py`）
+`BAAI/bge-reranker-v2-m3` cross-encoder 在 web 程序內對 query–doc 成對評分，取 Top 3（`RERANK_TOP_K`）。`rag_pipeline.py` 以 `asyncio.to_thread` 呼叫，避免阻塞 event loop。
 
-## Sequence Diagram
+### 6. 自省式檢索（`retrieval_grader.py`）
+以 reranker top-1 分數判斷檢索品質，低於 `GRADE_SCORE_THRESHOLD`（0.3）時，由 LLM 參考低品質結果改寫查詢並重跑檢索與重排，最多 `RETRIEVAL_MAX_RETRIES`（1）次。直接沿用重排分數，不額外呼叫 LLM 評分。
+
+### 7. 生成（`rag_pipeline.py`）
+Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（台灣時區）、最近 3 輪對話（`format_history` 預設 `max_turns=3`）、Top 3 context，並要求以繁體中文回答；context 不相關時可改用一般知識回答。檢索使用改寫後的查詢，生成時則以原始問題搭配對話歷史。
+
+### 8. 輸出防護與回應（`guardrails.py`、`chat_events.py`）
+完整答案生成後，先做 PII（email、電話、信用卡、身分證字號、IP）與 injection 掃描，通過後才以 typed NDJSON 事件分段送出：
+
+| 事件 | 內容 |
+|------|------|
+| `status` | 只在 rag 路徑送出：`retrieving`（embedding 與查快取之前）、`reranking`（混合檢索、重排與重試之前）、`generating`（生成之前）。direct 路徑不送 status |
+| `delta` | 答案分段文字 |
+| `sources` | 檢索來源摘要 |
+| `metadata` | `elapsedMs`、`responseSource`（rag / direct / cache / guardrail）、`cacheHit` |
+| `done` / `error` | 結束或錯誤 |
+
+Redis 短期對話以 `CHAT_HISTORY_TTL_SECONDS` 控制（預設閒置 30 分鐘過期），保留 `CHAT_HISTORY_MAX_TURNS` 輪。
+
+## Sequence Diagram（RAG 路徑）
 
 ```mermaid
 sequenceDiagram
-    participant U as User
+    participant U as React UI
     participant F as FastAPI
-    participant R as Redis
-    participant O as OpenAI
-    participant P as Pinecone
-    participant B as BGE Reranker
-    participant G as Gemini
     participant GR as Guardrail
+    participant RT as Router
+    participant G as Gemini
+    participant O as OpenAI Embeddings
+    participant R as Redis
+    participant B as BM25
+    participant P as Pinecone
+    participant RR as BGE Reranker
+    participant M as MongoDB
 
-    U->>F: Submit Question
-    F->>GR: Input Injection Scan
-    GR-->>F: Allow/Block
-
-    alt Injection Detected
-        F-->>U: Return Guardrail Message
+    U->>F: POST /api/v1/chat/stream
+    F->>GR: Input injection scan
+    alt Injection detected
+        F-->>U: guardrail message (NDJSON)
     else Passed
-        F->>G: Query Rewriting (Gemini)
-        G-->>F: Standalone Query
-        F->>F: Intent Classification (Gemini)
-        F-->>U: Off-topic → Return Guidance
-
-        alt Relevant
-            F->>O: Generate Embedding
-            O-->>F: 1536-dim Vector
-            F->>R: Check Cache
-
-            alt Cache Hit
-                R-->>F: Cached Response
-                F->>GR: PII/Injection Scan
-                GR-->>F: Allow/Block
-                F-->>U: Return Answer
-            else Cache Miss
-                F->>P: Query (k=10)
-                P-->>F: 10 Candidates
-                F->>B: Rerank
-                B-->>F: Top 3 Docs
-                F->>G: Generate Answer (with History Context)
-                G-->>F: Streaming Response
-                F->>GR: PII/Injection
-                GR-->>F: Allow/Block
-                F->>R: Store in Cache
-                F-->>U: Stream Answer
+        F->>RT: route_query(message, history)
+        RT->>RT: Rule stage
+        opt uncertain, or rule hit with history
+            RT->>G: route + rewrite / rewrite only
+        end
+        RT-->>F: route, rewritten_query
+        F-->>U: status: retrieving
+        F->>O: embed(rewritten_query)
+        F->>R: semantic cache lookup
+        alt Cache hit
+            F->>GR: PII / injection scan
+            F->>R: append chat history
+            F->>M: save conversation
+            F-->>U: cached answer
+        else Cache miss
+            F-->>U: status: reranking
+            F->>B: BM25 top 10
+            F->>P: vector top 10 (after BM25)
+            F->>F: RRF fuse → top 5
+            F->>RR: rerank → top 3
+            opt top-1 score < 0.3 (max 1 retry)
+                F->>G: rewrite for retry
+                F->>B: re-retrieve
+                F->>P: re-retrieve
+                F->>RR: re-rerank
             end
+            F-->>U: status: generating
+            F->>G: generate (context + history)
+            G-->>F: full answer
+            F->>GR: PII / injection scan
+            F->>R: store cache + chat history
+            F->>M: save conversation
+            F-->>U: delta… sources, metadata, done
         end
     end
 ```
 
+## Document Ingestion（`build_vector_store.py`、`manual_service.py`）
+
+```mermaid
+flowchart TB
+    Up["POST /api/v1/admin/manuals<br/>PDF / XLSX / CSV ≤ 25 MB"] --> Save[存入 DATA_SOURCE_DIR]
+    Save --> Enqueue{JOB_RUNNER}
+    Enqueue -- local --> RQ[RQ Worker]
+    Enqueue -- gcp --> Job[Cloud Run Job]
+    RQ --> Sync
+    Job --> Sync
+
+    subgraph Sync["sync_vector_store()"]
+        Backfill[CSV/XLSX 回填 uuid 欄位<br/>寫回來源檔]
+        Extract["抽取 Q&A pair"]
+        Dedup["去除完全相同的 Q&A"]
+        Diff{以 doc_id 比對<br/>Pinecone 既有 ID}
+        EmbedB[OpenAI Embedding<br/>100 筆/批]
+        Upsert[Upsert 100 筆/批]
+        Del[刪除本地已不存在的 ID]
+        Rebuild[重建 BM25 index]
+        Backfill --> Extract --> Dedup --> Diff
+        Diff -- 新 ID --> EmbedB --> Upsert
+        Diff -- 已移除 ID --> Del
+        Upsert --> Rebuild
+        Del --> Rebuild
+        Diff -- 無變動也執行 --> Rebuild
+    end
+
+    Poll["GET /api/v1/admin/jobs/{job_id}"] -.-> Enqueue
+```
+
+- `doc_id` 取自來源檔的 `uuid` 欄位；CSV/XLSX 缺 uuid 時會產生並寫回原檔，寫回失敗則中止同步，避免以不穩定的 ID upsert。PDF 沒有 uuid 欄位，每次同步都會在記憶體中產生新的 ID。
+- 差異比對**只看 ID**：新的 ID 會 upsert，已不在本地的 ID 會刪除。若同一個 uuid 的問答內容被修改，不會被重新 embedding。
+- **PDF 每次同步都會全量重做**：PDF 的 ID 每次重新產生，所以既有 PDF 向量全部被刪除、再重新 embedding 與 upsert。
+- 若 Pinecone `list()` 失敗，視為索引為空：所有文件重新 upsert，且不刪除任何向量。
+- 無論有無差異，每次同步都會用完整的本地文件重建 BM25 index；重建失敗不影響已完成的向量同步。
+- web 端目前只在 retriever 首次建立時載入 BM25 index，同步後需重啟 web 才會讀到新索引。見[已知問題](#已知問題)。
+
 ## Key Parameters
 
-| Component | Parameter | Value |
-|-----------|-----------|-------|
-| Vector Retrieval | k | 10 |
-| Reranking | Top N | 3 |
-| Semantic Cache | Threshold | 0.95 |
-| Semantic Cache | TTL | 24 hours |
-| Embedding | Dimensions | 1536 |
-| Embedding | Batch Size | 100 docs/call |
-| Vector Upsert | Batch Size | 100 vectors/batch |
-| LLM | Model | gemini-2.5-flash |
-| LLM | Temperature | 0 |
-| Conversation History | Max Turns | 3 |
+| Component | Parameter | Value | 定義位置 |
+|-----------|-----------|-------|----------|
+| Vector Retrieval | `VECTOR_TOP_N` | 10 | `config.py` |
+| BM25 Retrieval | `BM25_TOP_N` | 10 | `config.py` |
+| Fusion | `RRF_K` | 60 | `config.py` |
+| Fusion | `FUSION_TOP_M` | 5 | `config.py` |
+| Reranking | `RERANK_TOP_K` | 3 | `rerank_stage.py` |
+| Retrieval Grader | `GRADE_SCORE_THRESHOLD` | 0.3 | `config.py`（env 可覆寫） |
+| Retrieval Grader | `RETRIEVAL_MAX_RETRIES` | 1 | `config.py`（env 可覆寫） |
+| Semantic Cache | `CACHE_SIMILARITY_THRESHOLD` / `CACHE_TTL_SECONDS` | 0.95（嚴格大於）/ 24 hours | `config.py` |
+| Semantic Cache | `CACHE_MAX_SEARCH_RESULTS` | 5 | `config.py` |
+| Chat History | `CHAT_HISTORY_MAX_TURNS` / `CHAT_HISTORY_TTL_SECONDS` | 3 / 30 minutes | `config.py`（env 可覆寫） |
+| Prompt History | `max_turns` | 3 | `rag_pipeline.py`（`format_history` 預設值） |
+| Embedding | Dimensions / batch | 1536 / 100 docs per call | `build_vector_store.py` |
+| Vector Upsert | Batch Size | 100 vectors | `build_vector_store.py` |
+| LLM | Model / temperature | `google/gemini-2.5-flash` / 0 | `services.py` |
+| Access | `RATE_LIMIT_RPM` | 60 | `config.py`（env 可覆寫） |
+
+## Evaluation
+
+- `tests/generate_rag_eval_data.py`：從知識庫抽樣 Q&A，由 LLM 把問題改寫成口語問法，原答案作為 `ground_truth`，輸出到 draft 檔，經人工審核後才升為 `tests/rag_eval_data.json`。
+- `tests/evaluate_rag.py`：用 golden set 直接呼叫檢索 chain（hybrid + rerank）與生成 chain，不經過路由、語意快取、自省重試與 guardrail，也不帶對話歷史；以 RAGAS 評估 faithfulness、answer_relevancy、context_precision、context_recall，judge 沿用專案的 Gemini 與 OpenAI embeddings。報告寫入 `tests/rag_eval_report.json`；任一指標低於門檻（預設 0.7，可用 `RAG_EVAL_MIN_<METRIC>` 覆寫）時 exit code 為 1。
+- `tests/evaluate_rerank.py`：評估重排效果。
+- 目前 `tests/rag_eval_report.json` 產生於 2026-06-27，早於 prompt 加入 `{today}` 變數（2026-08-21），之後尚未重新評估。見[已知問題](#已知問題)。
 
 ## Performance Optimizations
 
-### Vector Store Sync Performance
+| 優化 | 位置 | 效果 |
+|------|------|------|
+| Embedding 改批次（100 筆/次） | `build_vector_store.py` | API 呼叫數約減少 100 倍，同步時間明顯縮短（見下方估計） |
+| Rerank 改 `asyncio.to_thread` | `rag_pipeline.py` | cross-encoder 推論不再阻塞 event loop |
+| Fusion 候選 10 → 5 | `config.py` | 重排推論量減半 |
+| 規則路由 | `query_router.py` | 明確查詢不需呼叫 LLM |
+| 語意快取 | `cache_service.py` | 相似問題跳過整條 RAG |
+| 答案分段 yield | `chat_service.py` | 以固定大小分段串流 NDJSON `delta` |
 
-The `sync_vector_store()` function has been optimized for high-throughput document ingestion:
-
-**Key Improvements:**
-
-1. **Batch Embedding API** (`build_vector_store.py:146-147`)
-   - **Before**: Sequential API calls - one embedding per document (~300ms each)
-   - **After**: Batch API calls - 100 embeddings per request
-   - **Impact**: 10-50x faster for large document sets
-
-2. **Progress Tracking** (`build_vector_store.py:143, 156`)
-   - Real-time progress indicators during sync
-   - Percentage completion and batch-level updates
-   - Improved user experience for long-running operations
-
-**Performance Benchmarks:**
+批次 embedding 前後的同步時間**粗略估計**（未保留量測腳本與環境紀錄，僅供參考）：
 
 | Documents | Before | After | Speedup |
 |-----------|--------|-------|---------|
-| 50 | ~20s | ~3s | 6x ⚡ |
-| 200 | ~90s | ~8s | 11x ⚡ |
-| 1000 | ~7min | ~25s | 16x ⚡ |
+| 50 | ~20s | ~3s | 6x |
+| 200 | ~90s | ~8s | 11x |
+| 1000 | ~7min | ~25s | 16x |
 
-**Technical Details:**
+## 已知問題
 
-```python
-# Batch embedding (optimized)
-batch_texts = [local_docs[doc_id].page_content for doc_id in batch_ids]
-batch_embeddings = embeddings.embed_documents(batch_texts)
-
-# vs. Sequential embedding (old)
-for doc_id in batch_ids:
-    embedding = embeddings.embed_query(doc.page_content)  # ❌ Slow
-```
-
-**Cost Efficiency:**
-- Reduced OpenAI API calls by ~100x for large datasets
-- Lower latency due to fewer network round-trips
-- Same embedding quality with OpenAI's batch endpoint
+| 問題 | 位置 | 影響 |
+|------|------|------|
+| 同步後 web 不會重新載入 BM25 index | `services.py`：`reload_if_stale()` 只在 `get_bm25_index()` 被呼叫時執行，而它只在 `HybridRetriever` singleton 建立時呼叫一次 | 上傳手冊後，BM25 仍使用舊索引，需重啟 web |
+| `evaluate_rag.py` 未傳入 `today` | `tests/evaluate_rag.py` 呼叫生成 chain 時缺少 prompt 需要的 `{today}` | 評估腳本無法執行（推論，尚未實際執行驗證） |
+| 電話 PII regex 會誤判日期 | `guardrails.py` 的 `phone` pattern 會命中 `2026-10-11` 這類日期 | 回答含日期時整段被替換為 guardrail 訊息 |
+| 語意快取只檢查任意 5 筆 | `cache_service.py`：`list(smembers(...))[:5]` | 快取超過 5 筆後命中帶有隨機性 |

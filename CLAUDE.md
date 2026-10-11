@@ -40,3 +40,10 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 ### Commit Messages
 
 - Commit messages MUST NOT mention any AI tools (e.g., Claude, Copilot, ChatGPT, or any other AI assistant).
+
+### Documentation
+
+- `architecture.md` is the canonical description of the RAG request flow, ingestion flow, parameters, and known issues. Parameter values themselves live in code (`src/config.py` and the files listed in its Key Parameters table); behavioral requirements live in `openspec/specs/`.
+- Update `architecture.md` in the same change whenever you modify `src/chat_service.py`, `src/query_router.py`, `src/hybrid_retriever.py`, `src/bm25_index.py`, `src/rerank_stage.py`, `src/retrieval_grader.py`, `src/rag_pipeline.py`, `src/cache_service.py`, `src/guardrails.py`, `src/build_vector_store.py`, `src/manual_service.py`, model settings in `src/services.py`, or values in `src/config.py`.
+- `README.md` stays an entry point (overview, setup, API, deployment, limits). For a new feature, add one bullet to the README feature list and put the details in `architecture.md`; do not duplicate them.
+- Diagrams are written in Mermaid inside Markdown. Retired image diagrams live in `docs/archive/`.
