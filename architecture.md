@@ -110,7 +110,7 @@ flowchart TD
 > ⚠️ Redis set 沒有順序，快取超過 5 筆後，被檢查的 5 筆等同任意挑選，是否命中帶有隨機性。見[已知問題](#已知問題)。
 
 ### 4. 混合檢索（`hybrid_retriever.py`）
-- **BM25**：in-process `rank_bm25`，取前 `BM25_TOP_N`（10）筆。索引不存在、為空或出錯時，自動降級為 `vector_only`。
+- **BM25**：in-process `rank_bm25`，取前 `BM25_TOP_N`（10）筆。每次查詢前呼叫 `reload_if_stale()`，pointer 檔指向新版本時就重新載入，因此同步完成後 web 不需重啟即可使用新索引。索引不存在、為空或出錯時，自動降級為 `vector_only`。
 - **向量檢索**：Pinecone，以非同步 `asimilarity_search_with_score` 取前 `VECTOR_TOP_N`（10）筆（不支援時才 fallback 為 `asyncio.to_thread`）。呼叫以 lock 序列化。
 - **執行順序**：BM25（同步、in-process）先跑完，再 await 向量檢索，兩者**不是並行**。
 - **RRF 融合**：以 Reciprocal Rank Fusion（`RRF_K=60`）合併兩路排名，取前 `FUSION_TOP_M`（5）筆（由 10 減半以縮短重排時間）。
@@ -126,7 +126,7 @@ flowchart TD
 Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（台灣時區）、最近 3 輪對話（`format_history` 預設 `max_turns=3`）、Top 3 context，並要求以繁體中文回答；context 不相關時可改用一般知識回答。檢索使用改寫後的查詢，生成時則以原始問題搭配對話歷史。
 
 ### 8. 輸出防護與回應（`guardrails.py`、`chat_events.py`）
-完整答案生成後，先做 PII（email、電話、信用卡、身分證字號、IP）與 injection 掃描，通過後才以 typed NDJSON 事件分段送出：
+完整答案生成後，先做 PII（email、電話、信用卡、身分證字號、IP）與 injection 掃描（電話只比對台灣手機、台灣市話與 `+` 開頭的國際格式，不會誤判日期或一般數字），通過後才以 typed NDJSON 事件分段送出：
 
 | 事件 | 內容 |
 |------|------|
@@ -232,7 +232,7 @@ flowchart TB
 - **PDF 每次同步都會全量重做**：PDF 的 ID 每次重新產生，所以既有 PDF 向量全部被刪除、再重新 embedding 與 upsert。
 - 若 Pinecone `list()` 失敗，視為索引為空：所有文件重新 upsert，且不刪除任何向量。
 - 無論有無差異，每次同步都會用完整的本地文件重建 BM25 index；重建失敗不影響已完成的向量同步。
-- web 端目前只在 retriever 首次建立時載入 BM25 index，同步後需重啟 web 才會讀到新索引。見[已知問題](#已知問題)。
+- web 端在每次 BM25 查詢前檢查 pointer 檔，同步完成後的下一個查詢就會載入新索引。
 
 ## Key Parameters
 
@@ -259,7 +259,7 @@ flowchart TB
 - `tests/generate_rag_eval_data.py`：從知識庫抽樣 Q&A，由 LLM 把問題改寫成口語問法，原答案作為 `ground_truth`，輸出到 draft 檔，經人工審核後才升為 `tests/rag_eval_data.json`。
 - `tests/evaluate_rag.py`：用 golden set 直接呼叫檢索 chain（hybrid + rerank）與生成 chain，不經過路由、語意快取、自省重試與 guardrail，也不帶對話歷史；以 RAGAS 評估 faithfulness、answer_relevancy、context_precision、context_recall，judge 沿用專案的 Gemini 與 OpenAI embeddings。報告寫入 `tests/rag_eval_report.json`；任一指標低於門檻（預設 0.7，可用 `RAG_EVAL_MIN_<METRIC>` 覆寫）時 exit code 為 1。
 - `tests/evaluate_rerank.py`：評估重排效果。
-- 目前 `tests/rag_eval_report.json` 產生於 2026-06-27，早於 prompt 加入 `{today}` 變數（2026-08-21），之後尚未重新評估。見[已知問題](#已知問題)。
+- 目前 `tests/rag_eval_report.json` 產生於 2026-06-27，早於 prompt 加入 `{today}` 變數（2026-08-21）與之後的路由、檢索調整，需要重新執行評估才能反映現況。
 
 ## Performance Optimizations
 
@@ -284,7 +284,4 @@ flowchart TB
 
 | 問題 | 位置 | 影響 |
 |------|------|------|
-| 同步後 web 不會重新載入 BM25 index | `services.py`：`reload_if_stale()` 只在 `get_bm25_index()` 被呼叫時執行，而它只在 `HybridRetriever` singleton 建立時呼叫一次 | 上傳手冊後，BM25 仍使用舊索引，需重啟 web |
-| `evaluate_rag.py` 未傳入 `today` | `tests/evaluate_rag.py` 呼叫生成 chain 時缺少 prompt 需要的 `{today}` | 評估腳本無法執行（推論，尚未實際執行驗證） |
-| 電話 PII regex 會誤判日期 | `guardrails.py` 的 `phone` pattern 會命中 `2026-10-11` 這類日期 | 回答含日期時整段被替換為 guardrail 訊息 |
 | 語意快取只檢查任意 5 筆 | `cache_service.py`：`list(smembers(...))[:5]` | 快取超過 5 筆後命中帶有隨機性 |
