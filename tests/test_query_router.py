@@ -75,6 +75,38 @@ class TestRuleRoutingDirect:
         assert _rule_route(query) == "direct"
 
 
+class TestRuleRoutingSystemOperation:
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "如果我忘記我的密碼，我該怎麼辦？",
+            "我該如何登入我的帳號？",
+            "如何在多廠區管理中切換邊界？",
+            "我該如何審核數據條目？",
+            "請問報告及清冊會以何種格式呈現？",
+            "為什麼角色分為「管理者」、「部門管理者」及「部門人員」？",
+            "「外購電力」排放代表什麼？能舉例嗎？",
+            "「冷媒」的假設情境「實際使用量」及「平均逸散法」的差別是什麼？",
+            "我該如何進入 Org CFV 儀表板？",
+        ],
+    )
+    def test_system_operation_questions_route_to_rag(self, query):
+        assert _rule_route(query) == "rag"
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "什麼是機器學習？",
+            "推薦一本好看的小說",
+            "明天要不要帶傘？",
+            "幫我想一個生日派對的主題",
+            "遊戲角色怎麼練等",
+        ],
+    )
+    def test_general_questions_do_not_route_to_rag(self, query):
+        assert _rule_route(query) != "rag"
+
+
 class TestRuleRoutingUncertain:
     @pytest.mark.parametrize(
         "query",
