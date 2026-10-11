@@ -4,7 +4,17 @@ from typing import List, Tuple
 
 PII_PATTERNS = {
     "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
-    "phone": re.compile(r"\b(\+?\d{1,3}[-.\s]?)?(\d{2,4}[-.\s]?){2,4}\d{2,4}\b"),
+    # Specific phone shapes only: the previous generic digit-group pattern
+    # also matched dates (2026-10-11) and plain figures (123456 tCO2e).
+    # Digit lookarounds instead of \b, because CJK characters count as word
+    # characters and "電話0912345678" has no word boundary before the digits.
+    "phone": re.compile(
+        r"(?<![\d+])(?:"
+        r"09\d{2}[-\s]?\d{3}[-\s]?\d{3}"                      # TW mobile
+        r"|\(?0\d{1,2}\)?[-\s]?\d{3,4}[-\s]?\d{4}"             # TW landline
+        r"|\+\d{1,3}[-\s]?\(?\d{1,4}\)?(?:[-\s]?\d{2,4}){2,3}"  # international
+        r")(?!\d)"
+    ),
     "credit_card": re.compile(r"\b(?:\d[ -]*?){13,19}\b"),
     "taiwan_id": re.compile(r"\b[A-Z][12]\d{8}\b", re.IGNORECASE),
     "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
