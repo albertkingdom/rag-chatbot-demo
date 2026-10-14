@@ -38,4 +38,4 @@
 ## 9. 部署前確認與提交
 
 - [x] 9.1 由維運者確認正式環境 Redis 對單次回應大小與指令數的限制，必要時調整預設值並重新部署，或另案把 CACHE_MAX_ENTRIES 接進 docker-compose.yml 與 Terraform；這是人工步驟，驗證：PR 說明記錄確認結果與最終採用的值。
-- [ ] 9.2 提交訊息不得提及任何 AI 工具；提交、推送與開 PR 前先取得使用者確認；驗證：git log 的提交訊息不含 AI 工具名稱，PR 已指定 code review。
+- [x] 9.2 提交訊息不得提及任何 AI 工具；提交、推送與開 PR 前先取得使用者確認；驗證：git log 的提交訊息不含 AI 工具名稱，PR 已指定 code review。
