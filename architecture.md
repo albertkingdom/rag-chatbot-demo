@@ -324,5 +324,6 @@ flowchart TB
 | 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的檢索分數 0.645，高於門檻，仍以重設密碼流程回答並附來源 |
 | 快取查詢與寫入以同步 Redis 呼叫在 async 路徑執行 | `chat_service.py` 呼叫 `cache_service.py` | 查詢期間阻塞同一個事件迴圈；快取查詢範圍擴大後，每次讀回的資料量更大 |
 | 手冊同步後不清除語意快取 | `build_vector_store.py`、`cache_service.py`（`clear_cache` 沒有呼叫者） | 補上手冊後，24 小時內相似問題仍回舊答案 |
+| 命中計數以 get、ttl、setex 三步更新，不是原子操作 | `cache_service.py`：`_increment_hit_count` | 與同一 key 的重新寫入或淘汰交錯時，可能以舊內容覆蓋新值，或在淘汰後留下一筆沒有索引的資料 key（最長 24 小時後過期）；不會造成錯誤命中，窗口極小 |
 | 評分門檻 0.3 缺乏標註資料驗證 | `config.py`：`GRADE_SCORE_THRESHOLD` | 實測樣本中知識庫內問題 0.89–1.0、知識庫外約 0.0001，區分明顯，但樣本很小；接近門檻的問題行為未知 |
 | 評估題庫只有 6 題 | `tests/rag_eval_data.json` | 同一天兩次評分 faithfulness 就差 0.05，無法可靠比較版本；也沒有涵蓋路由、重試與低信心路徑 |
