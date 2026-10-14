@@ -7,6 +7,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 
 import langsmith
 from langsmith import traceable
@@ -27,9 +28,11 @@ from .config import CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD, RETRIEVAL_MAX_RET
 from .conversation_db import get_conversation_db
 from .guardrails import detect_pii, detect_prompt_injection, get_guardrail_message
 from .query_router import route_query
+from . import retrieval_grader
 from .rag_pipeline import _today_str, format_history
+from .rag_pipeline import LOW_CONFIDENCE_NOTE, LOW_CONFIDENCE_PREFIX
 from .rag_pipeline import get_generation_chain, get_retrieval_chain
-from .retrieval_grader import grade_documents, rewrite_for_retry
+from .retrieval_grader import get_top_score, grade_documents, rewrite_for_retry
 from .services import get_embeddings, get_redis_conn
 
 logger = logging.getLogger("chat_service")
@@ -68,6 +71,92 @@ async def _finish_response(
         cache_hit=cache_hit,
     )
     yield DoneEvent()
+
+
+@dataclass
+class _RetrievalOutcome:
+    """The retrieval kept for generation, plus how it was reached."""
+
+    bundle: dict
+    # Top-1 score of every retrieval actually executed, original first.
+    attempt_scores: list[float | None]
+    # Index into attempt_scores: 0 is the original query, 1 the first retry...
+    kept_attempt: int
+    # True only when retrying ended because the rewritten query was empty or
+    # repeated an earlier query.
+    retry_skipped: bool
+    low_confidence: bool
+    threshold: float
+
+    def as_metadata(self) -> dict:
+        return {
+            "retrieval": {
+                "top1_score": self.attempt_scores[self.kept_attempt],
+                "attempt_scores": self.attempt_scores,
+                "retry_count": len(self.attempt_scores) - 1,
+                "kept_attempt": self.kept_attempt,
+                "low_confidence": self.low_confidence,
+                "threshold": self.threshold,
+                "retry_skipped": self.retry_skipped,
+            }
+        }
+
+
+def _is_better(score: float | None, best: float | None) -> bool:
+    """A retry replaces the kept result only on a strictly higher top-1 score.
+
+    ``None`` (no documents) is the lowest possible score.
+    """
+    return score is not None and (best is None or score > best)
+
+
+async def _retrieve_best(rewritten_query: str) -> _RetrievalOutcome:
+    """Retrieve, retrying while grading fails, and keep the best attempt.
+
+    A retry that scores worse than what is already kept is discarded, and no
+    retrieval is made for a rewritten query that is empty or repeats any query
+    already tried (the rewrite call itself still happens first).
+    """
+    bundle = await get_retrieval_chain().ainvoke(rewritten_query)
+    attempt_scores = [get_top_score(bundle.get("rerank_scores", []))]
+    best = bundle
+    kept_attempt = 0
+    passed = grade_documents(best.get("rerank_scores", []))
+    tried = {rewritten_query.strip()}
+    last_query, last_bundle = rewritten_query, bundle
+    retry_skipped = False
+
+    while not passed and len(attempt_scores) - 1 < RETRIEVAL_MAX_RETRIES:
+        retry_query = (await rewrite_for_retry(last_query, last_bundle.get("docs", [])) or "").strip()
+        if not retry_query or retry_query in tried:
+            retry_skipped = True
+            break
+        tried.add(retry_query)
+        bundle = await get_retrieval_chain().ainvoke(retry_query)
+        score = get_top_score(bundle.get("rerank_scores", []))
+        attempt_scores.append(score)
+        if _is_better(score, attempt_scores[kept_attempt]):
+            best = bundle
+            kept_attempt = len(attempt_scores) - 1
+            passed = grade_documents(best.get("rerank_scores", []))
+        last_query, last_bundle = retry_query, bundle
+
+    outcome = _RetrievalOutcome(
+        bundle=best,
+        attempt_scores=attempt_scores,
+        kept_attempt=kept_attempt,
+        retry_skipped=retry_skipped,
+        low_confidence=not passed,
+        threshold=retrieval_grader.GRADE_SCORE_THRESHOLD,
+    )
+    logger.info(
+        "[Retrieval] attempts=%s kept=%d low_confidence=%s retry_skipped=%s",
+        attempt_scores,
+        kept_attempt,
+        outcome.low_confidence,
+        retry_skipped,
+    )
+    return outcome
 
 
 @traceable(name="RAG_DEMO Chat Events")
@@ -237,20 +326,15 @@ async def chat_event_stream(
         yield StatusEvent(
             stage="reranking", message="正在優化檢索結果…"
         )
-        context_bundle = await get_retrieval_chain().ainvoke(rewritten_query)
-
-        retry_count = 0
-        grade_passed = grade_documents(context_bundle.get("rerank_scores", []))
-        while not grade_passed and retry_count < RETRIEVAL_MAX_RETRIES:
-            retry_count += 1
-            retry_query = await rewrite_for_retry(
-                rewritten_query, context_bundle.get("docs", [])
-            )
-            context_bundle = await get_retrieval_chain().ainvoke(retry_query)
-            grade_passed = grade_documents(context_bundle.get("rerank_scores", []))
-
-        context = context_bundle.get("context", "")
-        sources = context_bundle.get("sources", [])
+        outcome = await _retrieve_best(rewritten_query)
+        # A low-confidence answer is not grounded in the knowledge base: its
+        # sources are not presented as citations, and the retrieved passages
+        # are not sent to the model either. A top-1 score this low means no FAQ
+        # question resembles the user's, and the model otherwise narrates the
+        # unrelated passage ("this text explains how to open the dashboard...").
+        context = "" if outcome.low_confidence else outcome.bundle.get("context", "")
+        sources = [] if outcome.low_confidence else outcome.bundle.get("sources", [])
+        retrieval_metadata = outcome.as_metadata()
 
         yield StatusEvent(stage="generating", message="正在生成回答…")
         history_text = format_history(history)
@@ -260,9 +344,18 @@ async def chat_event_stream(
                 "question": message,
                 "history": history_text,
                 "today": _today_str(),
+                "confidence_note": LOW_CONFIDENCE_NOTE if outcome.low_confidence else "",
             }
         ):
             full_response += chunk
+
+        if outcome.low_confidence and full_response.strip():
+            # Added after generation and before the output guardrail, so the
+            # streamed text, the history turn and the conversation record are
+            # all the same text and the label never depends on the model. An
+            # empty generation gets no notice: a header with nothing under it
+            # is worse than the empty answer it would decorate.
+            full_response = f"{LOW_CONFIDENCE_PREFIX}\n\n{full_response}"
 
         with langsmith.trace(name="Output Guardrail"):
             pii_hit, pii_type = detect_pii(full_response)
@@ -279,6 +372,7 @@ async def chat_event_stream(
                 metadata={
                     "pii_type": pii_type if pii_hit else None,
                     "injection_pattern": injection_pattern if injection_hit else None,
+                    **retrieval_metadata,
                 },
             )
             async for event in _finish_response(
@@ -292,7 +386,7 @@ async def chat_event_stream(
 
         history_service.append_turn(history_key, message, full_response)
         with langsmith.trace(name="Cache Write + DB Save"):
-            if CACHE_ENABLED and full_response:
+            if CACHE_ENABLED and full_response and not outcome.low_confidence:
                 PromptCacheService(get_redis_conn()).set_cached_response(
                     question_embedding,
                     message,
@@ -305,6 +399,7 @@ async def chat_event_stream(
                 session_id=session_id,
                 response_source="rag",
                 cache_hit=False,
+                metadata=retrieval_metadata,
             )
 
         async for event in _finish_response(

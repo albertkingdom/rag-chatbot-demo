@@ -79,22 +79,26 @@ flowchart TD
 
     Cache -- miss --> Retrieve[Hybrid Retrieve<br/>BM25 top10 + Pinecone top10<br/>RRF k=60 → top5]
     Retrieve --> Rerank[BGE Rerank → top3]
-    Rerank --> Grade{rerank top-1<br/>≥ 0.3?}
-    Grade -- 否, 未達重試上限 --> Retry[LLM 改寫查詢] --> Retrieve
-    Grade -- 是 / 已重試 1 次 --> Gen[Gemini 生成<br/>context + 最近 3 輪]
+    Rerank --> Grade{保留結果的<br/>rerank top-1 ≥ 0.3?}
+    Grade -- 否, 未達重試上限且改寫查詢未重複 --> Retry[LLM 改寫查詢] --> Retrieve
+    Grade -- 是 --> Gen[Gemini 生成<br/>context + 最近 3 輪]
+    Grade -- 否, 無法再重試 --> LowGen[Gemini 生成<br/>低信心說明 · context 與來源皆為空] --> Prefix[答案開頭加固定說明]
     Gen --> OutGuard3{輸出防護}
+    Prefix --> OutGuard3
     OutGuard3 -- 命中 --> GuardMsg
-    OutGuard3 -- 通過 --> Save[寫入語意快取<br/>＋ Redis 對話 · MongoDB]
+    OutGuard3 -- 通過, 高信心 --> Save[寫入語意快取<br/>＋ Redis 對話 · MongoDB]
+    OutGuard3 -- 通過, 低信心 --> SaveLow[Redis 對話 · MongoDB<br/>不寫語意快取]
     Save --> RagAns([回覆 source=rag])
+    SaveLow --> RagLow([回覆 source=rag<br/>不送來源])
 ```
 
-所有路徑都會寫入 MongoDB（guardrail 擋下的也會，並附上命中的 PII 類型或 injection pattern）；direct、cache、rag 三條正常回覆路徑都會把這一輪寫入 Redis 短期對話；只有 rag 路徑會寫入語意快取。
+所有路徑都會寫入 MongoDB（guardrail 擋下的也會，並附上命中的 PII 類型或 injection pattern）；direct、cache、rag 三條正常回覆路徑都會把這一輪寫入 Redis 短期對話；只有 rag 路徑會寫入語意快取，低信心的答案除外（見第 6、7 節）。rag 路徑寫入 MongoDB 時，metadata 帶有 `retrieval` 物件，記錄檢索分數與重試情形（見第 8 節）。
 
 ### 0. 輸入防護（`guardrails.py`）
 以 regex 掃描 prompt injection（中英文規則，例如「ignore previous instructions」、「系統提示」、「繞過」）。命中即回覆統一安全訊息，並以 `response_source="guardrail"` 寫入 MongoDB，不呼叫任何 LLM。
 
 ### 1. 混合路由與查詢改寫（`query_router.py`）
-- **Stage 1 規則層（零延遲）**：先比對知識庫關鍵字 → `rag`。知識庫是 CarbonM 系統操作 Q&A，所以關鍵字包含碳盤查術語（碳、排放、燃料、冷媒、scope 1/2/3…）與系統功能（密碼、登入、帳號、邊界、審核、清冊、報告書…）；以 2026-10-11 的 126 筆知識庫問題計算，122 筆可由規則層直接判定。代價是一般問題若含這些詞（例如「忘記 Gmail 密碼」）也會走 rag，此時 prompt 允許 context 不相關時改用一般知識回答。再比對一般問答模式（招呼、感謝、簡單算式、翻譯、寫程式、笑話）→ `direct`；其餘為 `uncertain`。領域關鍵字優先，避免同時符合兩者的查詢被誤判為 direct。
+- **Stage 1 規則層（零延遲）**：先比對知識庫關鍵字 → `rag`。知識庫是 CarbonM 系統操作 Q&A，所以關鍵字包含碳盤查術語（碳、排放、燃料、冷媒、scope 1/2/3…）與系統功能（密碼、登入、帳號、邊界、審核、清冊、報告書…）；以 2026-10-11 的 126 筆知識庫問題計算，122 筆可由規則層直接判定。代價是一般問題若含這些詞（例如「忘記 Gmail 密碼」）也會走 rag，此時 prompt 允許 context 不相關時改用一般知識回答。真實環境實測（2026-10-14）中，「忘記 Gmail 密碼」的 top-1 重排分數為 0.645，高於門檻，所以**不會**被視為低信心，而是以知識庫的重設密碼流程回答並附上來源；只有分數低於門檻的誤路由問題才會被視為低信心：開頭加上固定說明、不送來源、也不寫入語意快取（見第 7 節）。再比對一般問答模式（招呼、感謝、簡單算式、翻譯、寫程式、笑話）→ `direct`；其餘為 `uncertain`。領域關鍵字優先，避免同時符合兩者的查詢被誤判為 direct。
 - **規則命中且有對話歷史**：只呼叫 LLM 做查詢改寫（`_rewrite_only`），把追問（如「4.2 呢？」）改寫成獨立問題。
 - **Stage 2 LLM 層**：`uncertain` 的查詢交由 Gemini 2.5 Flash，以 Pydantic 結構化輸出（`RouterResult`）一次回傳 `route`、`rewritten_query`、`reasoning`。
 - **錯誤處理**：LLM 路由失敗時回退為 `direct`（不查知識庫）；`_rewrite_only` 失敗時沿用原始問題。
@@ -122,8 +126,22 @@ flowchart TD
 ### 6. 自省式檢索（`retrieval_grader.py`）
 以 reranker top-1 分數判斷檢索品質，低於 `GRADE_SCORE_THRESHOLD`（0.3）時，由 LLM 參考低品質結果改寫查詢並重跑檢索與重排，最多 `RETRIEVAL_MAX_RETRIES`（1）次。直接沿用重排分數，不額外呼叫 LLM 評分。
 
+- **保留較佳結果**：重試結果只有在 top-1 分數嚴格較高時才取代原結果，分數相同或較差都保留較早的結果；沒有檢索結果視為最低分。是否通過評分，以最終保留的結果判斷。
+- **停止重複重試**：改寫後的查詢（去除前後空白）為空，或與任何已試過的查詢相同（包含改寫失敗時回傳原查詢），就不再檢索並結束重試。改寫用的那一次 LLM 呼叫仍然會發生，省下的是檢索與重排。
+- **重試次數**：紀錄的 `retry_count` 只計實際執行的檢索，被略過的重試不計。
+- 重試迴圈與保留邏輯位於 `chat_service.py`；`retrieval_grader.py` 只提供評分（`grade_documents`）、取得 top-1 分數（`get_top_score`）與改寫（`rewrite_for_retry`）。
+
 ### 7. 生成（`rag_pipeline.py`）
 Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（台灣時區）、最近 3 輪對話（`format_history` 預設 `max_turns=3`）、Top 3 context，並要求以繁體中文回答；context 不相關時可改用一般知識回答。檢索使用改寫後的查詢，生成時則以原始問題搭配對話歷史。
+
+**低信心**：最終保留的檢索結果未通過評分（top-1 低於門檻，或完全沒有結果；等於門檻視為通過）時，視為低信心。此時仍會生成，但：
+
+- prompt 的 system 訊息加入低信心說明（`LOW_CONFIDENCE_NOTE`）：只有資料明確寫出答案時才可引用；關於 CarbonM 產品本身（功能、版本、價格、是否支援某項目等）而資料沒寫的問題，要說明無法確認，不推測也不斷言有或沒有；只有一般常識性的問題才以一般知識簡答；不得杜撰具體操作步驟、畫面或選單名稱。低信心時**不把檢索到的 context 交給模型**（context 以空字串傳入）：top-1 分數這麼低，代表沒有任何 FAQ 問題與使用者的問題相似，內容只會讓模型去描述無關的段落（真實環境曾出現「這段文字主要說明了如何進入…儀表板」）。模型只靠一般知識與提示詞回答。
+- 生成完成後、輸出防護之前，伺服器在答案開頭固定加上 `LOW_CONFIDENCE_PREFIX` 與一個空行，所以標示不依賴模型是否遵守；串流文字、Redis 對話與 MongoDB 紀錄是同一份文字。
+- 回答為空時不加固定說明。
+- 不送出來源事件，也不寫入語意快取；回應來源仍是 `rag`。
+- 若答案被輸出防護攔截，沿用既有的防護行為（回覆安全訊息、不寫對話歷史與快取）。
+- 固定說明與低信心說明都以測試確認不會觸發輸入輸出防護規則。
 
 ### 8. 輸出防護與回應（`guardrails.py`、`chat_events.py`）
 完整答案生成後，先做 PII（email、電話、信用卡、身分證字號、IP）與 injection 掃描（電話只比對台灣手機、台灣市話與 `+` 開頭的國際格式，不會誤判日期或一般數字），通過後才以 typed NDJSON 事件分段送出：
@@ -132,9 +150,11 @@ Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（�
 |------|------|
 | `status` | 只在 rag 路徑送出：`retrieving`（embedding 與查快取之前）、`reranking`（混合檢索、重排與重試之前）、`generating`（生成之前）。direct 路徑不送 status |
 | `delta` | 答案分段文字 |
-| `sources` | 檢索來源摘要 |
+| `sources` | 檢索來源摘要；低信心的答案不送出（視為沒有來源） |
 | `metadata` | `elapsedMs`、`responseSource`（rag / direct / cache / guardrail）、`cacheHit` |
 | `done` / `error` | 結束或錯誤 |
+
+rag 路徑的 MongoDB 紀錄（包含被輸出防護攔截的）在 `metadata.retrieval` 記錄：`top1_score`（保留結果的 top-1 分數，無結果為 null）、`attempt_scores`（每次實際檢索的 top-1 分數，原查詢在前）、`retry_count`、`kept_attempt`（0 為原查詢）、`low_confidence`、`threshold`（評分當下的門檻）與 `retry_skipped`（是否因改寫查詢為空或重複而提早結束重試）。快取命中與 direct 路徑沒有檢索，不帶此欄位。
 
 Redis 短期對話以 `CHAT_HISTORY_TTL_SECONDS` 控制（預設閒置 30 分鐘過期），保留 `CHAT_HISTORY_MAX_TURNS` 輪。
 
@@ -179,19 +199,20 @@ sequenceDiagram
             F->>P: vector top 10 (after BM25)
             F->>F: RRF fuse → top 5
             F->>RR: rerank → top 3
-            opt top-1 score < 0.3 (max 1 retry)
+            opt top-1 score < 0.3 (max 1 retry; keep the better attempt, stop on a repeated query)
                 F->>G: rewrite for retry
                 F->>B: re-retrieve
                 F->>P: re-retrieve
                 F->>RR: re-rerank
             end
             F-->>U: status: generating
+            Note over F,G: low confidence: add low-confidence note to the prompt, prepend fixed notice to the answer
             F->>G: generate (context + history)
             G-->>F: full answer
             F->>GR: PII / injection scan
-            F->>R: store cache + chat history
+            F->>R: store cache (skipped when low confidence) + chat history
             F->>M: save conversation
-            F-->>U: delta… sources, metadata, done
+            F-->>U: delta… sources (omitted when low confidence), metadata, done
         end
     end
 ```
@@ -258,7 +279,7 @@ flowchart TB
 ## Evaluation
 
 - `tests/generate_rag_eval_data.py`：從知識庫抽樣 Q&A，由 LLM 把問題改寫成口語問法，原答案作為 `ground_truth`，輸出到 draft 檔，經人工審核後才升為 `tests/rag_eval_data.json`。
-- `tests/evaluate_rag.py`：用 golden set 直接呼叫檢索 chain（hybrid + rerank）與生成 chain，不經過路由、語意快取、自省重試與 guardrail，也不帶對話歷史；以 RAGAS 評估 faithfulness、answer_relevancy、context_precision、context_recall，judge 沿用專案的 Gemini 與 OpenAI embeddings。報告寫入 `tests/rag_eval_report.json`；任一指標低於門檻（預設 0.7，可用 `RAG_EVAL_MIN_<METRIC>` 覆寫）時 exit code 為 1。
+- `tests/evaluate_rag.py`：用 golden set 直接呼叫檢索 chain（hybrid + rerank）與生成 chain，不經過路由、語意快取、自省重試與 guardrail，也不帶對話歷史，因此也不涵蓋低信心路徑（固定說明、省略來源、不寫快取）；以 RAGAS 評估 faithfulness、answer_relevancy、context_precision、context_recall，judge 沿用專案的 Gemini 與 OpenAI embeddings。報告寫入 `tests/rag_eval_report.json`；任一指標低於門檻（預設 0.7，可用 `RAG_EVAL_MIN_<METRIC>` 覆寫）時 exit code 為 1。
 - `tests/evaluate_rerank.py`：評估重排效果。
 - ragas（0.2.x 到 0.4.3）在 import 時需要 langchain-community 0.4 已移除的 Vertex AI 類別，而 langchain-community 不能降回 0.3（會讓 reranker 無法 import）。`tests/ragas_compat.py` 在 import ragas 前補上不會被使用的替代類別，`tests/test_ragas_compat.py` 確保 ragas 與 reranker 都能 import。
 - 題庫內容與知識庫一致，都是 CarbonM 系統操作的 Q&A（例如密碼重設、角色權限）。
@@ -288,3 +309,21 @@ flowchart TB
 | 問題 | 位置 | 影響 |
 |------|------|------|
 | 語意快取只檢查任意 5 筆 | `cache_service.py`：`list(smembers(...))[:5]` | 快取超過 5 筆後命中帶有隨機性 |
+
+### 2026-10-14 實測發現的問題（尚未處理）
+
+來源：真實環境端到端測試（OpenAI、OpenRouter、Pinecone 唯讀、本機 BGE 重排器、隔離的 Redis 與 MongoDB）與程式碼審查。以下問題都還沒有建立變更提案。
+
+| 問題 | 位置 | 影響 |
+|------|------|------|
+| 輸出防護的 email 規則會誤擋含客服信箱的正常答案 | `guardrails.py`：`PII_PATTERNS["email"]` | 真實環境中「密碼忘記了要怎麼重設啊？」（檢索分數 0.998）的答案因帶有客服信箱，被換成安全訊息 |
+| email 緊貼中文字時不會被偵測 | 同上（`\b` 邊界在中文字旁不成立） | 「…客服信箱support@example.com以…」會原樣送出；實測「忘記 Gmail 密碼」的答案就送出了知識庫中的客服信箱。與上一列合起來，是同時有誤擋與漏判 |
+| 輸入端 injection 規則過寬 | `guardrails.py`：`INJECTION_PATTERNS`（`password`、`token`、`secret`、`api key`、`bypass`、`顯示系統` 等） | 「How do I reset my password?」「What is a token?」等正常問題被擋；純中文「密碼」不受影響；輸出端使用同一份清單，答案夾英文原詞也可能被擋；`test_guardrails.py` 沒有任何 injection 測試 |
+| 信用卡與 IP 規則誤判一般內容 | `guardrails.py`：`credit_card`（13–19 位數字，沒有 Luhn 檢查）、`ip_address` | 「2023 2024 2025 2026」被判成信用卡，章節號「1.2.3.4」被判成 IP；碳盤查的年度數字容易誤擋 |
+| 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的檢索分數 0.645，高於門檻，仍以重設密碼流程回答並附來源 |
+| 快取查詢與寫入以同步 Redis 呼叫在 async 路徑執行 | `chat_service.py` 呼叫 `cache_service.py` | 查詢期間阻塞同一個事件迴圈；快取查詢範圍擴大後，每次讀回的資料量更大 |
+| 手冊同步後不清除語意快取 | `build_vector_store.py`、`cache_service.py`（`clear_cache` 沒有呼叫者） | 補上手冊後，24 小時內相似問題仍回舊答案 |
+| 評分門檻 0.3 缺乏標註資料驗證 | `config.py`：`GRADE_SCORE_THRESHOLD` | 實測樣本中知識庫內問題 0.89–1.0、知識庫外約 0.0001，區分明顯，但樣本很小；接近門檻的問題行為未知 |
+| 評估題庫只有 6 題 | `tests/rag_eval_data.json` | 同一天兩次評分 faithfulness 就差 0.05，無法可靠比較版本；也沒有涵蓋路由、重試與低信心路徑 |
+
+另見上表「語意快取只檢查任意 5 筆」：本機實測 12 個相異的知識庫問題各問兩次，第二輪只命中 5 筆，剛好等於檢查視窗。

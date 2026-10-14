@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.documents import Document
 
-from src.retrieval_grader import grade_documents, rewrite_for_retry
+from src.retrieval_grader import get_top_score, grade_documents, rewrite_for_retry
 from src.config import GRADE_SCORE_THRESHOLD, RETRIEVAL_MAX_RETRIES
 
 
@@ -61,6 +61,46 @@ class TestGradeDocuments:
             {"rank": 1, "score": "0.1000", "content": "top rank, low score"},
         ]
         assert grade_documents(rerank_scores) is False
+
+
+# ---------------------------------------------------------------------------
+# get_top_score — shares the rank-1 rule with grade_documents
+# ---------------------------------------------------------------------------
+
+
+class TestGetTopScore:
+    def test_returns_rank_1_score_as_float(self):
+        rerank_scores = [
+            {"rank": 1, "score": "0.9500", "content": "a"},
+            {"rank": 2, "score": "0.7000", "content": "b"},
+        ]
+        assert get_top_score(rerank_scores) == pytest.approx(0.95)
+
+    def test_empty_list_returns_none_not_zero(self):
+        assert get_top_score([]) is None
+
+    def test_uses_rank_1_regardless_of_list_order(self):
+        rerank_scores = [
+            {"rank": 2, "score": "0.9000", "content": "second best"},
+            {"rank": 1, "score": "0.1000", "content": "top rank, low score"},
+        ]
+        assert get_top_score(rerank_scores) == pytest.approx(0.1)
+
+    @pytest.mark.parametrize(
+        "score, expected_pass",
+        [("0.2900", False), ("0.3000", True), ("0.3100", True)],
+    )
+    def test_agrees_with_grade_documents_at_the_threshold(
+        self, monkeypatch, score, expected_pass
+    ):
+        # The threshold can be overridden by environment variable, so pin it.
+        monkeypatch.setattr("src.retrieval_grader.GRADE_SCORE_THRESHOLD", 0.30)
+        rerank_scores = [{"rank": 1, "score": score, "content": "x"}]
+
+        top = get_top_score(rerank_scores)
+
+        assert (top >= 0.30) is expected_pass
+        assert grade_documents(rerank_scores) is expected_pass
 
 
 # ---------------------------------------------------------------------------
