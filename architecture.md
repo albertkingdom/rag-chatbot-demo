@@ -109,9 +109,12 @@ flowchart TD
 不檢索、不查語意快取，直接以 QA prompt 生成（context 為空），生成後同樣經過輸出防護。
 
 ### 3. 語意快取（`cache_service.py`）
-以改寫後的查詢做 OpenAI embedding，從 Redis set（`smembers`）取出快取 key 後只檢查其中 `CACHE_MAX_SEARCH_RESULTS`（5）筆，在 Python 中計算 cosine similarity，**> 0.95** 視為命中（TTL 24 小時）。命中的答案仍須通過 PII / injection 檢查才回傳；寫入時以同一個 embedding 為 key。
+以改寫後的查詢做 OpenAI embedding，在 Python 中與快取索引內**全部**條目計算 cosine similarity，取相似度最高且 **> 0.95** 的一筆視為命中（TTL 24 小時）。命中的答案仍須通過 PII / injection 檢查才回傳；寫入時以同一個 embedding 為 key。
 
-> ⚠️ Redis set 沒有順序，快取超過 5 筆後，被檢查的 5 筆等同任意挑選，是否命中帶有隨機性。見[已知問題](#已知問題)。
+- **索引**：Redis Sorted Set `prompt_cache:index:zset`，成員是資料 key，score 是寫入時間（秒）。上限為 `CACHE_MAX_ENTRIES`（預設 50）：每次寫入在同一個交易中依序登記、選出最新 N 筆以外的成員、從索引移除，交易完成後再刪除這些成員的資料 key。淘汰是先進先出，命中不會更新順序；同一問題重複寫入只更新 score 並保留 `hit_count`。
+- **查詢**：取索引最近 N 筆（也就是整個索引），以單一 `MGET` 讀回；索引為空時不發出讀取。已過期的成員在同一次查詢中移出索引；內容無法使用的成員（不是 JSON 物件、`answer` 不是非空字串、`sources` 缺漏或不是字串清單）也一併移出；embedding 缺漏、不是數字陣列或維度不符的只略過。單筆損壞不會讓整次查詢失敗。
+- **舊索引**：先前版本的 Set 索引 `prompt_cache:index` 不遷移，查詢與寫入都不再讀寫它；部署後快取等同冷啟動，舊資料 key 在 24 小時內自然過期。`clear_cache` 會一併刪除新舊索引與其登記的資料 key。
+- **成本**：每次走 rag 的請求都要讀回並解析整個索引（50 筆約 1.8MB），而且是在 async 路徑中同步執行（見[已知問題](#已知問題)）。`scripts/benchmark_cache_lookup.py` 以合成資料量測：50 筆約 17 毫秒、100 筆約 35 毫秒（開發機，不含網路傳輸），耗時約九成在 JSON 解析。
 
 ### 4. 混合檢索（`hybrid_retriever.py`）
 - **BM25**：in-process `rank_bm25`，取前 `BM25_TOP_N`（10）筆。查詢前最多每 `BM25_RELOAD_INTERVAL_SECONDS`（30 秒）檢查一次 pointer 檔（`reload_if_stale()`），指向新版本時就重新載入，因此同步完成後 web 不需重啟，最多約 30 秒內改用新索引。pointer 檔只在手冊同步完成時更新，正式環境又放在 GCS 掛載目錄，所以不每次查詢都讀。索引不存在、為空或出錯時，自動降級為 `vector_only`。
@@ -268,7 +271,7 @@ flowchart TB
 | Retrieval Grader | `GRADE_SCORE_THRESHOLD` | 0.3 | `config.py`（env 可覆寫） |
 | Retrieval Grader | `RETRIEVAL_MAX_RETRIES` | 1 | `config.py`（env 可覆寫） |
 | Semantic Cache | `CACHE_SIMILARITY_THRESHOLD` / `CACHE_TTL_SECONDS` | 0.95（嚴格大於）/ 24 hours | `config.py` |
-| Semantic Cache | `CACHE_MAX_SEARCH_RESULTS` | 5 | `config.py` |
+| Semantic Cache | `CACHE_MAX_ENTRIES` | 50（索引上限，同時是查詢比對的範圍；須為不小於 1 的整數，未設定或無效時為 50，無效值會記錄警告） | `config.py`（env 可覆寫；正式環境的 docker-compose.yml 與 Terraform 尚未傳遞這個變數，目前無法在正式環境調整） |
 | Chat History | `CHAT_HISTORY_MAX_TURNS` / `CHAT_HISTORY_TTL_SECONDS` | 3 / 30 minutes | `config.py`（env 可覆寫） |
 | Prompt History | `max_turns` | 3 | `rag_pipeline.py`（`format_history` 預設值） |
 | Embedding | Dimensions / batch | 1536 / 100 docs per call | `build_vector_store.py` |
@@ -306,9 +309,7 @@ flowchart TB
 
 ## 已知問題
 
-| 問題 | 位置 | 影響 |
-|------|------|------|
-| 語意快取只檢查任意 5 筆 | `cache_service.py`：`list(smembers(...))[:5]` | 快取超過 5 筆後命中帶有隨機性 |
+原本列在這裡的問題已修正；目前仍存在的問題都列在下一節。
 
 ### 2026-10-14 實測發現的問題（尚未處理）
 
@@ -323,7 +324,6 @@ flowchart TB
 | 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的檢索分數 0.645，高於門檻，仍以重設密碼流程回答並附來源 |
 | 快取查詢與寫入以同步 Redis 呼叫在 async 路徑執行 | `chat_service.py` 呼叫 `cache_service.py` | 查詢期間阻塞同一個事件迴圈；快取查詢範圍擴大後，每次讀回的資料量更大 |
 | 手冊同步後不清除語意快取 | `build_vector_store.py`、`cache_service.py`（`clear_cache` 沒有呼叫者） | 補上手冊後，24 小時內相似問題仍回舊答案 |
+| 命中計數以 get、ttl、setex 三步更新，不是原子操作 | `cache_service.py`：`_increment_hit_count` | 與同一 key 的重新寫入或淘汰交錯時，可能以舊內容覆蓋新值，或在淘汰後留下一筆沒有索引的資料 key（最長 24 小時後過期）；不會造成錯誤命中，窗口極小 |
 | 評分門檻 0.3 缺乏標註資料驗證 | `config.py`：`GRADE_SCORE_THRESHOLD` | 實測樣本中知識庫內問題 0.89–1.0、知識庫外約 0.0001，區分明顯，但樣本很小；接近門檻的問題行為未知 |
 | 評估題庫只有 6 題 | `tests/rag_eval_data.json` | 同一天兩次評分 faithfulness 就差 0.05，無法可靠比較版本；也沒有涵蓋路由、重試與低信心路徑 |
-
-另見上表「語意快取只檢查任意 5 筆」：本機實測 12 個相異的知識庫問題各問兩次，第二輪只命中 5 筆，剛好等於檢查視窗。
