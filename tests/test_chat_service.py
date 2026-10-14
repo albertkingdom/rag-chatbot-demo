@@ -169,6 +169,12 @@ def context_used(providers):
     return providers.generation.payloads[-1]["context"]
 
 
+def kept_attempt(providers):
+    """Which attempt was kept (0 = original). Low-confidence answers send no
+    context to the model, so the context cannot identify the kept attempt."""
+    return saved_metadata(providers)["retrieval"]["kept_attempt"]
+
+
 class TestRetryKeepsTheBetterRetrieval:
     @pytest.mark.parametrize(
         "first, retry, kept",
@@ -187,7 +193,7 @@ class TestRetryKeepsTheBetterRetrieval:
 
         asyncio.run(collect())
 
-        assert context_used(graded) == kept
+        assert kept_attempt(graded) == (0 if kept == "ORIG" else 1)
         assert graded.retrieval.ainvoke.await_count == 2
 
     def test_the_retry_is_made_with_the_rewritten_query(self, graded):
@@ -226,7 +232,7 @@ class TestRedundantRetriesAreSkipped:
 
         assert graded.retrieval.ainvoke.await_count == 1
         assert graded.rewrite.await_count == 1  # the rewrite itself still happens
-        assert context_used(graded) == "ORIG"
+        assert kept_attempt(graded) == 0
         retrieval = saved_metadata(graded)["retrieval"]
         assert retrieval["retry_count"] == 0
         assert retrieval["retry_skipped"] is True
@@ -297,6 +303,52 @@ class TestLowConfidenceAnswers:
         assert streamed == LOW_CONFIDENCE_PREFIX + "\n\n" + "完整回答"
         graded.history.append_turn.assert_called_once_with("server-session", "question", streamed)
         assert graded.database.async_save_conversation.call_args.kwargs["assistant_response"] == streamed
+
+    def test_unrelated_context_is_not_sent_to_the_model(self, graded):
+        # Review finding: with the context kept, the model described unrelated
+        # passages ("this text explains how to open the dashboard...").
+        graded.retrieval.ainvoke.side_effect = [bundle(0.0001, context="UNRELATED PASSAGE")]
+
+        asyncio.run(collect())
+
+        assert graded.generation.payloads[-1]["context"] == ""
+        assert graded.generation.payloads[-1]["confidence_note"] == LOW_CONFIDENCE_NOTE
+
+    def test_context_is_still_sent_when_confidence_is_high(self, graded):
+        graded.retrieval.ainvoke.side_effect = [bundle(0.80, context="RELEVANT PASSAGE")]
+
+        asyncio.run(collect())
+
+        assert graded.generation.payloads[-1]["context"] == "RELEVANT PASSAGE"
+
+    def test_empty_generation_gets_no_notice(self, graded):
+        # Review finding: a notice with nothing under it is worse than no answer.
+        graded.retrieval.ainvoke.side_effect = [bundle(0.20)]
+
+        async def empty(_payload):
+            return
+            yield  # makes this an async generator that yields nothing
+
+        graded.generation.astream = empty
+
+        events = asyncio.run(collect())
+
+        assert delta_text(events) == ""
+        graded.history.append_turn.assert_called_once_with("server-session", "question", "")
+        assert graded.database.async_save_conversation.call_args.kwargs["assistant_response"] == ""
+        graded.cache.set_cached_response.assert_not_called()
+
+    def test_whitespace_only_generation_gets_no_notice(self, graded):
+        graded.retrieval.ainvoke.side_effect = [bundle(0.20)]
+
+        async def blank(_payload):
+            yield "  \n "
+
+        graded.generation.astream = blank
+
+        events = asyncio.run(collect())
+
+        assert LOW_CONFIDENCE_PREFIX not in delta_text(events)
 
     def test_low_confidence_answer_is_not_cached_but_is_stored(self, graded):
         graded.retrieval.ainvoke.side_effect = [bundle(0.20)]

@@ -327,9 +327,12 @@ async def chat_event_stream(
             stage="reranking", message="正在優化檢索結果…"
         )
         outcome = await _retrieve_best(rewritten_query)
-        context = outcome.bundle.get("context", "")
-        # A low-confidence answer is not grounded in the knowledge base, so the
-        # (unrelated) sources are not presented as citations.
+        # A low-confidence answer is not grounded in the knowledge base: its
+        # sources are not presented as citations, and the retrieved passages
+        # are not sent to the model either. A top-1 score this low means no FAQ
+        # question resembles the user's, and the model otherwise narrates the
+        # unrelated passage ("this text explains how to open the dashboard...").
+        context = "" if outcome.low_confidence else outcome.bundle.get("context", "")
         sources = [] if outcome.low_confidence else outcome.bundle.get("sources", [])
         retrieval_metadata = outcome.as_metadata()
 
@@ -346,10 +349,12 @@ async def chat_event_stream(
         ):
             full_response += chunk
 
-        if outcome.low_confidence:
+        if outcome.low_confidence and full_response.strip():
             # Added after generation and before the output guardrail, so the
             # streamed text, the history turn and the conversation record are
-            # all the same text and the label never depends on the model.
+            # all the same text and the label never depends on the model. An
+            # empty generation gets no notice: a header with nothing under it
+            # is worse than the empty answer it would decorate.
             full_response = f"{LOW_CONFIDENCE_PREFIX}\n\n{full_response}"
 
         with langsmith.trace(name="Output Guardrail"):
