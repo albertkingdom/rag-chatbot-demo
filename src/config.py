@@ -2,7 +2,11 @@
 Configuration constants for the application.
 """
 
+import logging
 import os
+from typing import Optional
+
+logger = logging.getLogger("config")
 
 # Directory for storing uploaded user manuals and other data sources.
 # Local default keeps the relative path; on GCP, Cloud Run sets this to a
@@ -29,7 +33,36 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CACHE_ENABLED = True
 CACHE_TTL_SECONDS = 86400  # 24 hours
 CACHE_SIMILARITY_THRESHOLD = 0.95  # Cosine similarity threshold for cache hits
-CACHE_MAX_SEARCH_RESULTS = 5  # Max number of cache entries to check for similarity
+
+DEFAULT_CACHE_MAX_ENTRIES = 50
+
+
+def parse_cache_max_entries(raw: Optional[str]) -> int:
+    """Resolve CACHE_MAX_ENTRIES: an integer >= 1, else the default of 50.
+
+    Unset yields the default silently. A value that is set but is not an
+    integer, or is below 1, yields the default and logs a warning. It never
+    raises, so a bad cache setting cannot stop the application from starting.
+    """
+    if raw is None:
+        return DEFAULT_CACHE_MAX_ENTRIES
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = None
+    if value is None or value < 1:
+        logger.warning(
+            "Invalid CACHE_MAX_ENTRIES=%r (must be an integer >= 1); using default %d",
+            raw,
+            DEFAULT_CACHE_MAX_ENTRIES,
+        )
+        return DEFAULT_CACHE_MAX_ENTRIES
+    return value
+
+
+# Max entries kept in the semantic cache index. Also the number of entries a
+# lookup compares, so it bounds both memory and per-request lookup cost.
+CACHE_MAX_ENTRIES = parse_cache_max_entries(os.environ.get("CACHE_MAX_ENTRIES"))
 
 # Agentic RAG: retrieval grading & retry
 GRADE_SCORE_THRESHOLD = float(os.environ.get("GRADE_SCORE_THRESHOLD", "0.3"))
