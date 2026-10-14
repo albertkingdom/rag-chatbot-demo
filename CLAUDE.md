@@ -35,7 +35,8 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 - Branch naming convention: `feature/{feature-name}`
 - Before implementation, there must be a planning document or a completed Spectra flow (`/spectra-propose`).
 - Update `README.md` to reflect new features before merging.
-- A PR must go through code review before merging.
+- Code review MUST be completed, and every blocking or important finding resolved, before a PR is opened.
+- Handle review findings as described in the `review-findings` skill (`.claude/skills/review-findings/`).
 
 ### Commit Messages
 
