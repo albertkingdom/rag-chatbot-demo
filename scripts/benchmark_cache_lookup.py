@@ -59,17 +59,37 @@ def build_values(count: int, seed: int = 0) -> tuple[list[bytes], list[bytes], l
 
 
 class InMemoryRedis:
-    """Just the commands a lookup that finds nothing to purge or hit issues."""
+    """Just the commands a lookup that finds nothing to purge or hit issues.
+
+    It counts what it served, because get_cached_response swallows every
+    exception and returns None: without the counts, a stub that fails early
+    would look like a very fast lookup.
+    """
 
     def __init__(self, members: list[bytes], values: list[bytes]):
         self._members = list(reversed(members))  # newest first, like ZREVRANGE
         self._values = dict(zip(members, values))
+        self.mget_calls = 0
+        self.keys_served = 0
 
     def zrevrange(self, name, start, end):
         return self._members[start:end + 1]
 
     def mget(self, keys):
+        self.mget_calls += 1
+        self.keys_served += len(keys)
         return [self._values[k] for k in keys]
+
+
+def verify_full_scan(stub: InMemoryRedis, result, count: int, lookups: int) -> None:
+    """Fail loudly unless every lookup read all `count` entries and found no match."""
+    if result is not None:
+        raise SystemExit("benchmark invalid: the synthetic query matched an entry")
+    if stub.mget_calls != lookups or stub.keys_served != lookups * count:
+        raise SystemExit(
+            f"benchmark invalid: expected {lookups} MGET calls reading {lookups * count} keys, "
+            f"got {stub.mget_calls} calls reading {stub.keys_served}"
+        )
 
 
 def median_ms(fn, repeat: int) -> float:
@@ -85,7 +105,8 @@ def median_ms(fn, repeat: int) -> float:
 def measure(count: int, repeat: int) -> dict:
     members, values, query = build_values(count)
     payload_mb = sum(len(v) for v in values) / 1e6
-    service = PromptCacheService(InMemoryRedis(members, values), max_entries=count)
+    stub = InMemoryRedis(members, values)
+    service = PromptCacheService(stub, max_entries=count)
 
     parsed = [json.loads(v) for v in values]
     embeddings = [entry["embedding"] for entry in parsed]
@@ -96,6 +117,9 @@ def measure(count: int, repeat: int) -> dict:
         for vec in arrays:
             float(np.dot(query_array, vec) / (np.linalg.norm(query_array) * np.linalg.norm(vec)))
 
+    lookup_ms = median_ms(lambda: service.get_cached_response(query), repeat)
+    verify_full_scan(stub, service.get_cached_response(query), count, lookups=repeat + 2)
+
     return {
         "entries": count,
         "payload_mb": payload_mb,
@@ -103,7 +127,7 @@ def measure(count: int, repeat: int) -> dict:
         "numpy_ms": median_ms(lambda: [np.array(e) for e in embeddings], repeat),
         "cosine_ms": median_ms(cosine, repeat),
         # The real code path: decode, validate, convert and compare every entry.
-        "lookup_ms": median_ms(lambda: service.get_cached_response(query), repeat),
+        "lookup_ms": lookup_ms,
     }
 
 
@@ -130,6 +154,8 @@ def main() -> int:
         verdict = "within" if at_default["lookup_ms"] <= args.threshold_ms else "OVER"
         print(f"\n50 entries, full lookup {at_default['lookup_ms']:.2f} ms: "
               f"{verdict} the {args.threshold_ms:.0f} ms budget")
+        if verdict == "OVER":
+            return 1
     return 0
 
 
