@@ -3,8 +3,9 @@
 Evaluates whether the reranker's top-1 score is good enough to trust the
 retrieved documents, and — when it isn't — rewrites the user's query so a
 second retrieval pass can try a different angle. This module is intentionally
-narrow: it does NOT own the retry loop (that lives in rag_pipeline.py); it
-only answers "is this good enough?" and "give me a better query".
+narrow: it does NOT own the retry loop (that lives in chat_service.py, which
+also decides which attempt to keep); it only answers "is this good enough?",
+"what was the top score?" and "give me a better query".
 """
 
 import logging
@@ -15,6 +16,26 @@ from .config import GRADE_SCORE_THRESHOLD
 from .services import get_llm
 
 logger = logging.getLogger("retrieval_grader")
+
+
+def get_top_score(rerank_scores: list[dict]) -> float | None:
+    """Returns the rank-1 rerank score as a float.
+
+    Args:
+        rerank_scores: the ``rerank_scores`` list produced by
+            :func:`src.rerank_stage.rerank_candidates`. The rank-1 entry is
+            picked by its ``rank`` field, not by list position.
+
+    Returns:
+        The top-1 score, or ``None`` when ``rerank_scores`` is empty (no
+        documents were retrieved). ``None`` is deliberately not ``0.0`` so
+        callers can tell "no documents" apart from "score of zero".
+    """
+    if not rerank_scores:
+        return None
+
+    top = min(rerank_scores, key=lambda entry: entry["rank"])
+    return float(top["score"])
 
 
 @traceable(name="Retrieval Grade")
@@ -31,11 +52,9 @@ def grade_documents(rerank_scores: list[dict]) -> bool:
         ``GRADE_SCORE_THRESHOLD`` (quality sufficient, no retry needed),
         ``False`` otherwise (including when ``rerank_scores`` is empty).
     """
-    if not rerank_scores:
+    top_score = get_top_score(rerank_scores)
+    if top_score is None:
         return False
-
-    top = min(rerank_scores, key=lambda entry: entry["rank"])
-    top_score = float(top["score"])
 
     passed = top_score >= GRADE_SCORE_THRESHOLD
     logger.info(

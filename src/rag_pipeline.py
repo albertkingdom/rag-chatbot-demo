@@ -25,6 +25,35 @@ from .services import (
 # Prompt
 # ---------------------------------------------------------------------------
 
+# Low-confidence retrieval handling (see openspec change
+# handle-low-confidence-retrieval).
+#
+# LOW_CONFIDENCE_PREFIX is prepended to the answer by chat_service, so the
+# label never depends on the model complying. It must not trip the input /
+# output guardrail patterns (guarded by tests/test_rag_prompt.py).
+LOW_CONFIDENCE_PREFIX = (
+    "知識庫中查無與此問題直接相關的資料，"
+    "以下為一般性參考說明，實際操作請以官方操作手冊或系統畫面為準。"
+)
+
+# LOW_CONFIDENCE_NOTE is appended to the system message (via the
+# `confidence_note` prompt variable) only for low-confidence retrievals.
+# It starts with a newline on purpose: the template appends the variable
+# directly after the last sentence, so an empty note renders byte-for-byte
+# like the prompt did before this variable existed.
+LOW_CONFIDENCE_NOTE = (
+    "\n檢索到的資料與問題的相關性低。"
+    "只有在資料中明確寫出能回答問題的內容時才可引用。"
+    "若問題是關於 CarbonM 產品本身（功能、介面、版本、價格、是否支援某項目等）而資料中沒有寫，"
+    "請明確說明無法確認，不要推測，也不要斷言有或沒有；"
+    "只有一般常識性的問題才可以用一般知識簡短回答。"
+    "不得杜撰 CarbonM 系統的具體操作步驟、畫面或選單名稱；"
+    "不需要重複說明知識庫查無資料，系統會自行加註。"
+)
+
+# `confidence_note` defaults to "" through partial(): callers that do not pass
+# it (the direct-answer path, tests/evaluate_rag.py) keep working unchanged,
+# and a value passed at invoke time overrides the default.
 _QA_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You are a helpful assistant with expertise in carbon management (CarbonM).\n"
@@ -34,12 +63,12 @@ _QA_PROMPT = ChatPromptTemplate.from_messages([
      "Do not provide medical, legal, or financial advice.\n"
      "Use the provided context to answer the user's question. "
      "If the context is not relevant or empty, answer based on your general knowledge.\n"
-     "Keep the answer concise and helpful."),
+     "Keep the answer concise and helpful.{confidence_note}"),
     ("human",
      "{history}\n\n"
      "Context:\n{context}\n\n"
      "Question:\n{question}"),
-])
+]).partial(confidence_note="")
 
 
 # ---------------------------------------------------------------------------
