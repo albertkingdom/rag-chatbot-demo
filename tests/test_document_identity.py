@@ -227,3 +227,34 @@ class TestDedupByUuid:
         assert len(docs) == 2
         assert len(doc_ids) == 2  # distinct uuids
         assert answers == {"答案一", "答案二"}
+
+
+# --- sample-knowledge-base: sync writes only to the configured index --
+
+
+class TestSyncUsesConfiguredIndex:
+    def test_sync_opens_only_the_configured_index(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _write_xlsx(data_dir / "qa.xlsx", [{"question": "問：Q1", "answer": "答：A1"}])
+        monkeypatch.setenv("PINECONE_API_KEY", "fake")
+        monkeypatch.setattr(build_vector_store, "PINECONE_INDEX_NAME", "rag-demo-qa-index")
+
+        with patch.object(build_vector_store, "OpenAIEmbeddings") as mock_emb, \
+             patch.object(build_vector_store, "Pinecone") as mock_pc_cls, \
+             patch.object(build_vector_store, "BM25Index"), \
+             patch.object(build_vector_store, "DATA_SOURCE_DIR", str(data_dir)):
+            mock_emb.return_value.embed_documents.side_effect = (
+                lambda texts: [[0.1, 0.2, 0.3] for _ in texts]
+            )
+            mock_pc = mock_pc_cls.return_value
+            mock_pc.list_indexes.return_value.names.return_value = []
+            mock_pc.Index.return_value.list.return_value = []
+
+            result = build_vector_store.sync_vector_store()
+
+        assert result["status"] == "success"
+        opened = {c.args[0] if c.args else c.kwargs["name"] for c in mock_pc.Index.call_args_list}
+        created = {c.kwargs["name"] for c in mock_pc.create_index.call_args_list}
+        assert opened == {"rag-demo-qa-index"}
+        assert created <= {"rag-demo-qa-index"}

@@ -31,6 +31,10 @@ locals {
   # Plain (non-secret) environment variables shared by Service and Job.
   shared_data_dir = "/mnt/data"
   image_url       = "${var.region}-docker.pkg.dev/${var.project_id}/carbon-assistant/carbon-assistant:${var.image_tag}"
+
+  # Production knowledge base. Set on both the web Service and the sync Job so
+  # they always read and write the same index (the app default is a demo index).
+  pinecone_index_name = "carbon-assistant-qa-index"
 }
 
 # ---------------------------------------------------------------------------
@@ -164,6 +168,10 @@ resource "google_cloud_run_v2_service" "web" {
         value = "${local.shared_data_dir}/models"
       }
       env {
+        name  = "PINECONE_INDEX_NAME"
+        value = local.pinecone_index_name
+      }
+      env {
         name  = "LANGCHAIN_TRACING_V2"
         value = "true"
       }
@@ -266,6 +274,10 @@ resource "google_cloud_run_v2_job" "sync" {
         env {
           name  = "BM25_INDEX_DIR"
           value = "${local.shared_data_dir}/models"
+        }
+        env {
+          name  = "PINECONE_INDEX_NAME"
+          value = local.pinecone_index_name
         }
         env {
           name  = "LANGCHAIN_TRACING_V2"
