@@ -44,7 +44,7 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # Backend bucket is configured in terraform/backend.tf (manual, task 1.2).
+      # Backend bucket comes from the TF_STATE_BUCKET secret (see terraform/backend.tf).
       #
       # CI applies ONLY the Cloud Run Service + Job (the app layer) via -target.
       # Foundational infrastructure (service accounts, IAM bindings, Secret
@@ -58,7 +58,7 @@ jobs:
       - name: Terraform init & apply (Cloud Run app layer only)
         working-directory: terraform
         run: |
-          terraform init
+          terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
           terraform apply -auto-approve \
             -target=google_cloud_run_v2_service.web \
             -target=google_cloud_run_v2_job.sync \

@@ -13,7 +13,7 @@
    ```
 2. **檢查 Terraform plan**（唯讀，`-lock=false`）：確認只變更 image，不動 traffic。
    ```sh
-   cd terraform && terraform init && terraform plan -lock=false \
+   cd terraform && terraform init -backend-config="bucket=<state-bucket>" && terraform plan -lock=false \
      -target=google_cloud_run_v2_service.web -target=google_cloud_run_v2_job.sync \
      -var="project_id=<project-id>" -var="region=asia-east1" \
      -var="image_tag=$(git rev-parse HEAD)" -var="github_repository=albertkingdom/rag-chatbot-demo"
