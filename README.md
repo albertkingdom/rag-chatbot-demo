@@ -4,7 +4,7 @@
 
 > An agentic RAG chatbot over a fictional product manual: hybrid BM25 + vector retrieval with reranking, self-corrective retry, semantic caching, two-way guardrails, and a streaming React UI. FastAPI backend, deployed on Cloud Run.
 
-<!-- TODO: 在此放一張 React 介面截圖，例如 ![聊天畫面](assets/chat.png) -->
+![聊天畫面：回答附參考來源](assets/chat.jpg)
 
 ## 特色
 
