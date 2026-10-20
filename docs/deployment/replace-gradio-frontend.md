@@ -5,7 +5,7 @@
 ## 1. 保存當前狀態
 
 ```sh
-project=carbon-rag-assistant-prod-2026
+project=<project-id>
 region=asia-east1
 service=carbon-assistant-web
 mkdir -p /tmp/rag-release
@@ -15,7 +15,7 @@ gcloud run services describe "$service" --project "$project" --region "$region" 
   > /tmp/rag-release/before.json
 ```
 
-確認目前舊 revision 名稱與 immutable image tag。2026-10-02 基線 image 是 `asia-east1-docker.pkg.dev/carbon-rag-assistant-prod-2026/carbon-assistant/carbon-assistant:bd9c42b652d556caccb66891c9f28d2051c042ea`。切換期間不要刪除該 image/revision。
+確認目前舊 revision 名稱與 immutable image tag。2026-10-02 基線 image 是 `asia-east1-docker.pkg.dev/<project-id>/carbon-assistant/carbon-assistant:bd9c42b652d556caccb66891c9f28d2051c042ea`。切換期間不要刪除該 image/revision。
 
 清理後的新程式只有 React SPA，無須設定 `FRONTEND_MODE`。回復 Gradio 時使用保留的舊 revision/image。
 
