@@ -39,7 +39,7 @@
 2. 記錄正式 index 的完整 ID 集合（只讀 `list`）。
 3. 把 `examples/carbonm_sample_manual.xlsx` 複製到 `DATA_SOURCE_DIR` 後執行 `sync_vector_store()`。
 4. 確認 demo index 的 ID 數等於手冊筆數，並載入 `BM25_INDEX_DIR` 的索引，確認文件數也等於手冊筆數；任一不符即中止。
-5. 對每一題評估問題執行 hybrid 檢索，`fusion_metadata` 不得含 `fallback`、`bm25_results` 不得為空，且該題 `ground_truth` 對應的手冊列（以 doc_id 比對）必須出現在 `fusion_results` 中；任一題不符即中止。
+5. 對每一題評估問題執行 hybrid 檢索，`fusion_metadata` 不得含 `fallback`、`bm25_results` 不得為空，任一題不符即中止；另外列出 `ground_truth` 對應的手冊列（以 doc_id 比對）有出現在 `fusion_results` 中的題數。未命中屬於檢索品質，由 RAGAS 的 context_recall 衡量，不作為中止條件。
 6. 執行 `tests.evaluate_rag` 的主流程，寫出報告。
 7. 再次讀取正式 index 的完整 ID 集合，與第 2 步比對必須完全相同。
 
@@ -55,7 +55,7 @@
 
 ### 既有本機環境的遷移
 
-預設 index 改變後，既有本機 Compose 環境會改用空的 demo index，但 `manual_data`、`bm25_data` volume 與 Redis 語意快取仍保留舊資料。README 與 architecture.md 說明遷移方式：要沿用舊資料就在 `.env` 設定原本的 index；要改用範例手冊，則在「文件管理」刪除舊手冊後上傳範例手冊並等待同步（同步會重建 BM25），再清除 Redis 語意快取（或以 `docker compose down -v` 清空本機資料後重新啟動）。
+預設 index 改變後，既有本機 Compose 環境會改用空的 demo index，但 `manual_data`、`bm25_data` volume 與 Redis 語意快取仍保留舊資料。README 與 architecture.md 說明遷移方式：要沿用舊資料就在 `.env` 設定原本的 index；要改用範例手冊，因介面沒有刪除手冊的功能，需以 `docker compose down -v` 清空本機資料後重新啟動，再上傳範例手冊並等待同步。
 
 ## Risks / Trade-offs
 

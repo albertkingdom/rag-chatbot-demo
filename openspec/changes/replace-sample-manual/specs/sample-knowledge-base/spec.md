@@ -51,7 +51,7 @@ The system SHALL read the Pinecone index name from the `PINECONE_INDEX_NAME` env
 
 ### Requirement: Isolated sample evaluation run
 
-The sample evaluation runner SHALL refuse to run when the resolved index name equals `carbon-assistant-qa-index`, SHALL verify after syncing that both the demo Pinecone index and the BM25 index contain exactly one entry per sample-manual row, and SHALL verify that the set of vector IDs in `carbon-assistant-qa-index` is identical before and after the run.
+The sample evaluation runner SHALL refuse to run when the resolved index name equals `carbon-assistant-qa-index`, SHALL verify after syncing that both the demo Pinecone index and the BM25 index contain exactly one entry per sample-manual row, SHALL exit non-zero when hybrid retrieval for any evaluation case falls back or returns no BM25 results, SHALL report how many cases retrieve their ground-truth source row among the fused candidates without failing on misses, and SHALL verify that the set of vector IDs in `carbon-assistant-qa-index` is identical before and after the run.
 
 #### Scenario: Production index name is rejected
 
