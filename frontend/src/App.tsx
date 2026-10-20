@@ -20,7 +20,7 @@ import type { ChatMessage } from "./types";
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 type View = "chat" | "documents";
 
-const suggestions = ["忘記密碼怎麼辦？", "如何在多廠區管理中切換邊界？", "什麼是固定式燃料源排放？", "報告和清冊的格式是什麼？", "系統有哪些角色？", "門檻值設定該如何填寫？"];
+const suggestions = ["忘記密碼怎麼辦？", "如何在多廠區管理中切換邊界？", "什麼是固定式燃料源排放？", "報告和清冊的格式是什麼？", "系統有哪些角色？", "冷媒逸散要怎麼計算？"];
 const maxManualBytes = 25 * 1024 * 1024;
 const allowedManualExtensions = [".pdf", ".xlsx", ".csv"];
 

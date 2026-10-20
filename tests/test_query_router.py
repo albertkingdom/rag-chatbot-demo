@@ -23,7 +23,7 @@ import src.query_router as query_router_module
 
 
 HISTORY = [
-    {"role": "user", "content": "門檻值設定該如何填寫？"},
+    {"role": "user", "content": "排放係數從哪裡來？"},
     {"role": "assistant", "content": "您需要填寫顯著性門檻、實質性門檻和排除門檻。"},
 ]
 
@@ -79,15 +79,15 @@ class TestRuleRoutingSystemOperation:
     @pytest.mark.parametrize(
         "query",
         [
-            "如果我忘記我的密碼，我該怎麼辦？",
-            "我該如何登入我的帳號？",
+            "忘記密碼怎麼辦？",
+            "登入失敗太多次會怎樣？",
             "如何在多廠區管理中切換邊界？",
             "我該如何審核數據條目？",
-            "請問報告及清冊會以何種格式呈現？",
-            "為什麼角色分為「管理者」、「部門管理者」及「部門人員」？",
-            "「外購電力」排放代表什麼？能舉例嗎？",
-            "「冷媒」的假設情境「實際使用量」及「平均逸散法」的差別是什麼？",
-            "我該如何進入 Org CFV 儀表板？",
+            "報告和清冊的格式是什麼？",
+            "管理者可以看到所有廠區嗎？",
+            "「外購電力」排放代表什麼？",
+            "冷媒逸散要怎麼計算？",
+            "儀表板可以看到哪些資訊？",
         ],
     )
     def test_system_operation_questions_route_to_rag(self, query):
@@ -218,7 +218,7 @@ class TestQueryRewriting:
         assert result.route == "rag"
         assert result.rewritten_query == "顯著性門檻、實質性門檻和排除門檻的建議值分別為3、5、0.5嗎？"
         prompt = llm.ainvoke.call_args[0][0]
-        assert "門檻值設定該如何填寫？" in prompt
+        assert "排放係數從哪裡來？" in prompt
         assert "您需要填寫顯著性門檻、實質性門檻和排除門檻。" in prompt
 
     @pytest.mark.asyncio
@@ -279,7 +279,7 @@ class TestQueryRewriting:
         structured_llm.ainvoke = AsyncMock(
             return_value=RouterResult(
                 route="rag",
-                rewritten_query="碳盤查的門檻值建議設定為多少？",
+                rewritten_query="CarbonM 的排放係數來源是什麼？",
                 reasoning="追問碳盤查門檻設定，改寫為獨立問題",
             )
         )
@@ -295,9 +295,9 @@ class TestQueryRewriting:
         structured_llm.ainvoke.assert_awaited_once()
         llm.ainvoke.assert_not_called()
         assert result.route == "rag"
-        assert result.rewritten_query == "碳盤查的門檻值建議設定為多少？"
+        assert result.rewritten_query == "CarbonM 的排放係數來源是什麼？"
         prompt = structured_llm.ainvoke.call_args[0][0]
-        assert "門檻值設定該如何填寫？" in prompt
+        assert "排放係數從哪裡來？" in prompt
 
 
 # ---------------------------------------------------------------------------
