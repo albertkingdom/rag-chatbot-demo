@@ -48,7 +48,7 @@
   - 2026-10-20 正式 URL 檢查：`/health`、`/`、`/login`、`/admin` 200，hashed JS 可載入，未登入 API 與不存在的 `/api/*` 回 JSON 401。
   - 新 revision 唯一的 ERROR log 是 2026-10-20 的 "no available instance"：`maxScale=1`、`minScale=0` 下冷啟動期間的並行請求被拒（當下 `/health` 500、`/` 429），實例就緒後重試皆 200。
   - 候選 URL 的登入驗收結果未記錄。
-- 未完成：preview tag `v105-preview` 尚未移除。
+  - 2026-10-20 移除 preview tag `v105-preview`，正式流量維持 100% 在 `carbon-assistant-web-00019-pls`。
 
 ## v1.0.4（2026-10-11）
 
