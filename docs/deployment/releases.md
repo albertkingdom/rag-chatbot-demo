@@ -35,6 +35,21 @@
 
 回復：`--to-revisions=<previous-revision>=100`，再確認 `/health` 與登入頁。
 
+## v1.0.5（2026-10-18）
+
+- 分支／commit：`release/v1.0.5`，`bc06ea74424b246b728725bed3718f2727002677`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/39138686537) 成功。
+- Image digest：`sha256:c36eb6e7dac7b39f8af0e4271c8cdf9baeef33fe17a5f8ba6aa13f77ffda362d`。
+- Revision：`carbon-assistant-web-00019-pls`，100% 流量。回復目標：`carbon-assistant-web-00018-5j9`（v1.0.4）。
+- 內容：
+  - #12 重排分數不足時保留較佳的檢索結果；仍不足時回答標示「知識庫查無直接相關資料」，不送檢索內容、不顯示來源、不寫入語意快取。
+  - #13 語意快取查詢涵蓋所有快取項目，並以 `CACHE_MAX_ENTRIES` 限制索引大小。
+  - #11 開 PR 前須完成 code review（僅影響開發流程）。
+- 驗收：
+  - 2026-10-20 正式 URL 檢查：`/health`、`/`、`/login`、`/admin` 200，hashed JS 可載入，未登入 API 與不存在的 `/api/*` 回 JSON 401。
+  - 新 revision 唯一的 ERROR log 是 2026-10-20 的 "no available instance"：`maxScale=1`、`minScale=0` 下冷啟動期間的並行請求被拒（當下 `/health` 500、`/` 429），實例就緒後重試皆 200。
+  - 候選 URL 的登入驗收結果未記錄。
+- 未完成：preview tag `v105-preview` 尚未移除。
+
 ## v1.0.4（2026-10-11）
 
 - 分支／commit：`release/v1.0.4`，`99ea08736d6793c49a5423335d0003f1f7ac3cb5`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/38130403369) 成功。
