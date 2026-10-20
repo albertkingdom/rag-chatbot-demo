@@ -152,3 +152,7 @@ docker run --rm --mount type=bind,source="$PWD/scripts/frontend_docker_smoke.py"
 其他環境變數與預設值見 `.env.example`，包括 `RATE_LIMIT_RPM`、`SESSION_TTL_SECONDS`、`CHAT_HISTORY_TTL_SECONDS`、`CHAT_HISTORY_MAX_TURNS`。正式部署必須設定共用登入 key；HttpOnly session cookie 在 HTTPS 下使用 Secure，變更 API 使用同源 Origin/Referer 驗證。
 
 React 已於 2026-10-03 正式上線，實體手機驗收完成。新程式不再包含 Gradio；舊 Cloud Run revision/image 保留供回復，無須在新版本重新啟用舊介面。
+
+## 授權
+
+[MIT](LICENSE)。知識庫與評估資料（`tests/*_eval_data.json`）為虛構內容，僅供展示。
