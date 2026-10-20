@@ -34,4 +34,4 @@
 - Affected specs: `sample-knowledge-base`（新增）
 - Affected code:
   - New: examples/carbonm_sample_manual.xlsx, tests/test_sample_manual.py, tests/test_config.py, scripts/eval_sample_manual.py
-  - Modified: src/config.py, .env.example, docker-compose.yml, terraform/main.tf, scripts/remove_duplicates_auto.py, scripts/detect_and_remove_duplicates.py, tests/test_document_identity.py, tests/rag_eval_data.json, tests/rag_eval_report.json, frontend/src/App.tsx, tests/test_query_router.py, tests/test_bm25_index.py, scripts/real_rag_smoke.py, scripts/understand_embeddings.py, architecture.md, README.md
+  - Modified: src/config.py, .env.example, docker-compose.yml, terraform/main.tf, scripts/remove_duplicates_auto.py, scripts/detect_and_remove_duplicates.py, tests/test_document_identity.py, tests/rag_eval_data.json, tests/rag_eval_report.json, frontend/src/App.tsx, tests/test_query_router.py, tests/test_bm25_index.py, scripts/real_rag_smoke.py, scripts/understand_embeddings.py, scripts/analyze_duplicates_only.py, scripts/inspect_pinecone_structure.py, scripts/benchmark_embedding_performance.py, docs/deployment/releases.md, .gitignore, architecture.md, README.md

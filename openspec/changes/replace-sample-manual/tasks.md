@@ -23,3 +23,4 @@
 ## 5. 文件
 
 - [x] 5.1 `architecture.md` 更新 `PINECONE_INDEX_NAME` 參數與預設值、評估分數與題數、「評估題庫只有 6 題」已知問題，並記錄正式站切換 index 的步驟（web 與 job 同時設定、新資料目錄重新同步、清除語意快取）與既有本機環境的遷移方式；README 快速開始改為上傳 `examples/carbonm_sample_manual.xlsx` 並附遷移提示；驗證：文件數字與 `tests/rag_eval_report.json` 一致。
+- [x] 5.2 其他操作 Pinecone 的腳本（`scripts/analyze_duplicates_only.py`、`scripts/inspect_pinecone_structure.py`）同樣先載入 `.env` 再讀設定；`scripts/benchmark_embedding_performance.py` 改用範例手冊；`tests/test_bm25_index.py` 的 mock index 名稱改為 demo index；`docs/deployment/releases.md` 註明第一次發布時 Terraform plan 會新增 `PINECONE_INDEX_NAME` env；驗證：以暫存 `.env` 匯入兩支腳本印出 `.env` 中的 index 名稱，pytest 全部通過。

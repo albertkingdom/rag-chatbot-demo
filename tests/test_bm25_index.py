@@ -20,7 +20,7 @@ def tmp_index_dir(tmp_path):
     return str(tmp_path / "bm25_index")
 
 
-PINECONE_TEST_INDEX = "carbon-assistant-qa-index"
+PINECONE_TEST_INDEX = "rag-demo-qa-index"
 
 
 @pytest.fixture

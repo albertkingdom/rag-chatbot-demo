@@ -260,7 +260,7 @@ flowchart TB
 
 ### Pinecone index 與範例手冊
 
-- index 名稱來自 `PINECONE_INDEX_NAME`，未設定或空字串時為 demo index `rag-demo-qa-index`（首次同步時自動建立）。聊天、同步 Job 與 `scripts/` 下的刪除重複向量腳本都讀同一個設定；腳本會先載入 `.env` 再讀設定。
+- index 名稱來自 `PINECONE_INDEX_NAME`，未設定或空字串時為 demo index `rag-demo-qa-index`（首次同步時自動建立）。聊天、同步 Job 與 `scripts/` 下操作 Pinecone 的腳本（重複向量分析與刪除、結構檢查）都讀同一個設定；腳本會先載入 `.env` 再讀設定。
 - 正式環境由 `terraform/main.tf` 以同一個 local 值在 web Service 與 sync Job 設定 `carbon-assistant-qa-index`。
 - 同步會刪除 index 中不在本地手冊裡的向量，所以不同部署或環境不可共用同一個 index。
 - `examples/carbonm_sample_manual.xlsx` 是自行撰寫的虛構範例手冊（60 筆，五類主題），可直接在「文件管理」上傳。

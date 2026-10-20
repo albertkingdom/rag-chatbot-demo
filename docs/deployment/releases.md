@@ -11,7 +11,7 @@
    gcloud run services describe carbon-assistant-web --project <project-id> --region asia-east1 \
      --format='json(status.latestReadyRevisionName,status.traffic,status.url,spec.template.spec.containers[0].image)'
    ```
-2. **檢查 Terraform plan**（唯讀，`-lock=false`）：確認只變更 image，不動 traffic。
+2. **檢查 Terraform plan**（唯讀，`-lock=false`）：確認只變更 image，不動 traffic。第一次包含 `PINECONE_INDEX_NAME` 的版本，plan 還會在 web Service 與 sync Job 各新增一個 `PINECONE_INDEX_NAME = carbon-assistant-qa-index` 的 env；值與先前寫死在程式中的 index 相同，屬預期變更。
    ```sh
    cd terraform && terraform init -backend-config="bucket=<state-bucket>" && terraform plan -lock=false \
      -target=google_cloud_run_v2_service.web -target=google_cloud_run_v2_job.sync \
