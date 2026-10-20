@@ -67,6 +67,8 @@ flowchart LR
    - RedisInsight：<http://localhost:8001>（檢視 prompt cache）。
    - Mongo Express：<http://localhost:8081>（檢視對話紀錄）。
 
+4. 建立知識庫：repo 不附手冊。首次使用請在「文件管理」分頁上傳自己的 PDF / XLSX / CSV 手冊，等同步工作顯示成功後再提問。首次同步會自動建立 Pinecone index（`carbon-assistant-qa-index`，見 `src/config.py`）；尚未同步前，知識庫問題會失敗。
+
 Compose 服務包含 `web`（FastAPI，提供 `/api/v1/*` 與 React 靜態成品）、`worker`（RQ 背景任務）、`redis`、`mongodb` 與上述兩個管理介面。前端獨立開發、測試與驗收腳本見 [docs/development.md](docs/development.md)。
 
 ## API
