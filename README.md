@@ -1,10 +1,8 @@
 # RAG_DEMO
 
-以虛構的碳管理系統（CarbonM）操作手冊為知識庫的 Agentic RAG 聊天機器人，兼具知識庫問答與通用問答。FastAPI 後端、React + TypeScript 手機優先介面，以 Docker Compose 在本機啟動，並部署於 Google Cloud Run。
+以碳管理系統（CarbonM）操作手冊為知識庫的 Agentic RAG 聊天機器人，兼具知識庫問答與通用問答。FastAPI 後端、React + TypeScript 手機優先介面，以 Docker Compose 在本機啟動，並部署於 Google Cloud Run。
 
-> An agentic RAG chatbot over a fictional product manual: hybrid BM25 + vector retrieval with reranking, self-corrective retry, semantic caching, two-way guardrails, and a streaming React UI. FastAPI backend, deployed on Cloud Run.
-
-![聊天畫面：回答附參考來源](assets/chat.jpg)
+> An agentic RAG chatbot over a product manual: hybrid BM25 + vector retrieval with reranking, self-corrective retry, semantic caching, two-way guardrails, and a streaming React UI. FastAPI backend, deployed on Cloud Run.
 
 ## 特色
 
@@ -97,4 +95,4 @@ Compose 服務包含 `web`（FastAPI，提供 `/api/v1/*` 與 React 靜態成品
 
 ## 授權
 
-[MIT](LICENSE)。知識庫與評估資料（`tests/*_eval_data.json`）為虛構內容，僅供展示。
+[MIT](LICENSE)，僅涵蓋本 repo 的程式碼與文件。
