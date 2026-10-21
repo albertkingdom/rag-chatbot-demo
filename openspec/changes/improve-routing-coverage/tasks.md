@@ -6,8 +6,8 @@
 ## 2. 評估腳本路由關卡
 
 - [x] 2.1 （Evaluation runner checks routing；評估腳本的路由關卡）`run_evaluation` 在同步檢查後、RAGAS 前檢查正反兩組問題，LLM 錯誤重試一次並分開回報；驗證：`tests/test_eval_sample_manual.py` 以 mock 的 `route_query` 測試全部通過、正例被判 `direct`、反例被判 `rag`、服務錯誤重試後仍失敗四種情況。
-- [ ] 2.2 以實際環境連續執行兩次評估腳本（demo index，`--audit-index carbon-assistant-sample-index`），路由關卡與 RAGAS 都通過；驗證：兩次 log 都有路由關卡通過的訊息，報告 `num_cases` 為 12。
+- [x] 2.2 以實際環境連續執行兩次評估腳本（demo index，`--audit-index carbon-assistant-sample-index`），路由關卡與 RAGAS 都通過；驗證：兩次 log 都有路由關卡通過的訊息，報告 `num_cases` 為 12。
 
 ## 3. 文件
 
-- [ ] 3.1 `architecture.md` 更新路由規則層涵蓋率、prompt 說明與評估腳本的路由關卡，改寫「規則層關鍵字依舊知識庫挑選」已知問題；`README.md` 的「40 題」改為實測值；驗證：文件數字與實測一致。
+- [x] 3.1 `architecture.md` 更新路由規則層涵蓋率、prompt 說明與評估腳本的路由關卡，改寫「規則層關鍵字依舊知識庫挑選」已知問題；`README.md` 的「40 題」改為實測值；驗證：文件數字與實測一致。
