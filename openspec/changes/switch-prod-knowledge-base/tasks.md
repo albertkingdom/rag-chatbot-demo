@@ -17,9 +17,9 @@
 
 ## 4. 文件
 
-- [ ] 4.1 （切換步驟）`docs/deployment/releases.md` 新增「切換正式站知識庫」操作手冊（含禁止上傳期間、BM25 log 關卡與回復），`architecture.md` 更新正式站 index 與資料目錄、快取命名空間與同步後清快取，移除「手冊同步後不清除語意快取」已知問題、更新「正式 index 名稱寫在兩處」，並新增「同一 index 更新後短暫寫入舊快取」已知問題；驗證：文件中的名稱、目錄、log 字串與程式及 Terraform 一致，pytest 全部通過。
+- [x] 4.1 （切換步驟）`docs/deployment/releases.md` 新增「切換正式站知識庫」操作手冊（含禁止上傳期間、BM25 log 關卡與回復），`architecture.md` 更新正式站 index 與資料目錄、快取命名空間與同步後清快取，移除「手冊同步後不清除語意快取」已知問題、更新「正式 index 名稱寫在兩處」，並新增「同一 index 更新後短暫寫入舊快取」已知問題；驗證：文件中的名稱、目錄、log 字串與程式及 Terraform 一致，pytest 全部通過。
 
 ## 5. 切換（與使用者一起執行）
 
-- [ ] 5.1 確認 Pinecone 方案可再建立一個 index；驗證：使用者在 Pinecone 主控台確認。
+- [x] 5.1 確認 Pinecone 方案可再建立一個 index；驗證：使用者在 Pinecone 主控台確認（2026-10-21，使用者確認可再建立）。
 - [ ] 5.2 依 `docs/deployment/releases.md` 的步驟發布並切換；驗證：Job log 有 `Upserted: 60` 與 `BM25 index rebuilt with 60 documents`，新 revision log 有 `Loaded persisted index (60 docs) from /mnt/data/sample/models/`，preview 與正式 URL 的回答來源為範例手冊，`carbon-assistant-qa-index` 向量數仍為 126。
