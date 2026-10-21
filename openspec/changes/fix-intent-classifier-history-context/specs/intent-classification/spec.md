@@ -6,7 +6,7 @@ The system SHALL accept an optional `history` parameter on `IntentClassifier.cla
 
 #### Scenario: Follow-up question inherits topic relevance from prior turn
 
-- **WHEN** `history` contains a prior turn where the user asked "門檻值設定該如何填寫？" and the assistant answered with threshold-value guidance, and the rewritten follow-up question is "您確定顯著性門檻、實質性門檻和排除門檻的建議值分別為3、5、0.5嗎？"
+- **WHEN** `history` contains a prior turn where the user asked "排放係數從哪裡來？" and the assistant answered with emission-factor guidance, and the rewritten follow-up question is "您確定排放係數的來源是係數庫嗎？"
 - **THEN** `classify()` includes that prior turn in the prompt sent to the LLM, so the classification is made with the knowledge that this question continues a CarbonM system-configuration topic
 
 #### Scenario: No history falls back to question-only classification
@@ -20,7 +20,7 @@ The system SHALL accept an optional `history` parameter on `IntentClassifier.cla
 | ------- | ------------------------------ |
 | `[]` | No |
 | `None` | No |
-| `[{"role": "user", "content": "門檻值設定該如何填寫？"}, {"role": "assistant", "content": "..."}]` | Yes |
+| `[{"role": "user", "content": "排放係數從哪裡來？"}, {"role": "assistant", "content": "..."}]` | Yes |
 
 ### Requirement: chat_stream passes conversation history to intent classification
 
