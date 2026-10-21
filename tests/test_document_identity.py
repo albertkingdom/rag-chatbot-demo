@@ -327,6 +327,40 @@ class TestCacheClearConnection:
 
         redis.Redis.from_url.assert_called_once_with(config.REDIS_URL)
         semantic_cache.clear_cache.assert_called_once_with()
+        redis.Redis.from_url.return_value.close.assert_called_once_with()
+
+    def test_connection_is_closed_when_clearing_fails(self, monkeypatch, semantic_cache):
+        import redis
+
+        semantic_cache.clear_cache.side_effect = ConnectionError("redis down")
+
+        build_vector_store._clear_semantic_cache()  # warning only
+
+        redis.Redis.from_url.return_value.close.assert_called_once_with()
+
+    def test_cache_clear_does_not_import_chat_services(self):
+        # A fresh interpreter that refuses src.services: the helper must still
+        # get as far as connecting to Redis (unreachable here), not fail on import.
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        code = (
+            "import sys, importlib.abc\n"
+            "class Block(importlib.abc.MetaPathFinder):\n"
+            "    def find_spec(self, name, path, target=None):\n"
+            "        if name == 'src.services': raise ImportError('blocked src.services')\n"
+            "sys.meta_path.insert(0, Block())\n"
+            "from src.build_vector_store import _clear_semantic_cache\n"
+            "_clear_semantic_cache()\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
+            env={"REDIS_URL": "redis://127.0.0.1:1/0", "PATH": "/usr/bin:/bin"},
+            capture_output=True, text=True, check=True,
+        ).stdout
+        assert "could not clear the semantic cache" in out
+        assert "blocked src.services" not in out
 
 
 class TestSyncExitStatus:
