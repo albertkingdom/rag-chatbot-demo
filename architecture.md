@@ -267,7 +267,7 @@ flowchart TB
 ### Pinecone index 與範例手冊
 
 - index 名稱來自 `PINECONE_INDEX_NAME`，未設定或空字串時為 demo index `rag-demo-qa-index`（首次同步時自動建立）。聊天、同步 Job 與 `scripts/` 下操作 Pinecone 的腳本（重複向量分析與刪除、結構檢查）都讀同一個設定；腳本會先載入 `.env` 再讀設定。
-- 正式環境由 `terraform/main.tf` 的 locals 在 web Service 與 sync Job 設定 `carbon-assistant-sample-index`，資料目錄為 GCS 上的 `/mnt/data/sample/uploaded_files` 與 `/mnt/data/sample/models`。先前的 `carbon-assistant-qa-index`（他方手冊，126 筆）與 `/mnt/data/uploaded_files`、`/mnt/data/models` 保留供回復，尚未刪除。
+- 正式環境由 `terraform/main.tf` 的 locals 在 web Service 與 sync Job 設定 `carbon-assistant-sample-index`，資料目錄為 GCS 上的 `/mnt/data/sample/uploaded_files` 與 `/mnt/data/sample/models`。先前的 `carbon-assistant-qa-index`（他方手冊，126 筆）與 `/mnt/data/uploaded_files`、`/mnt/data/models` 保留供回復，尚未刪除。2026-10-21 起（v1.1.0）正式站已切換到範例手冊。
 - 同步會刪除 index 中不在本地手冊裡的向量，所以不同部署或環境不可共用同一個 index。
 - `examples/carbonm_sample_manual.xlsx` 是自行撰寫的虛構範例手冊（60 筆，五類主題），可直接在「文件管理」上傳；附固定的 `uuid` 欄位，重新同步時 doc_id 不變。
 - `scripts/eval_sample_manual.py` 在單一程序中把範例手冊同步到 demo index，檢查 demo index 與 BM25 筆數等於手冊筆數、逐題確認 hybrid 檢索沒有 fallback 且有 BM25 結果（並列出標準答案來源出現在融合候選中的題數，未命中不中止），再執行 RAGAS。遇到正式 index 名稱（`carbon-assistant-sample-index`、`carbon-assistant-qa-index`）會直接拒絕；預設不讀其他 index，加上 `--audit-index <正式 index>` 時才會在執行前後比對該 index 的向量 ID（中途失敗或拋例外也會比對）。三組 API key 缺任一組時在呼叫 Pinecone 前就結束。需在專案 image 中執行，並另外掛入 `tests/`、`scripts/`、`examples/`（image 不含 `tests/`）。

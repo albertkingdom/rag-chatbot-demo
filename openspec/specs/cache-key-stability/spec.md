@@ -65,7 +65,7 @@ The system SHALL prevent duplicate cache entries from silently overwriting exist
 
 ### Requirement: Cache key stability
 
-The system SHALL generate cache keys using cryptographic hashing of the complete embedding vector, ensuring consistent key generation across processes, platforms, and execution instances.
+The system SHALL generate cache keys using cryptographic hashing of the complete embedding vector, ensuring consistent key generation across processes, platforms, and execution instances. The hash SHALL be appended to the namespace prefix defined by the `cache-namespace` capability.
 
 #### Scenario: Same embedding produces same cache key
 
@@ -74,11 +74,11 @@ The system SHALL generate cache keys using cryptographic hashing of the complete
 
 ##### Example: Cross-process consistency
 
-- **GIVEN** embedding = [0.1, 0.2, 0.3, ..., 1.5] (1536 dims)
+- **GIVEN** embedding = [0.1, 0.2, 0.3, ..., 1.5] (1536 dims) and namespace `carbon-assistant-sample-index`
 - **WHEN** process A hashes the embedding
-- **THEN** cache_key = "prompt_cache:a1b2c3d4e5f6g7h8"
+- **THEN** cache_key = "prompt_cache:carbon-assistant-sample-index:a1b2c3d4e5f6g7h8"
 - **AND** process B hashes the same embedding
-- **THEN** cache_key = "prompt_cache:a1b2c3d4e5f6g7h8" (identical)
+- **THEN** cache_key = "prompt_cache:carbon-assistant-sample-index:a1b2c3d4e5f6g7h8" (identical)
 
 #### Scenario: Different embeddings produce different cache keys
 
@@ -106,14 +106,11 @@ The system SHALL generate cache keys using cryptographic hashing of the complete
 
 
 <!-- @trace
-source: fix-cache-key-hash
-updated: 2026-07-04
+source: switch-prod-knowledge-base
+updated: 2026-10-21
 code:
-  - src/cache_service.py
-  - 面試小抄.md
-  - docs/industry-standard-gaps.md
-tests:
-  - tests/test_cache_service.py
+  - architecture.md
+  - docs/deployment/releases.md
 -->
 
 ---
