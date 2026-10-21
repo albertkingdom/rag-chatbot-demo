@@ -29,6 +29,20 @@ def _write_xlsx(path, rows):
     pd.DataFrame(rows).to_excel(path, index=False)
 
 
+@pytest.fixture(autouse=True)
+def semantic_cache(monkeypatch):
+    """Stand-in for the semantic cache cleared after a complete sync."""
+    import redis
+
+    from src import cache_service
+
+    cache = MagicMock()
+    cache.clear_cache.return_value = 0
+    monkeypatch.setattr(cache_service, "PromptCacheService", MagicMock(return_value=cache))
+    monkeypatch.setattr(redis.Redis, "from_url", MagicMock())
+    return cache
+
+
 def _write_csv(path, rows, fieldnames):
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -130,7 +144,7 @@ class TestEnsureUuids:
         df = pd.read_excel(path)
         assert df.loc[0, "uuid"] == "keep-me"
 
-    def test_writeback_failure_aborts_sync(self, tmp_path, monkeypatch):
+    def test_writeback_failure_aborts_sync(self, tmp_path, monkeypatch, semantic_cache):
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         _write_xlsx(data_dir / "qa.xlsx", [{"question": "Q1", "answer": "A1"}])
@@ -147,6 +161,7 @@ class TestEnsureUuids:
             ]
             result = build_vector_store.sync_vector_store()
         assert result["status"] == "error"
+        semantic_cache.clear_cache.assert_not_called()  # a failed sync keeps the cache
 
 
 # --- 1.2 / 3.2 doc_id flows into metadata and stores -----------------
@@ -258,3 +273,110 @@ class TestSyncUsesConfiguredIndex:
         created = {c.kwargs["name"] for c in mock_pc.create_index.call_args_list}
         assert opened == {"rag-demo-qa-index"}
         assert created <= {"rag-demo-qa-index"}
+
+
+# --- sync-job-outcome: cache clearing and exit status ------------------
+
+
+class TestSyncClearsSemanticCache:
+    def _data_dir(self, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _write_xlsx(data_dir / "qa.xlsx", [{"question": "問：Q1", "answer": "答：A1"}])
+        return data_dir
+
+    def test_complete_sync_clears_the_cache_once(self, tmp_path, monkeypatch, semantic_cache):
+        result, _, _ = _run_sync(monkeypatch, self._data_dir(tmp_path))
+
+        assert result["status"] == "success"
+        semantic_cache.clear_cache.assert_called_once_with()
+
+    def test_bm25_failure_keeps_the_cache(self, tmp_path, monkeypatch, semantic_cache):
+        data_dir = self._data_dir(tmp_path)
+        monkeypatch.setenv("PINECONE_API_KEY", "fake")
+        with patch.object(build_vector_store, "OpenAIEmbeddings") as mock_emb, \
+             patch.object(build_vector_store, "Pinecone") as mock_pc_cls, \
+             patch.object(build_vector_store, "BM25Index") as mock_bm25_cls, \
+             patch.object(build_vector_store, "DATA_SOURCE_DIR", str(data_dir)):
+            mock_emb.return_value.embed_documents.side_effect = (
+                lambda texts: [[0.1, 0.2, 0.3] for _ in texts]
+            )
+            mock_pc_cls.return_value.Index.return_value.list.return_value = []
+            mock_bm25_cls.return_value.build_from_documents.side_effect = OSError("disk full")
+
+            result = build_vector_store.sync_vector_store()
+
+        assert result["status"] == "success"
+        semantic_cache.clear_cache.assert_not_called()
+
+    def test_cache_clearing_failure_does_not_fail_the_sync(self, tmp_path, monkeypatch, semantic_cache):
+        semantic_cache.clear_cache.side_effect = ConnectionError("redis down")
+
+        result, _, _ = _run_sync(monkeypatch, self._data_dir(tmp_path))
+
+        assert result["status"] == "success"
+
+
+class TestCacheClearConnection:
+    def test_cache_clear_uses_a_redis_client_from_the_config(self, monkeypatch, semantic_cache):
+        import redis
+
+        from src import config
+
+        build_vector_store._clear_semantic_cache()
+
+        redis.Redis.from_url.assert_called_once_with(config.REDIS_URL)
+        semantic_cache.clear_cache.assert_called_once_with()
+        redis.Redis.from_url.return_value.close.assert_called_once_with()
+
+    def test_connection_is_closed_when_clearing_fails(self, monkeypatch, semantic_cache):
+        import redis
+
+        semantic_cache.clear_cache.side_effect = ConnectionError("redis down")
+
+        build_vector_store._clear_semantic_cache()  # warning only
+
+        redis.Redis.from_url.return_value.close.assert_called_once_with()
+
+    def test_cache_clear_does_not_import_chat_services(self):
+        # A fresh interpreter that refuses src.services: the helper must still
+        # get as far as connecting to Redis (unreachable here), not fail on import.
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        code = (
+            "import sys, importlib.abc\n"
+            "class Block(importlib.abc.MetaPathFinder):\n"
+            "    def find_spec(self, name, path, target=None):\n"
+            "        if name == 'src.services': raise ImportError('blocked src.services')\n"
+            "sys.meta_path.insert(0, Block())\n"
+            "from src.build_vector_store import _clear_semantic_cache\n"
+            "_clear_semantic_cache()\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
+            env={"REDIS_URL": "redis://127.0.0.1:1/0", "PATH": "/usr/bin:/bin"},
+            capture_output=True, text=True, check=True,
+        ).stdout
+        assert "could not clear the semantic cache" in out
+        assert "blocked src.services" not in out
+
+
+class TestSyncExitStatus:
+    def test_error_result_exits_non_zero(self, monkeypatch):
+        monkeypatch.setattr(build_vector_store, "sync_vector_store",
+                            lambda: {"status": "error", "message": "x"})
+        assert build_vector_store.main() == 1
+
+    def test_success_result_exits_zero(self, monkeypatch):
+        monkeypatch.setattr(build_vector_store, "sync_vector_store",
+                            lambda: {"status": "success", "message": "x"})
+        assert build_vector_store.main() == 0
+
+    def test_exception_exits_non_zero(self, monkeypatch):
+        def boom():
+            raise RuntimeError("pinecone down")
+
+        monkeypatch.setattr(build_vector_store, "sync_vector_store", boom)
+        assert build_vector_store.main() == 1

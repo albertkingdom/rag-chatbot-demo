@@ -46,8 +46,9 @@ def test_without_audit_index_never_touches_another_index(env, pinecone):
     runner.list_ids.assert_not_called()
 
 
-def test_refuses_production_index(env, pinecone):
-    env.setattr(config, "PINECONE_INDEX_NAME", "carbon-assistant-qa-index")
+@pytest.mark.parametrize("production", ["carbon-assistant-qa-index", "carbon-assistant-sample-index"])
+def test_refuses_production_index(env, pinecone, production):
+    env.setattr(config, "PINECONE_INDEX_NAME", production)
     env.setattr(runner, "run_evaluation", MagicMock(return_value=0))
 
     assert runner.main([]) == 1

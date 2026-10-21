@@ -32,9 +32,13 @@ locals {
   shared_data_dir = "/mnt/data"
   image_url       = "${var.region}-docker.pkg.dev/${var.project_id}/carbon-assistant/carbon-assistant:${var.image_tag}"
 
-  # Production knowledge base. Set on both the web Service and the sync Job so
-  # they always read and write the same index (the app default is a demo index).
-  pinecone_index_name = "carbon-assistant-qa-index"
+  # Production knowledge base: its own Pinecone index and its own manual and
+  # BM25 directories, set on both the web Service and the sync Job so they
+  # always read and write the same data (the app default is a demo index used
+  # by the evaluation runner). The previous index carbon-assistant-qa-index and
+  # the directories directly under shared_data_dir are kept for rollback.
+  pinecone_index_name = "carbon-assistant-sample-index"
+  knowledge_base_dir  = "${local.shared_data_dir}/sample"
 }
 
 # ---------------------------------------------------------------------------
@@ -161,11 +165,11 @@ resource "google_cloud_run_v2_service" "web" {
       }
       env {
         name  = "DATA_SOURCE_DIR"
-        value = "${local.shared_data_dir}/uploaded_files"
+        value = "${local.knowledge_base_dir}/uploaded_files"
       }
       env {
         name  = "BM25_INDEX_DIR"
-        value = "${local.shared_data_dir}/models"
+        value = "${local.knowledge_base_dir}/models"
       }
       env {
         name  = "PINECONE_INDEX_NAME"
@@ -269,11 +273,11 @@ resource "google_cloud_run_v2_job" "sync" {
 
         env {
           name  = "DATA_SOURCE_DIR"
-          value = "${local.shared_data_dir}/uploaded_files"
+          value = "${local.knowledge_base_dir}/uploaded_files"
         }
         env {
           name  = "BM25_INDEX_DIR"
-          value = "${local.shared_data_dir}/models"
+          value = "${local.knowledge_base_dir}/models"
         }
         env {
           name  = "PINECONE_INDEX_NAME"

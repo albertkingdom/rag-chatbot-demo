@@ -35,6 +35,41 @@
 
 回復：`--to-revisions=<previous-revision>=100`，再確認 `/health` 與登入頁。
 
+## 切換正式站知識庫
+
+第一次發布 `carbon-assistant-sample-index` 設定時使用（換成範例手冊）。CI 的 `terraform apply` 會讓 sync Job 立即改用新 index 與 `/mnt/data/sample/` 目錄，web 新 revision 則是 0% 流量，所以下列步驟在一般發布流程的第 3 步之後接著做。以下 `<data-bucket>` 為 `/mnt/data` 掛載的 bucket，名稱是 `<project-id>-carbon-assistant-data`（見 `terraform/main.tf` 的 `google_storage_bucket.shared`）。
+
+1. **事前確認**：Pinecone 方案可再建立一個 index。從這一步到第 6 步結束都不要在「文件管理」上傳手冊，並確認沒有執行中的同步：
+   ```sh
+   gcloud run jobs executions list --job sync-job --project <project-id> --region asia-east1 --limit 3
+   ```
+2. **發布**：照一般流程第 1 到 3 步。plan 會顯示 web 與 Job 的 `PINECONE_INDEX_NAME`、`DATA_SOURCE_DIR`、`BM25_INDEX_DIR` 改為新值。
+3. **放入範例手冊並同步**：
+   ```sh
+   gcloud storage cp examples/carbonm_sample_manual.xlsx gs://<data-bucket>/sample/uploaded_files/
+   gcloud run jobs execute sync-job --project <project-id> --region asia-east1 --wait
+   ```
+   每次執行都要成立的驗收條件：
+   - Job execution 成功（同步回傳錯誤時 Job 會以結束碼 1 失敗）。
+   - log 有 `Sync complete. Total vectors: 60.`、`BM25 index rebuilt with 60 documents.` 與 `Semantic cache cleared`。
+   - `carbon-assistant-sample-index` 的向量數為 60（Pinecone 主控台或 `describe_index_stats`，新 index 可能延遲數秒才更新）。
+
+   只在特定情況出現、不作為驗收條件的 log：index 尚不存在時會先印 `Creating index: carbon-assistant-sample-index`；第一次同步為 `Upserted: 60, Deleted: 0`，之後重跑同一份手冊為 `Upserted: 0, Deleted: 0`。
+4. **驗收新 revision**：加 preview tag（一般流程第 4 步），同步完成後至少等 90 秒（pointer 每 30 秒檢查，加上 GCS FUSE 約 60 秒的 stat cache），登入 preview URL 問兩三題範例手冊的問題，例如「忘記密碼怎麼辦？」。新 revision 的 log 必須出現：
+   ```
+   [BM25Index] Loaded persisted index (60 docs) from /mnt/data/sample/models/
+   ```
+   回答的來源必須來自範例手冊。沒有這行 log 就不切流，先重問一次或檢查 Job log。
+5. **切換流量**到新 revision（一般流程第 5 步），驗收正式 URL。快取依 index 分命名空間，不需要另外清除。
+6. **確認舊 index 未變**：`carbon-assistant-qa-index` 仍為 126 筆向量（Pinecone 主控台或 `describe_index_stats`）。之後才恢復上傳。
+
+回復：
+
+1. 停止上傳並確認沒有執行中的同步，先把流量切回舊 revision 止血（舊程式、舊 index、舊目錄、無命名空間的快取）。
+2. 以一個 release 把 `terraform/main.tf` 的 `pinecone_index_name` 改回 `carbon-assistant-qa-index`、`knowledge_base_dir` 改回 `local.shared_data_dir`；CI 完成後 Job 與新的 web revision 都使用舊 index。
+3. 以 preview 驗收這個新 revision，再把流量切過去。不要長期停在舊 revision：舊 revision 的快取沒有命名空間，Job 同步後清不到。
+4. 完成前不上傳手冊。
+
 ## v1.0.5（2026-10-18）
 
 - 分支／commit：`release/v1.0.5`，`bc06ea74424b246b728725bed3718f2727002677`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/39138686537) 成功。

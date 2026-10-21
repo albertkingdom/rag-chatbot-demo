@@ -105,10 +105,10 @@ def enqueue_sync() -> str:
         return _encode_gcp_job(operation.metadata.name)
 
     from rq import Queue
-    from .build_vector_store import sync_vector_store
+    from .build_vector_store import run_sync
     from .services import get_redis_conn
 
-    job = Queue(connection=get_redis_conn()).enqueue(sync_vector_store, job_timeout="1h")
+    job = Queue(connection=get_redis_conn()).enqueue(run_sync, job_timeout="1h")
     return job.id
 
 

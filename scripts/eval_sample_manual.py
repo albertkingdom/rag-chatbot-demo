@@ -13,7 +13,7 @@ the run fails part-way.
 Usage (inside the project image, with tests/ and examples/ mounted):
     PINECONE_INDEX_NAME=rag-demo-qa-index \
     DATA_SOURCE_DIR=/tmp/sample/uploaded_files BM25_INDEX_DIR=/tmp/sample/bm25 \
-    python -m scripts.eval_sample_manual [--audit-index carbon-assistant-qa-index]
+    python -m scripts.eval_sample_manual [--audit-index carbon-assistant-sample-index]
 """
 
 import argparse
@@ -24,7 +24,8 @@ import shutil
 import sys
 import time
 
-PRODUCTION_INDEX = "carbon-assistant-qa-index"
+# Production indexes: the current one and the previous one kept for rollback.
+PRODUCTION_INDEXES = ("carbon-assistant-qa-index", "carbon-assistant-sample-index")
 SAMPLE_MANUAL = "examples/carbonm_sample_manual.xlsx"
 EVAL_DATA = "tests/rag_eval_data.json"
 REQUIRED_CREDENTIALS = ("PINECONE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY")
@@ -142,8 +143,8 @@ def main(argv: list[str] | None = None) -> int:
     from src import config
 
     index_name = config.PINECONE_INDEX_NAME
-    if index_name == PRODUCTION_INDEX:
-        return fail(f"refusing to sync into the production index '{PRODUCTION_INDEX}'.")
+    if index_name in PRODUCTION_INDEXES:
+        return fail(f"refusing to sync into the production index '{index_name}'.")
     if args.audit_index and args.audit_index == index_name:
         return fail(f"the evaluated index and --audit-index are both '{index_name}'.")
     missing = [name for name in REQUIRED_CREDENTIALS if not os.environ.get(name)]

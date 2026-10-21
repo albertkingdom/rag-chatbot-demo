@@ -121,6 +121,20 @@ class TestColdStartLoad:
         result = idx2.search("4.2", top_n=3)
         assert result[0][0] == "D1"
 
+    def test_load_log_is_flushed_with_doc_count(self, tmp_index_dir, sample_docs, monkeypatch):
+        # The production switch waits for this line in Cloud Run logs, so it
+        # must not sit in a stdout buffer.
+        import src.bm25_index as bm25_module
+
+        BM25Index(index_dir=tmp_index_dir).build_from_documents(sample_docs)
+        calls = []
+        monkeypatch.setattr(bm25_module, "print", lambda *a, **kw: calls.append((a, kw)), raising=False)
+
+        BM25Index(index_dir=tmp_index_dir)
+
+        loaded = [(a, kw) for a, kw in calls if "Loaded persisted index (3 docs)" in a[0]]
+        assert loaded and loaded[0][1].get("flush") is True
+
     def test_corrupt_persisted_file_falls_back(self, tmp_index_dir):
         index_dir = Path(tmp_index_dir)
         index_dir.mkdir(parents=True, exist_ok=True)

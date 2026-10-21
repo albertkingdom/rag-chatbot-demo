@@ -37,3 +37,23 @@ def test_gcp_enqueue_and_missing_execution(monkeypatch):
     client.get_execution.side_effect=NotFound('missing')
     monkeypatch.setattr(run_v2,'ExecutionsClient',lambda:client)
     with pytest.raises(KeyError): jobs.get_sync_status(jobs._encode_gcp_job(execution))
+
+
+def test_local_enqueue_uses_the_raising_wrapper(monkeypatch):
+    # A sync that returns status=error must fail the RQ job, like the Cloud Run Job.
+    import rq
+    from src import build_vector_store, services
+    monkeypatch.setattr(jobs,'JOB_RUNNER','local')
+    monkeypatch.setattr(services,'get_redis_conn',lambda:MagicMock())
+    queue=MagicMock();queue.enqueue.return_value=SimpleNamespace(id='job-1')
+    monkeypatch.setattr(rq,'Queue',lambda **kwargs:queue)
+    assert jobs.enqueue_sync()=='job-1'
+    assert queue.enqueue.call_args.args[0] is build_vector_store.run_sync
+
+
+def test_run_sync_raises_on_error_result(monkeypatch):
+    from src import build_vector_store
+    monkeypatch.setattr(build_vector_store,'sync_vector_store',lambda:{'status':'error','message':'disk full'})
+    with pytest.raises(RuntimeError,match='disk full'): build_vector_store.run_sync()
+    monkeypatch.setattr(build_vector_store,'sync_vector_store',lambda:{'status':'success','message':'ok'})
+    assert build_vector_store.run_sync()=={'status':'success','message':'ok'}

@@ -111,9 +111,11 @@ flowchart TD
 ### 3. 語意快取（`cache_service.py`）
 以改寫後的查詢做 OpenAI embedding，在 Python 中與快取索引內**全部**條目計算 cosine similarity，取相似度最高且 **> 0.95** 的一筆視為命中（TTL 24 小時）。命中的答案仍須通過 PII / injection 檢查才回傳；寫入時以同一個 embedding 為 key。
 
-- **索引**：Redis Sorted Set `prompt_cache:index:zset`，成員是資料 key，score 是寫入時間（秒）。上限為 `CACHE_MAX_ENTRIES`（預設 50）：每次寫入在同一個交易中依序登記、選出最新 N 筆以外的成員、從索引移除，交易完成後再刪除這些成員的資料 key。淘汰是先進先出，命中不會更新順序；同一問題重複寫入只更新 score 並保留 `hit_count`。
+- **命名空間**：快取依 Pinecone index 分開。資料 key 為 `prompt_cache:<PINECONE_INDEX_NAME>:<hash>`，索引為 `prompt_cache:<PINECONE_INDEX_NAME>:index:zset`；讀不同知識庫的 revision 或部署不會讀到彼此的答案，切換 index 時新命名空間從空開始。`PromptCacheService(namespace="")` 使用不含命名空間的舊格式（只供測試）；先前版本寫入的無命名空間 key 在 24 小時內自然過期。
+- **索引**：每個命名空間一個 Redis Sorted Set，成員是資料 key，score 是寫入時間（秒）。上限為 `CACHE_MAX_ENTRIES`（預設 50）：每次寫入在同一個交易中依序登記、選出最新 N 筆以外的成員、從索引移除，交易完成後再刪除這些成員的資料 key。淘汰是先進先出，命中不會更新順序；同一問題重複寫入只更新 score 並保留 `hit_count`。
 - **查詢**：取索引最近 N 筆（也就是整個索引），以單一 `MGET` 讀回；索引為空時不發出讀取。已過期的成員在同一次查詢中移出索引；內容無法使用的成員（不是 JSON 物件、`answer` 不是非空字串、`sources` 缺漏或不是字串清單）也一併移出；embedding 缺漏、不是數字陣列或維度不符的只略過。單筆損壞不會讓整次查詢失敗。
-- **舊索引**：先前版本的 Set 索引 `prompt_cache:index` 不遷移，查詢與寫入都不再讀寫它；部署後快取等同冷啟動，舊資料 key 在 24 小時內自然過期。`clear_cache` 會一併刪除新舊索引與其登記的資料 key。
+- **舊索引**：先前版本的 Set 索引 `prompt_cache:index` 不遷移，查詢與寫入都不再讀寫它；部署後快取等同冷啟動，舊資料 key 在 24 小時內自然過期。`clear_cache` 刪除目前命名空間的索引與舊 Set 索引，以及兩者登記的資料 key；Redis 出錯時拋出例外，不會回傳 0 假裝成功。
+- **同步後清除**：手冊同步在向量與 BM25 都成功後清除目前命名空間的快取（見 Document Ingestion）。
 - **成本**：每次走 rag 的請求都要讀回並解析整個索引（50 筆約 1.8MB），而且是在 async 路徑中同步執行（見[已知問題](#已知問題)）。`scripts/benchmark_cache_lookup.py` 以合成資料量測：50 筆約 17 毫秒、100 筆約 35 毫秒（開發機，不含網路傳輸），耗時約九成在 JSON 解析。
 
 ### 4. 混合檢索（`hybrid_retriever.py`）
@@ -256,23 +258,27 @@ flowchart TB
 - **PDF 每次同步都會全量重做**：PDF 的 ID 每次重新產生，所以既有 PDF 向量全部被刪除、再重新 embedding 與 upsert。
 - 若 Pinecone `list()` 失敗，視為索引為空：所有文件重新 upsert，且不刪除任何向量。
 - 無論有無差異，每次同步都會用完整的本地文件重建 BM25 index；重建失敗不影響已完成的向量同步。
+- 向量同步與 BM25 重建都成功後，清除目前命名空間的語意快取並印出筆數；BM25 失敗時不清除，清除失敗（含 import 或 Redis 錯誤）只記錄警告，同步結果仍為成功。
+- 以 `python -m src.build_vector_store` 執行（Cloud Run Job）時，同步回傳 `status=error` 或拋出例外都以結束碼 1 結束；本機 RQ worker 執行的 `run_sync()` 在同一情況下拋出例外。兩種 runner 的介面輪詢都會顯示失敗。
+- 清除快取時直接以 `REDIS_URL` 建立 Redis 連線，不載入聊天用的 `services`。
+- web 載入 BM25 時印出 `[BM25Index] Loaded persisted index (<N> docs) from <path>`（立即 flush），切換正式站時以這行確認新 revision 已載入新索引。
 - web 端最多每 30 秒檢查一次 pointer 檔，同步完成後約 30 秒內的查詢就會載入新索引。
 
 ### Pinecone index 與範例手冊
 
 - index 名稱來自 `PINECONE_INDEX_NAME`，未設定或空字串時為 demo index `rag-demo-qa-index`（首次同步時自動建立）。聊天、同步 Job 與 `scripts/` 下操作 Pinecone 的腳本（重複向量分析與刪除、結構檢查）都讀同一個設定；腳本會先載入 `.env` 再讀設定。
-- 正式環境由 `terraform/main.tf` 以同一個 local 值在 web Service 與 sync Job 設定 `carbon-assistant-qa-index`。
+- 正式環境由 `terraform/main.tf` 的 locals 在 web Service 與 sync Job 設定 `carbon-assistant-sample-index`，資料目錄為 GCS 上的 `/mnt/data/sample/uploaded_files` 與 `/mnt/data/sample/models`。先前的 `carbon-assistant-qa-index`（他方手冊，126 筆）與 `/mnt/data/uploaded_files`、`/mnt/data/models` 保留供回復，尚未刪除。
 - 同步會刪除 index 中不在本地手冊裡的向量，所以不同部署或環境不可共用同一個 index。
 - `examples/carbonm_sample_manual.xlsx` 是自行撰寫的虛構範例手冊（60 筆，五類主題），可直接在「文件管理」上傳；附固定的 `uuid` 欄位，重新同步時 doc_id 不變。
-- `scripts/eval_sample_manual.py` 在單一程序中把範例手冊同步到 demo index，檢查 demo index 與 BM25 筆數等於手冊筆數、逐題確認 hybrid 檢索沒有 fallback 且有 BM25 結果（並列出標準答案來源出現在融合候選中的題數，未命中不中止），再執行 RAGAS。遇到正式 index 名稱會直接拒絕；預設不讀其他 index，加上 `--audit-index carbon-assistant-qa-index` 時才會在執行前後比對該 index 的向量 ID（中途失敗或拋例外也會比對）。三組 API key 缺任一組時在呼叫 Pinecone 前就結束。需在專案 image 中執行，並另外掛入 `tests/`、`scripts/`、`examples/`（image 不含 `tests/`）。
+- `scripts/eval_sample_manual.py` 在單一程序中把範例手冊同步到 demo index，檢查 demo index 與 BM25 筆數等於手冊筆數、逐題確認 hybrid 檢索沒有 fallback 且有 BM25 結果（並列出標準答案來源出現在融合候選中的題數，未命中不中止），再執行 RAGAS。遇到正式 index 名稱（`carbon-assistant-sample-index`、`carbon-assistant-qa-index`）會直接拒絕；預設不讀其他 index，加上 `--audit-index <正式 index>` 時才會在執行前後比對該 index 的向量 ID（中途失敗或拋例外也會比對）。三組 API key 缺任一組時在呼叫 Pinecone 前就結束。需在專案 image 中執行，並另外掛入 `tests/`、`scripts/`、`examples/`（image 不含 `tests/`）。
 - **既有本機環境遷移**：預設 index 改變後，舊的本機 Compose 會改用空的 demo index，但 `manual_data`、`bm25_data` volume 與 Redis 語意快取仍保留舊資料。要沿用舊資料，在 `.env` 設定原本的 `PINECONE_INDEX_NAME`；要改用範例手冊，因介面沒有刪除手冊的功能，需以 `docker compose down -v` 清空本機資料（含已上傳手冊、BM25 索引、Redis 快取與 MongoDB 紀錄）後重新啟動，再上傳範例手冊並等待同步。
-- **正式站切換 index**（尚未執行）：web Service 與 sync Job 必須同時改 `PINECONE_INDEX_NAME`，在新的資料目錄放入新手冊並重新同步，再清除語意快取；語意快取的 key 不含 index 名稱，不清除會回傳舊知識庫的答案。
+- **正式站切換與回復**：步驟見 [docs/deployment/releases.md](docs/deployment/releases.md#切換正式站知識庫)。web Service 與 sync Job 必須一起改 index 與資料目錄；切換和回復期間不可上傳手冊，因為 web 觸發的 Job 使用 Job 自己的設定。
 
 ## Key Parameters
 
 | Component | Parameter | Value | 定義位置 |
 |-----------|-----------|-------|----------|
-| Vector Store | `PINECONE_INDEX_NAME` | `rag-demo-qa-index`（正式環境為 `carbon-assistant-qa-index`） | `config.py`（env 可覆寫；正式值在 `terraform/main.tf`） |
+| Vector Store | `PINECONE_INDEX_NAME` | `rag-demo-qa-index`（正式環境為 `carbon-assistant-sample-index`） | `config.py`（env 可覆寫；正式值在 `terraform/main.tf`） |
 | Vector Retrieval | `VECTOR_TOP_N` | 10 | `config.py` |
 | BM25 Retrieval | `BM25_TOP_N` | 10 | `config.py` |
 | Fusion | `RRF_K` | 60 | `config.py` |
@@ -334,9 +340,9 @@ flowchart TB
 | 信用卡與 IP 規則誤判一般內容 | `guardrails.py`：`credit_card`（13–19 位數字，沒有 Luhn 檢查）、`ip_address` | 「2023 2024 2025 2026」被判成信用卡，章節號「1.2.3.4」被判成 IP；碳盤查的年度數字容易誤擋 |
 | 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的檢索分數 0.645，高於門檻，仍以重設密碼流程回答並附來源 |
 | 快取查詢與寫入以同步 Redis 呼叫在 async 路徑執行 | `chat_service.py` 呼叫 `cache_service.py` | 查詢期間阻塞同一個事件迴圈；快取查詢範圍擴大後，每次讀回的資料量更大 |
-| 手冊同步後不清除語意快取 | `build_vector_store.py`、`cache_service.py`（`clear_cache` 沒有呼叫者） | 補上手冊後，24 小時內相似問題仍回舊答案 |
+| 同一 index 更新手冊後仍可能寫入舊快取 | `build_vector_store.py` 同步後清快取、`hybrid_retriever.py` 每 30 秒檢查 BM25 pointer | 清除之後、web 載入新 BM25 之前（最長約 90 秒，含 GCS FUSE stat cache），或同步前已開始的請求，仍可能寫入依舊資料產生的答案並保留 24 小時；可用資料版本作為命名空間的一部分解決 |
 | 命中計數以 get、ttl、setex 三步更新，不是原子操作 | `cache_service.py`：`_increment_hit_count` | 與同一 key 的重新寫入或淘汰交錯時，可能以舊內容覆蓋新值，或在淘汰後留下一筆沒有索引的資料 key（最長 24 小時後過期）；不會造成錯誤命中，窗口極小 |
 | 評分門檻 0.3 缺乏標註資料驗證 | `config.py`：`GRADE_SCORE_THRESHOLD` | 實測樣本中知識庫內問題 0.89–1.0、知識庫外約 0.0001，區分明顯，但樣本很小；接近門檻的問題行為未知 |
 | 規則層關鍵字依舊知識庫挑選 | `query_router.py`：`RAG_KEYWORDS` | 範例手冊 60 題只有 40 題由規則層判定，其餘多一次 LLM 路由；補「範疇、廠區、盤查」等詞需搭配一般問題的反例測試，避免誤判 |
-| 正式 index 名稱寫在兩處 | `terraform/main.tf`（`local.pinecone_index_name`）、`scripts/eval_sample_manual.py`（`PRODUCTION_INDEX`） | 只改 Terraform 時，評估腳本的拒絕清單仍是舊名稱；執行時應以 `--audit-index` 明確指定要保護的 index |
+| 正式 index 名稱寫在兩處 | `terraform/main.tf`（`local.pinecone_index_name`）、`scripts/eval_sample_manual.py`（`PRODUCTION_INDEXES`） | 之後再改正式 index 時，評估腳本的拒絕清單要一起更新；執行時仍應以 `--audit-index` 明確指定要保護的 index |
 | 評估題庫只有 12 題 | `tests/rag_eval_data.json` | 題數仍少，LLM 評分的隨機性足以影響版本比較；也沒有涵蓋路由、重試與低信心路徑 |
