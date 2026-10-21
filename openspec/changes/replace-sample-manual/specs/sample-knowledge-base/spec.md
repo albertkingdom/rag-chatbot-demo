@@ -51,12 +51,22 @@ The system SHALL read the Pinecone index name from the `PINECONE_INDEX_NAME` env
 
 ### Requirement: Isolated sample evaluation run
 
-The sample evaluation runner SHALL refuse to run when the resolved index name equals `carbon-assistant-qa-index`, SHALL verify after syncing that both the demo Pinecone index and the BM25 index contain exactly one entry per sample-manual row, SHALL exit non-zero when hybrid retrieval for any evaluation case falls back or returns no BM25 results, SHALL report how many cases retrieve their ground-truth source row among the fused candidates without failing on misses, and SHALL verify that the set of vector IDs in `carbon-assistant-qa-index` is identical before and after the run.
+The sample evaluation runner SHALL refuse to run when the resolved index name equals `carbon-assistant-qa-index`, SHALL verify after syncing that both the demo Pinecone index and the BM25 index contain exactly one entry per sample-manual row, SHALL exit non-zero when hybrid retrieval for any evaluation case falls back or returns no BM25 results, SHALL report how many cases retrieve their ground-truth source row among the fused candidates without failing on misses, and SHALL fail before any Pinecone call when `PINECONE_API_KEY`, `OPENAI_API_KEY` or `OPENROUTER_API_KEY` is missing or empty. The runner SHALL read no index other than the evaluated one unless `--audit-index <name>` is given; with it, the runner SHALL refuse an audit target equal to the evaluated index, and SHALL compare the audited index's vector IDs before and after the run even when the run fails early or raises, exiting non-zero on any difference while letting an original exception propagate.
 
 #### Scenario: Production index name is rejected
 
 - **WHEN** the runner starts with `PINECONE_INDEX_NAME=carbon-assistant-qa-index`
 - **THEN** it exits non-zero before any Pinecone write
+
+#### Scenario: No audit by default
+
+- **WHEN** the runner starts without `--audit-index`
+- **THEN** it never reads any Pinecone index other than the evaluated one
+
+#### Scenario: Audit survives a failing run
+
+- **WHEN** the runner starts with `--audit-index carbon-assistant-qa-index` and the evaluation raises an exception
+- **THEN** the audited index's vector IDs are still compared and the original exception propagates
 
 #### Scenario: Index contents mismatch
 

@@ -263,8 +263,8 @@ flowchart TB
 - index 名稱來自 `PINECONE_INDEX_NAME`，未設定或空字串時為 demo index `rag-demo-qa-index`（首次同步時自動建立）。聊天、同步 Job 與 `scripts/` 下操作 Pinecone 的腳本（重複向量分析與刪除、結構檢查）都讀同一個設定；腳本會先載入 `.env` 再讀設定。
 - 正式環境由 `terraform/main.tf` 以同一個 local 值在 web Service 與 sync Job 設定 `carbon-assistant-qa-index`。
 - 同步會刪除 index 中不在本地手冊裡的向量，所以不同部署或環境不可共用同一個 index。
-- `examples/carbonm_sample_manual.xlsx` 是自行撰寫的虛構範例手冊（60 筆，五類主題），可直接在「文件管理」上傳。
-- `scripts/eval_sample_manual.py` 在單一程序中把範例手冊同步到 demo index，檢查 demo index 與 BM25 筆數等於手冊筆數、逐題確認 hybrid 檢索沒有 fallback 且有 BM25 結果（並列出標準答案來源出現在融合候選中的題數，未命中不中止），再執行 RAGAS，最後確認正式 index 的向量 ID 沒有變動；遇到正式 index 名稱會直接拒絕。需在專案 image 中執行，並另外掛入 `tests/`、`scripts/`、`examples/`（image 不含 `tests/`）。
+- `examples/carbonm_sample_manual.xlsx` 是自行撰寫的虛構範例手冊（60 筆，五類主題），可直接在「文件管理」上傳；附固定的 `uuid` 欄位，重新同步時 doc_id 不變。
+- `scripts/eval_sample_manual.py` 在單一程序中把範例手冊同步到 demo index，檢查 demo index 與 BM25 筆數等於手冊筆數、逐題確認 hybrid 檢索沒有 fallback 且有 BM25 結果（並列出標準答案來源出現在融合候選中的題數，未命中不中止），再執行 RAGAS。遇到正式 index 名稱會直接拒絕；預設不讀其他 index，加上 `--audit-index carbon-assistant-qa-index` 時才會在執行前後比對該 index 的向量 ID（中途失敗或拋例外也會比對）。三組 API key 缺任一組時在呼叫 Pinecone 前就結束。需在專案 image 中執行，並另外掛入 `tests/`、`scripts/`、`examples/`（image 不含 `tests/`）。
 - **既有本機環境遷移**：預設 index 改變後，舊的本機 Compose 會改用空的 demo index，但 `manual_data`、`bm25_data` volume 與 Redis 語意快取仍保留舊資料。要沿用舊資料，在 `.env` 設定原本的 `PINECONE_INDEX_NAME`；要改用範例手冊，因介面沒有刪除手冊的功能，需以 `docker compose down -v` 清空本機資料（含已上傳手冊、BM25 索引、Redis 快取與 MongoDB 紀錄）後重新啟動，再上傳範例手冊並等待同步。
 - **正式站切換 index**（尚未執行）：web Service 與 sync Job 必須同時改 `PINECONE_INDEX_NAME`，在新的資料目錄放入新手冊並重新同步，再清除語意快取；語意快取的 key 不含 index 名稱，不清除會回傳舊知識庫的答案。
 
@@ -297,7 +297,7 @@ flowchart TB
 - `tests/evaluate_rerank.py`：評估重排效果。
 - ragas（0.2.x 到 0.4.3）在 import 時需要 langchain-community 0.4 已移除的 Vertex AI 類別，而 langchain-community 不能降回 0.3（會讓 reranker 無法 import）。`tests/ragas_compat.py` 在 import ragas 前補上不會被使用的替代類別，`tests/test_ragas_compat.py` 確保 ragas 與 reranker 都能 import。
 - 題庫 12 題，`ground_truth` 逐字取自 `examples/carbonm_sample_manual.xlsx`，五類主題（帳號、盤查邊界、排放源、數據審核、報表）各至少 2 題；`tests/test_sample_manual.py` 檢查每題答案都在範例手冊中。
-- `tests/rag_eval_report.json` 於 2026-10-20 以 `scripts/eval_sample_manual.py` 在 demo index 上產生：faithfulness 0.99、answer_relevancy 0.94、context_precision 0.86、context_recall 0.92，全部高於 0.7 門檻。12 題中有 11 題的標準答案來源出現在融合候選中；未命中的是「有好幾個廠區，要怎麼調整今年要納入盤查的範圍？」，因為知識庫只對問題文字建索引，口語問法與原問句「如何在多廠區管理中切換邊界？」幾乎沒有共同字詞。評分帶有 LLM 隨機性，比較前後版本時應多跑幾次取平均。
+- `tests/rag_eval_report.json` 於 2026-10-21 以 `scripts/eval_sample_manual.py --audit-index carbon-assistant-qa-index` 在 demo index 上產生：faithfulness 1.0、answer_relevancy 0.93、context_precision 0.86、context_recall 0.92，全部高於 0.7 門檻（2026-10-20 的前一次執行為 0.99、0.94、0.86、0.92），正式 index 的向量 ID 前後一致。12 題中有 11 題的標準答案來源出現在融合候選中；未命中的是「有好幾個廠區，要怎麼調整今年要納入盤查的範圍？」，因為知識庫只對問題文字建索引，口語問法與原問句「如何在多廠區管理中切換邊界？」幾乎沒有共同字詞。評分帶有 LLM 隨機性，比較前後版本時應多跑幾次取平均。
 
 ## Performance Optimizations
 
@@ -337,4 +337,6 @@ flowchart TB
 | 手冊同步後不清除語意快取 | `build_vector_store.py`、`cache_service.py`（`clear_cache` 沒有呼叫者） | 補上手冊後，24 小時內相似問題仍回舊答案 |
 | 命中計數以 get、ttl、setex 三步更新，不是原子操作 | `cache_service.py`：`_increment_hit_count` | 與同一 key 的重新寫入或淘汰交錯時，可能以舊內容覆蓋新值，或在淘汰後留下一筆沒有索引的資料 key（最長 24 小時後過期）；不會造成錯誤命中，窗口極小 |
 | 評分門檻 0.3 缺乏標註資料驗證 | `config.py`：`GRADE_SCORE_THRESHOLD` | 實測樣本中知識庫內問題 0.89–1.0、知識庫外約 0.0001，區分明顯，但樣本很小；接近門檻的問題行為未知 |
+| 規則層關鍵字依舊知識庫挑選 | `query_router.py`：`RAG_KEYWORDS` | 範例手冊 60 題只有 40 題由規則層判定，其餘多一次 LLM 路由；補「範疇、廠區、盤查」等詞需搭配一般問題的反例測試，避免誤判 |
+| 正式 index 名稱寫在兩處 | `terraform/main.tf`（`local.pinecone_index_name`）、`scripts/eval_sample_manual.py`（`PRODUCTION_INDEX`） | 只改 Terraform 時，評估腳本的拒絕清單仍是舊名稱；執行時應以 `--audit-index` 明確指定要保護的 index |
 | 評估題庫只有 12 題 | `tests/rag_eval_data.json` | 題數仍少，LLM 評分的隨機性足以影響版本比較；也沒有涵蓋路由、重試與低信心路徑 |

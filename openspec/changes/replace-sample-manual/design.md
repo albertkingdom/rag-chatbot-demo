@@ -35,13 +35,15 @@
 
 新增 `scripts/eval_sample_manual.py`，在同一個程序內依序：
 
-1. 檢查 `src.config.PINECONE_INDEX_NAME` 不等於 `carbon-assistant-qa-index`，否則中止且不呼叫 Pinecone 寫入。
-2. 記錄正式 index 的完整 ID 集合（只讀 `list`）。
+1. 檢查 `src.config.PINECONE_INDEX_NAME` 不等於 `carbon-assistant-qa-index`、也不等於 `--audit-index`，並確認三組憑證都有值，否則在呼叫 Pinecone 前中止。
+2. 有指定 `--audit-index` 時，記錄該 index 的完整 ID 集合（只讀 `list`）。未指定就不讀任何其他 index，讓沒有正式 index 的公開使用者也能執行。
 3. 把 `examples/carbonm_sample_manual.xlsx` 複製到 `DATA_SOURCE_DIR` 後執行 `sync_vector_store()`。
 4. 確認 demo index 的 ID 數等於手冊筆數，並載入 `BM25_INDEX_DIR` 的索引，確認文件數也等於手冊筆數；任一不符即中止。
 5. 對每一題評估問題執行 hybrid 檢索，`fusion_metadata` 不得含 `fallback`、`bm25_results` 不得為空，任一題不符即中止；另外列出 `ground_truth` 對應的手冊列（以 doc_id 比對）有出現在 `fusion_results` 中的題數。未命中屬於檢索品質，由 RAGAS 的 context_recall 衡量，不作為中止條件。
 6. 執行 `tests.evaluate_rag` 的主流程，寫出報告。
-7. 再次讀取正式 index 的完整 ID 集合，與第 2 步比對必須完全相同。
+7. 有指定 `--audit-index` 時，在 `finally` 中再次讀取 ID 集合並與第 2 步比對，必須完全相同；第 3 到 6 步提早失敗或拋出例外時也會比對，原本的例外照常往外拋。
+
+範例手冊附固定 uuid（以固定 namespace 對問題文字做 uuid5），重新同步時 ID 不變，不會刪除並重新 embedding 全部資料。
 
 以 `docker run --rm` 使用專案 image 執行，環境變數為 `PINECONE_INDEX_NAME=rag-demo-qa-index`、`DATA_SOURCE_DIR` 與 `BM25_INDEX_DIR` 指向容器內 `/tmp` 下的新目錄，不掛載既有 volume。專案 image 透過 `.dockerignore` 排除了 `tests/`，因此以唯讀掛入 `examples/` 與 `scripts/`，並把 repo 的 `tests/` 以可寫方式掛到 `/app/tests`，讓評估程式、題庫與 `ragas_compat.py` 可用，報告直接寫回 `tests/rag_eval_report.json`。
 

@@ -15,7 +15,7 @@
 - **Typed NDJSON 串流**：分開傳送狀態、回答、來源與耗時。
 - **背景知識庫同步**：上傳 PDF / XLSX / CSV，由背景任務增量同步向量庫與 BM25 索引，介面可查詢工作狀態。
 - **範例知識庫**：附自製的虛構操作手冊，可直接上傳建立知識庫；同步與 RAGAS 評估使用獨立的 demo index。
-- **可觀測性與評估**：LangSmith 追蹤各階段、MongoDB 保存對話紀錄、RAGAS 離線評估（faithfulness 0.99、answer relevancy 0.94、context precision 0.86、context recall 0.92；題庫 12 題，僅供參考）。
+- **可觀測性與評估**：LangSmith 追蹤各階段、MongoDB 保存對話紀錄、RAGAS 離線評估（faithfulness 1.0、answer relevancy 0.93、context precision 0.86、context recall 0.92；題庫 12 題，僅供參考）。
 - **手機優先 React 介面**：登入、串流聊天、來源展開、文件上傳與深色模式。
 
 ## 系統架構
