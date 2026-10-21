@@ -29,6 +29,18 @@ def _write_xlsx(path, rows):
     pd.DataFrame(rows).to_excel(path, index=False)
 
 
+@pytest.fixture(autouse=True)
+def semantic_cache(monkeypatch):
+    """Stand-in for the semantic cache cleared after a complete sync."""
+    from src import cache_service, services
+
+    cache = MagicMock()
+    cache.clear_cache.return_value = 0
+    monkeypatch.setattr(cache_service, "PromptCacheService", MagicMock(return_value=cache))
+    monkeypatch.setattr(services, "get_redis_conn", MagicMock())
+    return cache
+
+
 def _write_csv(path, rows, fieldnames):
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -258,3 +270,69 @@ class TestSyncUsesConfiguredIndex:
         created = {c.kwargs["name"] for c in mock_pc.create_index.call_args_list}
         assert opened == {"rag-demo-qa-index"}
         assert created <= {"rag-demo-qa-index"}
+
+
+# --- sync-job-outcome: cache clearing and exit status ------------------
+
+
+class TestSyncClearsSemanticCache:
+    def _data_dir(self, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _write_xlsx(data_dir / "qa.xlsx", [{"question": "問：Q1", "answer": "答：A1"}])
+        return data_dir
+
+    def test_complete_sync_clears_the_cache_once(self, tmp_path, monkeypatch, semantic_cache):
+        result, _, _ = _run_sync(monkeypatch, self._data_dir(tmp_path))
+
+        assert result["status"] == "success"
+        semantic_cache.clear_cache.assert_called_once_with()
+
+    def test_bm25_failure_keeps_the_cache(self, tmp_path, monkeypatch, semantic_cache):
+        data_dir = self._data_dir(tmp_path)
+        monkeypatch.setenv("PINECONE_API_KEY", "fake")
+        with patch.object(build_vector_store, "OpenAIEmbeddings") as mock_emb, \
+             patch.object(build_vector_store, "Pinecone") as mock_pc_cls, \
+             patch.object(build_vector_store, "BM25Index") as mock_bm25_cls, \
+             patch.object(build_vector_store, "DATA_SOURCE_DIR", str(data_dir)):
+            mock_emb.return_value.embed_documents.side_effect = (
+                lambda texts: [[0.1, 0.2, 0.3] for _ in texts]
+            )
+            mock_pc_cls.return_value.Index.return_value.list.return_value = []
+            mock_bm25_cls.return_value.build_from_documents.side_effect = OSError("disk full")
+
+            result = build_vector_store.sync_vector_store()
+
+        assert result["status"] == "success"
+        semantic_cache.clear_cache.assert_not_called()
+
+    def test_cache_clearing_failure_does_not_fail_the_sync(self, tmp_path, monkeypatch, semantic_cache):
+        semantic_cache.clear_cache.side_effect = ConnectionError("redis down")
+
+        result, _, _ = _run_sync(monkeypatch, self._data_dir(tmp_path))
+
+        assert result["status"] == "success"
+
+    def test_failed_sync_keeps_the_cache(self, tmp_path, monkeypatch, semantic_cache):
+        TestEnsureUuids.test_writeback_failure_aborts_sync(None, tmp_path, monkeypatch)
+
+        semantic_cache.clear_cache.assert_not_called()
+
+
+class TestSyncExitStatus:
+    def test_error_result_exits_non_zero(self, monkeypatch):
+        monkeypatch.setattr(build_vector_store, "sync_vector_store",
+                            lambda: {"status": "error", "message": "x"})
+        assert build_vector_store.main() == 1
+
+    def test_success_result_exits_zero(self, monkeypatch):
+        monkeypatch.setattr(build_vector_store, "sync_vector_store",
+                            lambda: {"status": "success", "message": "x"})
+        assert build_vector_store.main() == 0
+
+    def test_exception_exits_non_zero(self, monkeypatch):
+        def boom():
+            raise RuntimeError("pinecone down")
+
+        monkeypatch.setattr(build_vector_store, "sync_vector_store", boom)
+        assert build_vector_store.main() == 1

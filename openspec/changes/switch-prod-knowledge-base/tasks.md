@@ -5,8 +5,8 @@
 
 ## 2. 同步結果
 
-- [ ] 2.1 （Clear the semantic cache after a complete sync；同步完成的定義與快取清除）`sync_vector_store()` 在向量與 BM25 都成功時呼叫 `clear_cache` 並印出筆數，BM25 失敗或同步失敗時不清除，清除拋錯只警告；驗證：`tests/test_document_identity.py` 新增四個案例（完整成功清一次、BM25 失敗不清、清除拋錯仍成功、回寫 uuid 失敗不清）並通過。
-- [ ] 2.2 （Failed sync exits non-zero）`build_vector_store.py` 的 CLI 在 `status=error` 時以結束碼 1 結束；驗證：測試以 mock 讓 `sync_vector_store` 回傳 error，執行 main entry 時結束碼為 1。
+- [x] 2.1 （Clear the semantic cache after a complete sync；同步完成的定義與快取清除）`sync_vector_store()` 在向量與 BM25 都成功時呼叫 `clear_cache` 並印出筆數，BM25 失敗或同步失敗時不清除，清除拋錯只警告；驗證：`tests/test_document_identity.py` 新增四個案例（完整成功清一次、BM25 失敗不清、清除拋錯仍成功、回寫 uuid 失敗不清）並通過。
+- [x] 2.2 （Failed sync exits non-zero）`build_vector_store.py` 的 CLI 在 `status=error` 時以結束碼 1 結束；驗證：測試以 mock 讓 `sync_vector_store` 回傳 error，執行 main entry 時結束碼為 1。
 
 ## 3. 正式站設定
 

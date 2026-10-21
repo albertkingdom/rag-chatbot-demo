@@ -126,6 +126,18 @@ def _ensure_uuids_xlsx(file_path: str) -> int:
     return added
 
 
+def _clear_semantic_cache():
+    """Drop cached answers built from the previous knowledge base (best effort)."""
+    from .cache_service import PromptCacheService
+    from .services import get_redis_conn
+
+    try:
+        cleared = PromptCacheService(get_redis_conn()).clear_cache()
+        print(f"Semantic cache cleared ({cleared} entries).", flush=True)
+    except Exception as e:
+        print(f"Warning: could not clear the semantic cache ({e}).", flush=True)
+
+
 # --- Main Sync Function --- #
 
 @traceable(name="Knowledge Base Sync")
@@ -263,17 +275,25 @@ def sync_vector_store():
         print(f"BM25 index rebuilt with {bm25.corpus_size} documents.", flush=True)
     except Exception as bm25_err:
         print(f"Warning: BM25 index rebuild failed ({bm25_err}). Vector sync remains intact.", flush=True)
+        print("Semantic cache not cleared because the BM25 rebuild failed.", flush=True)
+    else:
+        _clear_semantic_cache()
 
     return {"status": "success", "message": f"Sync complete. Upserted: {len(ids_to_upsert)}, Deleted: {len(ids_to_delete)}. Total vectors: {final_count}."}
 
 
-if __name__ == '__main__':
-    import sys
+def main() -> int:
+    """Run one sync. A non-zero exit records the Cloud Run Job execution (and
+    the UI's poll_status) as FAILED instead of a false SUCCEEDED."""
     try:
         result = sync_vector_store()
-        print(result, flush=True)
     except Exception as e:
-        # Exit non-zero so the Cloud Run Job execution is recorded as FAILED
-        # (and the UI poll_status reports failure) instead of a false SUCCEEDED.
         print(f"An unexpected error occurred: {e}", flush=True)
-        sys.exit(1)
+        return 1
+    print(result, flush=True)
+    return 0 if result.get("status") == "success" else 1
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())
