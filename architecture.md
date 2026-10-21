@@ -297,7 +297,7 @@ flowchart TB
 - `tests/evaluate_rerank.py`：評估重排效果。
 - ragas（0.2.x 到 0.4.3）在 import 時需要 langchain-community 0.4 已移除的 Vertex AI 類別，而 langchain-community 不能降回 0.3（會讓 reranker 無法 import）。`tests/ragas_compat.py` 在 import ragas 前補上不會被使用的替代類別，`tests/test_ragas_compat.py` 確保 ragas 與 reranker 都能 import。
 - 題庫 12 題，`ground_truth` 逐字取自 `examples/carbonm_sample_manual.xlsx`，五類主題（帳號、盤查邊界、排放源、數據審核、報表）各至少 2 題；`tests/test_sample_manual.py` 檢查每題答案都在範例手冊中。
-- `tests/rag_eval_report.json` 於 2026-10-21 以 `scripts/eval_sample_manual.py --audit-index carbon-assistant-qa-index` 在 demo index 上產生：faithfulness 1.0、answer_relevancy 0.93、context_precision 0.86、context_recall 0.92，全部高於 0.7 門檻（2026-10-20 的前一次執行為 0.99、0.94、0.86、0.92），正式 index 的向量 ID 前後一致。12 題中有 11 題的標準答案來源出現在融合候選中；未命中的是「有好幾個廠區，要怎麼調整今年要納入盤查的範圍？」，因為知識庫只對問題文字建索引，口語問法與原問句「如何在多廠區管理中切換邊界？」幾乎沒有共同字詞。評分帶有 LLM 隨機性，比較前後版本時應多跑幾次取平均。
+- `tests/rag_eval_report.json` 於 2026-10-21 以 `scripts/eval_sample_manual.py --audit-index carbon-assistant-qa-index` 在 demo index 上產生：faithfulness 1.0、answer_relevancy 0.95、context_precision 0.94、context_recall 1.0，全部高於 0.7 門檻，12 題的標準答案來源都出現在融合候選中，正式 index 的向量 ID 前後一致。同一天較早的執行（手冊尚未改寫兩個與原手冊相同的問句時）為 1.0、0.93、0.86、0.92，當時「有好幾個廠區，要怎麼調整今年要納入盤查的範圍？」找不到來源；手冊問句改為「多廠區要怎麼切換盤查邊界？」後與口語問法有共同字詞而命中。知識庫只對問題文字建索引，口語問法與手冊問句用詞差異大時仍可能漏檢。評分帶有 LLM 隨機性，比較前後版本時應多跑幾次取平均。
 
 ## Performance Optimizations
 
