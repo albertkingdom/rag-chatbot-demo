@@ -49,3 +49,11 @@ def test_eval_ground_truths_come_from_sample_manual(entries):
     assert len(cases) == 12
     for case in cases:
         assert case["ground_truth"] in answers, case["question"]
+
+
+def test_sample_manual_ships_stable_unique_uuids(entries):
+    # Fixed uuids keep doc_ids identical across separate copies and re-syncs,
+    # so re-running the sync does not delete and re-embed every row.
+    uuids = [e["uuid"] for e in entries]
+    assert all(uuids)
+    assert len(set(uuids)) == len(uuids)
