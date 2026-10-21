@@ -128,10 +128,10 @@ def _ensure_uuids_xlsx(file_path: str) -> int:
 
 def _clear_semantic_cache():
     """Drop cached answers built from the previous knowledge base (best effort)."""
-    from .cache_service import PromptCacheService
-    from .services import get_redis_conn
-
     try:
+        from .cache_service import PromptCacheService
+        from .services import get_redis_conn
+
         cleared = PromptCacheService(get_redis_conn()).clear_cache()
         print(f"Semantic cache cleared ({cleared} entries).", flush=True)
     except Exception as e:
