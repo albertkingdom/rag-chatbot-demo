@@ -22,4 +22,4 @@
 ## 5. 切換（與使用者一起執行）
 
 - [x] 5.1 確認 Pinecone 方案可再建立一個 index；驗證：使用者在 Pinecone 主控台確認（2026-10-21，使用者確認可再建立）。
-- [ ] 5.2 依 `docs/deployment/releases.md` 的步驟發布並切換；驗證：Job log 有 `Upserted: 60` 與 `BM25 index rebuilt with 60 documents`，新 revision log 有 `Loaded persisted index (60 docs) from /mnt/data/sample/models/`，preview 與正式 URL 的回答來源為範例手冊，`carbon-assistant-qa-index` 向量數仍為 126。
+- [ ] 5.2 依 `docs/deployment/releases.md` 的步驟發布並切換；驗證：Job 成功且 log 有 `Total vectors: 60`、`BM25 index rebuilt with 60 documents` 與 `Semantic cache cleared`，新 index 向量數為 60，新 revision log 有 `Loaded persisted index (60 docs) from /mnt/data/sample/models/`，preview 與正式 URL 的回答來源為範例手冊，`carbon-assistant-qa-index` 向量數仍為 126。

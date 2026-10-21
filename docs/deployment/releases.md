@@ -49,7 +49,12 @@
    gcloud storage cp examples/carbonm_sample_manual.xlsx gs://<data-bucket>/sample/uploaded_files/
    gcloud run jobs execute sync-job --project <project-id> --region asia-east1 --wait
    ```
-   Job 必須成功，log 要有 `Creating index: carbon-assistant-sample-index`、`Upserted: 60`、`BM25 index rebuilt with 60 documents` 與 `Semantic cache cleared`。
+   每次執行都要成立的驗收條件：
+   - Job execution 成功（同步回傳錯誤時 Job 會以結束碼 1 失敗）。
+   - log 有 `Sync complete. Total vectors: 60.`、`BM25 index rebuilt with 60 documents.` 與 `Semantic cache cleared`。
+   - `carbon-assistant-sample-index` 的向量數為 60（Pinecone 主控台或 `describe_index_stats`，新 index 可能延遲數秒才更新）。
+
+   只在特定情況出現、不作為驗收條件的 log：index 尚不存在時會先印 `Creating index: carbon-assistant-sample-index`；第一次同步為 `Upserted: 60, Deleted: 0`，之後重跑同一份手冊為 `Upserted: 0, Deleted: 0`。
 4. **驗收新 revision**：加 preview tag（一般流程第 4 步），同步完成後至少等 90 秒（pointer 每 30 秒檢查，加上 GCS FUSE 約 60 秒的 stat cache），登入 preview URL 問兩三題範例手冊的問題，例如「忘記密碼怎麼辦？」。新 revision 的 log 必須出現：
    ```
    [BM25Index] Loaded persisted index (60 docs) from /mnt/data/sample/models/

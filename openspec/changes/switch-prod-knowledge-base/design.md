@@ -53,7 +53,7 @@
 1. 確認 Pinecone 方案可再建立一個 index。
 2. 從這一步到第 7 步結束都不要上傳手冊；確認沒有執行中的 Job（`gcloud run jobs executions list --job sync-job`）。
 3. 建立 release 分支並 push，CI 完成後：web 新 revision 為 0% 流量；sync Job 已改用新 index 與新目錄。
-4. `gcloud storage cp examples/carbonm_sample_manual.xlsx gs://<bucket>/sample/uploaded_files/`，再 `gcloud run jobs execute sync-job --wait`。Job 必須成功，且 log 有 `BM25 index rebuilt with 60 documents` 與 `Upserted: 60`。
+4. `gcloud storage cp examples/carbonm_sample_manual.xlsx gs://<bucket>/sample/uploaded_files/`，再 `gcloud run jobs execute sync-job --wait`。Job 必須成功，log 有 `Total vectors: 60`、`BM25 index rebuilt with 60 documents` 與 `Semantic cache cleared`，新 index 向量數為 60；`Creating index` 與 `Upserted: 60` 只在第一次出現，不作為驗收條件。
 5. 加 preview tag，等待至少 90 秒（pointer 檢查 30 秒加 FUSE stat cache 60 秒），對 preview URL 問範例手冊的問題。新 revision 的 log 必須出現 `[BM25Index] Loaded persisted index (60 docs) from /mnt/data/sample/models/`，回答的來源必須來自範例手冊；沒有這行 log 就不切流。
 6. 流量切到新 revision，驗收正式 URL。
 7. 確認舊 index `carbon-assistant-qa-index` 的向量數仍為 126。
