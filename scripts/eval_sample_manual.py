@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Sync the bundled sample manual into a demo index and run the RAGAS evaluation.
+"""Sync the bundled sample manual into an index and run the RAGAS evaluation.
 
 Every step runs in this one process so the sync, the checks and the evaluation
 share the same PINECONE_INDEX_NAME, DATA_SOURCE_DIR and BM25_INDEX_DIR. The run
-refuses the production index, checks that the demo Pinecone index and the BM25
-index hold exactly one entry per manual row, checks that hybrid retrieval uses
-BM25 (no fallback) for every case and reports how many cases retrieve their
-source row, and verifies that the
-production index's vector IDs are unchanged afterwards.
+refuses the production index, checks that the Pinecone index and the BM25 index
+hold exactly one entry per manual row, checks that hybrid retrieval uses BM25
+(no fallback) for every case and reports how many cases retrieve their source
+row. With --audit-index it also verifies that another index in the same
+Pinecone project (for example production) keeps the same vector IDs, even when
+the run fails part-way.
 
 Usage (inside the project image, with tests/ and examples/ mounted):
     PINECONE_INDEX_NAME=rag-demo-qa-index \
     DATA_SOURCE_DIR=/tmp/sample/uploaded_files BM25_INDEX_DIR=/tmp/sample/bm25 \
-    python -m scripts.eval_sample_manual
+    python -m scripts.eval_sample_manual [--audit-index carbon-assistant-qa-index]
 """
 
+import argparse
 import asyncio
 import json
 import os
@@ -25,6 +27,7 @@ import time
 PRODUCTION_INDEX = "carbon-assistant-qa-index"
 SAMPLE_MANUAL = "examples/carbonm_sample_manual.xlsx"
 EVAL_DATA = "tests/rag_eval_data.json"
+REQUIRED_CREDENTIALS = ("PINECONE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY")
 
 
 def fail(message: str) -> int:
@@ -76,23 +79,17 @@ async def check_retrieval(
     return problems, misses
 
 
-def main() -> int:
-    from src import config
-
-    index_name = config.PINECONE_INDEX_NAME
-    if index_name == PRODUCTION_INDEX:
-        return fail(f"refusing to sync into the production index '{PRODUCTION_INDEX}'.")
-    print(f"[eval-sample] Demo index: {index_name}", flush=True)
-    print(f"[eval-sample] DATA_SOURCE_DIR={config.DATA_SOURCE_DIR} BM25_INDEX_DIR={config.BM25_INDEX_DIR}", flush=True)
-
+def _pinecone_client():
     from pinecone import Pinecone
 
+    return Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+
+
+def run_evaluation(pc, index_name: str) -> int:
+    """Sync the sample manual into index_name, check it, then run RAGAS."""
+    from src import config
     from src.bm25_index import BM25Index
     from src.build_vector_store import extract_from_xlsx, sync_vector_store
-
-    pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
-    production_before = list_ids(pc, PRODUCTION_INDEX)
-    print(f"[eval-sample] Production index has {len(production_before)} vectors.", flush=True)
 
     # Only the sample manual may live in the data directory.
     if os.path.isdir(config.DATA_SOURCE_DIR) and os.listdir(config.DATA_SOURCE_DIR):
@@ -105,15 +102,15 @@ def main() -> int:
     if result.get("status") != "success":
         return fail("sync did not succeed.")
 
-    entries = extract_from_xlsx(manual_copy)  # now carries the persisted uuids
+    entries = extract_from_xlsx(manual_copy)
     expected = len(entries)
     demo_ids = wait_for_count(pc, index_name, expected)
     if len(demo_ids) != expected:
-        return fail(f"demo index holds {len(demo_ids)} vectors, expected {expected}.")
+        return fail(f"index holds {len(demo_ids)} vectors, expected {expected}.")
     bm25 = BM25Index()
     if bm25.corpus_size != expected:
         return fail(f"BM25 index holds {bm25.corpus_size} documents, expected {expected}.")
-    print(f"[eval-sample] Demo index and BM25 both hold {expected} entries.", flush=True)
+    print(f"[eval-sample] Index and BM25 both hold {expected} entries.", flush=True)
 
     with open(EVAL_DATA, encoding="utf-8") as f:
         cases = json.load(f)
@@ -130,13 +127,56 @@ def main() -> int:
 
     from tests import evaluate_rag
 
-    eval_status = evaluate_rag.main()
+    return evaluate_rag.main()
 
-    production_after = list_ids(pc, PRODUCTION_INDEX)
-    if production_after != production_before:
-        return fail("production index vector IDs changed during the run.")
-    print(f"[eval-sample] Production index unchanged ({len(production_after)} vectors).", flush=True)
-    return eval_status
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--audit-index",
+        help="another index in the same Pinecone project whose vector IDs must "
+        "be identical before and after the run (e.g. a production index)",
+    )
+    args = parser.parse_args(argv)
+
+    from src import config
+
+    index_name = config.PINECONE_INDEX_NAME
+    if index_name == PRODUCTION_INDEX:
+        return fail(f"refusing to sync into the production index '{PRODUCTION_INDEX}'.")
+    if args.audit_index and args.audit_index == index_name:
+        return fail(f"the evaluated index and --audit-index are both '{index_name}'.")
+    missing = [name for name in REQUIRED_CREDENTIALS if not os.environ.get(name)]
+    if missing:
+        return fail(f"missing credentials: {', '.join(missing)}.")
+    print(f"[eval-sample] Evaluated index: {index_name}", flush=True)
+    print(f"[eval-sample] DATA_SOURCE_DIR={config.DATA_SOURCE_DIR} BM25_INDEX_DIR={config.BM25_INDEX_DIR}", flush=True)
+
+    pc = _pinecone_client()
+    audit_before = None
+    if args.audit_index:
+        audit_before = list_ids(pc, args.audit_index)
+        print(f"[eval-sample] Audited index '{args.audit_index}' has {len(audit_before)} vectors.", flush=True)
+
+    status = 1
+    try:
+        status = run_evaluation(pc, index_name)
+    finally:
+        # Always compare the audited index, even after an early failure or an
+        # exception; an exception in flight still propagates after this block.
+        if audit_before is not None:
+            try:
+                audit_after = list_ids(pc, args.audit_index)
+            except Exception as e:
+                print(f"[eval-sample] ERROR: could not re-read '{args.audit_index}': {e}", flush=True)
+                status = 1
+            else:
+                if audit_after != audit_before:
+                    print(f"[eval-sample] ERROR: '{args.audit_index}' vector IDs changed during the run.", flush=True)
+                    status = 1
+                else:
+                    print(f"[eval-sample] Audited index unchanged ({len(audit_after)} vectors).", flush=True)
+    return status
 
 
 if __name__ == "__main__":
