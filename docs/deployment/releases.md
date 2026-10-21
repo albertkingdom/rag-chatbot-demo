@@ -70,6 +70,19 @@
 3. 以 preview 驗收這個新 revision，再把流量切過去。不要長期停在舊 revision：舊 revision 的快取沒有命名空間，Job 同步後清不到。
 4. 完成前不上傳手冊。
 
+## v1.1.1（2026-10-21）
+
+- 分支／commit：`release/v1.1.1`，`8ce52db052ceb700ff35b626e34cd4cb887dd505`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/39627966049) 成功。
+- Image digest：`sha256:a3b6e237e888a287063c5b11e03346ae78a5a5d8190b7fff924228ddae363e3c`。
+- Revision：`carbon-assistant-web-00021-8q7`，100% 流量。回復目標：`carbon-assistant-web-00020-5p7`（v1.1.0，同一個知識庫）。
+- 內容：
+  - #21 路由涵蓋範例手冊：新增 6 個 CarbonM 專屬複合詞、LLM 路由 prompt 列出系統功能與判斷規則、評估腳本加入路由關卡。先前「如何修改個人資料？」「如何開啟兩步驟驗證？」會不查知識庫直接回答。
+- 驗收：
+  - Terraform plan：0 add、2 change、0 destroy，只有 image。
+  - preview（沿用 `v110-preview` tag）：`/health`、`/` 200，未登入 API 401；登入後「如何修改個人資料？」以範例手冊回答並附 3 筆來源，「iPhone 如何開啟兩步驟驗證？」走 direct、不附來源；log 有 `Loaded persisted index (60 docs) from /mnt/data/sample/models/...`，無 ERROR。
+  - 切換流量後，正式 URL 不需登入的檢查正常；登入後「如何開啟兩步驟驗證？」以範例手冊回答並附 3 筆來源；新 revision 無 ERROR log。preview tag 已移除。
+- 未驗證：正式站「文件管理」上傳流程。
+
 ## v1.1.0（2026-10-21）
 
 - 分支／commit：`release/v1.1.0`，`cbd1a44afd8cc26fd92bc4b1ec93f457009dcc31`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/39613037901) 成功。
