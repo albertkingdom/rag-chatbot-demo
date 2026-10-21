@@ -259,7 +259,8 @@ flowchart TB
 - 若 Pinecone `list()` 失敗，視為索引為空：所有文件重新 upsert，且不刪除任何向量。
 - 無論有無差異，每次同步都會用完整的本地文件重建 BM25 index；重建失敗不影響已完成的向量同步。
 - 向量同步與 BM25 重建都成功後，清除目前命名空間的語意快取並印出筆數；BM25 失敗時不清除，清除失敗（含 import 或 Redis 錯誤）只記錄警告，同步結果仍為成功。
-- 以 `python -m src.build_vector_store` 執行（Cloud Run Job）時，同步回傳 `status=error` 或拋出例外都以結束碼 1 結束，Job execution 與介面輪詢都會顯示失敗。
+- 以 `python -m src.build_vector_store` 執行（Cloud Run Job）時，同步回傳 `status=error` 或拋出例外都以結束碼 1 結束；本機 RQ worker 執行的 `run_sync()` 在同一情況下拋出例外。兩種 runner 的介面輪詢都會顯示失敗。
+- 清除快取時直接以 `REDIS_URL` 建立 Redis 連線，不載入聊天用的 `services`。
 - web 載入 BM25 時印出 `[BM25Index] Loaded persisted index (<N> docs) from <path>`（立即 flush），切換正式站時以這行確認新 revision 已載入新索引。
 - web 端最多每 30 秒檢查一次 pointer 檔，同步完成後約 30 秒內的查詢就會載入新索引。
 
