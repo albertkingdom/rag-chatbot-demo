@@ -17,8 +17,8 @@
 ## 4. 評估資料與 RAGAS
 
 - [x] 4.1 （Evaluation dataset grounded in the sample manual）`tests/rag_eval_data.json` 改為 12 題，`ground_truth` 逐字取自範例手冊、五類各至少 2 題；驗證：`tests/test_sample_manual.py` 檢查每個 `ground_truth` 都在解析後的範例手冊答案中。
-- [x] 4.2 （Isolated sample evaluation run）新增 `scripts/eval_sample_manual.py`：拒絕正式 index 名稱、同步前後比對正式 index 完整 ID 集合、同步後檢查 demo index 與 BM25 筆數等於手冊筆數、逐題確認 hybrid 檢索沒有 fallback 且有 BM25 結果、列出命中對應手冊列的題數，再執行 `tests.evaluate_rag`；驗證：以 `PINECONE_INDEX_NAME=carbon-assistant-qa-index` 執行時在任何 Pinecone 呼叫前非零結束。
-- [x] 4.3 （同步與評估在一次性容器內完成）以 `docker run --rm` 用專案 image 執行 `scripts/eval_sample_manual.py`（`PINECONE_INDEX_NAME=rag-demo-qa-index`，`DATA_SOURCE_DIR`、`BM25_INDEX_DIR` 指向容器內 `/tmp` 新目錄，不掛載既有 volume；唯讀掛入 `examples/`、`scripts/`，可寫掛入 `tests/`）；驗證：腳本回報正式 index ID 集合不變、筆數檢查通過，`tests/rag_eval_report.json` 的 `num_cases` 為 12。
+- [x] 4.2 （Isolated sample evaluation run）新增 `scripts/eval_sample_manual.py`：拒絕正式 index 名稱、先檢查三組憑證、指定 `--audit-index` 時於同步前後（含失敗與例外）比對該 index 完整 ID 集合、同步後檢查 demo index 與 BM25 筆數等於手冊筆數、逐題確認 hybrid 檢索沒有 fallback 且有 BM25 結果、列出命中對應手冊列的題數，再執行 `tests.evaluate_rag`；驗證：以 `PINECONE_INDEX_NAME=carbon-assistant-qa-index` 執行時在任何 Pinecone 呼叫前非零結束。
+- [x] 4.3 （同步與評估在一次性容器內完成）以 `docker run --rm` 用專案 image 執行 `scripts/eval_sample_manual.py --audit-index carbon-assistant-qa-index`（`PINECONE_INDEX_NAME=rag-demo-qa-index`，`DATA_SOURCE_DIR`、`BM25_INDEX_DIR` 指向容器內 `/tmp` 新目錄，不掛載既有 volume；唯讀掛入 `examples/`、`scripts/`，可寫掛入 `tests/`）；驗證：腳本回報正式 index ID 集合不變、筆數檢查通過，`tests/rag_eval_report.json` 的 `num_cases` 為 12。
 
 ## 5. 文件
 

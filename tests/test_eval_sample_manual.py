@@ -33,7 +33,7 @@ def pinecone(monkeypatch):
         snapshots = ids_by_index[name]
         return snapshots.pop(0) if len(snapshots) > 1 else snapshots[0]
 
-    monkeypatch.setattr(runner, "_pinecone_client", lambda: pc)
+    monkeypatch.setattr(runner, "_pinecone_client", MagicMock(return_value=pc))
     monkeypatch.setattr(runner, "list_ids", MagicMock(side_effect=list_ids))
     return pc, ids_by_index
 
@@ -63,11 +63,17 @@ def test_refuses_when_evaluated_index_is_the_audited_index(env, pinecone):
 
 
 @pytest.mark.parametrize("missing", CREDENTIALS)
-def test_missing_or_empty_credential_fails_before_pinecone(env, pinecone, missing):
-    env.setenv(missing, "")
+@pytest.mark.parametrize("unset", [True, False], ids=["unset", "empty"])
+def test_missing_or_empty_credential_fails_before_pinecone(env, pinecone, missing, unset):
+    if unset:
+        env.delenv(missing)
+    else:
+        env.setenv(missing, "")
     env.setattr(runner, "run_evaluation", MagicMock(return_value=0))
 
-    assert runner.main([]) == 1
+    assert runner.main(["--audit-index", "prod"]) == 1
+    runner._pinecone_client.assert_not_called()
+    runner.list_ids.assert_not_called()
     runner.run_evaluation.assert_not_called()
 
 
@@ -105,3 +111,38 @@ def test_audit_runs_and_original_error_propagates_on_exception(env, pinecone):
     with pytest.raises(RuntimeError, match="judge failed"):
         runner.main(["--audit-index", "prod"])
     assert runner.list_ids.call_count == 2
+
+
+def test_audit_read_failure_after_a_successful_run_fails(env, pinecone):
+    _, ids_by_index = pinecone
+    ids_by_index["prod"] = [{"a"}]
+    env.setattr(runner, "run_evaluation", MagicMock(return_value=0))
+    calls = {"n": 0}
+
+    def list_ids(_pc, name):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ConnectionError("pinecone down")
+        return {"a"}
+
+    env.setattr(runner, "list_ids", list_ids)
+
+    assert runner.main(["--audit-index", "prod"]) == 1
+
+
+def test_original_exception_survives_an_audit_read_failure(env, pinecone):
+    original = RuntimeError("judge failed")
+    env.setattr(runner, "run_evaluation", MagicMock(side_effect=original))
+    calls = {"n": 0}
+
+    def list_ids(_pc, name):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ConnectionError("pinecone down")
+        return {"a"}
+
+    env.setattr(runner, "list_ids", list_ids)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        runner.main(["--audit-index", "prod"])
+    assert excinfo.value is original
