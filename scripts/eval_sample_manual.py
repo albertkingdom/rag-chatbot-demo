@@ -7,9 +7,9 @@ refuses the production index, checks that the Pinecone index and the BM25 index
 hold exactly one entry per manual row, checks that hybrid retrieval uses BM25
 (no fallback) for every case and reports how many cases retrieve their source
 row, and checks routing: every manual and evaluation question routes to rag
-and the general negatives to direct. With --audit-index it also verifies that another index in the same
-Pinecone project (for example production) keeps the same vector IDs, even when
-the run fails part-way.
+and the general negatives to direct. With --audit-index it also verifies that
+another index in the same Pinecone project (for example production) keeps the
+same vector IDs, even when the run fails part-way.
 
 Usage (inside the project image, with tests/ and examples/ mounted):
     PINECONE_INDEX_NAME=rag-demo-qa-index \

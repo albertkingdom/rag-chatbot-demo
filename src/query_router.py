@@ -55,7 +55,7 @@ RAG_KEYWORDS = [
     # Sample-manual terms. Only compounds that do not occur outside CarbonM:
     # substring matching wins over the LLM stage, so 係數/範疇/盤查/廠區/
     # 填報/啟用信/批次匯入 alone would also catch questions about other
-    # products or general topics (see tests/test_query_router.py).
+    # products or general topics (ROUTING_NEGATIVES in scripts/eval_sample_manual.py).
     "盤查年度", "盤查報告", "範疇二", "範疇三", "第三方查證", "係數庫",
     # English / mixed
     "carbon", "emission", "ghg", "carbonm",
