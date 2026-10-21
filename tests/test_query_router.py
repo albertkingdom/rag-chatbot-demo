@@ -23,6 +23,7 @@ from src.query_router import (
     route_query,
 )
 import src.query_router as query_router_module
+from scripts.eval_sample_manual import ROUTING_NEGATIVES as GENERAL_QUESTIONS
 
 
 HISTORY = [
@@ -340,17 +341,6 @@ if __name__ == "__main__":
 
 _ROOT = _Path(__file__).resolve().parents[1]
 
-GENERAL_QUESTIONS = [
-    "什麼是機器學習？", "推薦一本好看的小說", "明天要不要帶傘？", "幫我想一個生日派對的主題",
-    "遊戲角色怎麼練等", "台灣的首都是哪裡？", "怎麼學好英文？", "如何修改 Gmail 的個人資料？",
-    "Excel 報表怎麼做樞紐分析？", "iPhone 如何開啟兩步驟驗證？", "數據分析要學什麼？",
-    "相關係數是什麼？", "如何查證網路謠言？", "哲學的研究範疇有哪些？", "幫我寫 Python 計算相關係數",
-    "Excel 如何匯入數據？", "倉庫庫存盤查要注意什麼？", "GDP 的基準年是什麼意思？", "如何煮咖啡？",
-    "原始數據要怎麼清理？", "Excel 如何批次匯入資料？", "Google 帳戶沒有收到啟用信怎麼辦？",
-    "哲學的研究範疇一般如何劃分？", "兩步驟驗證和雙因素驗證有什麼差別？", "工廠廠區的消防規定有哪些？",
-    "論文的佐證文件要怎麼準備？", "如何在 Excel 製作數據填報表？", "Google 表單可以設定填報截止時間嗎？",
-    "Google 表單的填報人員怎麼設定？",
-]
 
 
 def _sample_manual_questions():

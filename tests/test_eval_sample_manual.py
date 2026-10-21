@@ -147,3 +147,72 @@ def test_original_exception_survives_an_audit_read_failure(env, pinecone):
     with pytest.raises(RuntimeError) as excinfo:
         runner.main(["--audit-index", "prod"])
     assert excinfo.value is original
+
+
+# --- query-routing-coverage: routing gate ----------------------------------
+
+import asyncio
+
+from src.query_router import RouterResult
+
+
+def _router(results):
+    """Fake route_query returning queued results per question."""
+    calls = []
+
+    async def route_query(question, history=None):
+        calls.append(question)
+        return results[question].pop(0)
+
+    return route_query, calls
+
+
+def _ok(route):
+    return RouterResult(route=route, rewritten_query="q", reasoning="ok")
+
+
+ERROR = RouterResult(route="direct", rewritten_query="q", reasoning="LLM 路由發生錯誤，回退為 direct：timeout")
+
+
+def _gate(monkeypatch, results, rag, direct):
+    import src.query_router as qr
+
+    fake, calls = _router(results)
+    monkeypatch.setattr(qr, "route_query", fake)
+    monkeypatch.setattr(qr, "_rule_route", lambda q: "uncertain")
+    return asyncio.run(runner.check_routing(rag, direct)), calls
+
+
+def test_routing_gate_passes(monkeypatch):
+    (misroutes, errors, _), _ = _gate(monkeypatch, {"a": [_ok("rag")], "z": [_ok("direct")]}, ["a"], ["z"])
+    assert misroutes == [] and errors == []
+
+
+def test_routing_gate_flags_a_positive_routed_direct(monkeypatch):
+    (misroutes, errors, _), _ = _gate(monkeypatch, {"a": [_ok("direct")]}, ["a"], [])
+    assert len(misroutes) == 1 and "a" in misroutes[0] and errors == []
+
+
+def test_routing_gate_flags_a_negative_routed_rag(monkeypatch):
+    (misroutes, errors, _), _ = _gate(monkeypatch, {"z": [_ok("rag")]}, [], ["z"])
+    assert len(misroutes) == 1 and "z" in misroutes[0]
+
+
+def test_routing_gate_retries_a_service_error_once(monkeypatch):
+    (misroutes, errors, _), calls = _gate(monkeypatch, {"a": [ERROR, _ok("rag")]}, ["a"], [])
+    assert misroutes == [] and errors == [] and calls == ["a", "a"]
+
+
+def test_routing_gate_reports_repeated_service_errors_separately(monkeypatch):
+    (misroutes, errors, _), calls = _gate(monkeypatch, {"a": [ERROR, ERROR]}, ["a"], [])
+    assert misroutes == [] and len(errors) == 1 and calls == ["a", "a"]
+
+
+def test_routing_gate_skips_negatives_the_rule_stage_decides(monkeypatch):
+    import src.query_router as qr
+
+    fake, calls = _router({})
+    monkeypatch.setattr(qr, "route_query", fake)
+    monkeypatch.setattr(qr, "_rule_route", lambda q: "direct")
+    misroutes, errors, _ = asyncio.run(runner.check_routing([], ["z"]))
+    assert calls == [] and misroutes == [] and errors == []

@@ -6,7 +6,8 @@ share the same PINECONE_INDEX_NAME, DATA_SOURCE_DIR and BM25_INDEX_DIR. The run
 refuses the production index, checks that the Pinecone index and the BM25 index
 hold exactly one entry per manual row, checks that hybrid retrieval uses BM25
 (no fallback) for every case and reports how many cases retrieve their source
-row. With --audit-index it also verifies that another index in the same
+row, and checks routing: every manual and evaluation question routes to rag
+and the general negatives to direct. With --audit-index it also verifies that another index in the same
 Pinecone project (for example production) keeps the same vector IDs, even when
 the run fails part-way.
 
@@ -28,6 +29,20 @@ import time
 PRODUCTION_INDEXES = ("carbon-assistant-qa-index", "carbon-assistant-sample-index")
 SAMPLE_MANUAL = "examples/carbonm_sample_manual.xlsx"
 EVAL_DATA = "tests/rag_eval_data.json"
+# General questions that must not reach the knowledge base (spec:
+# query-routing-coverage). Shared with tests/test_query_router.py.
+ROUTING_NEGATIVES = [
+    "什麼是機器學習？", "推薦一本好看的小說", "明天要不要帶傘？", "幫我想一個生日派對的主題",
+    "遊戲角色怎麼練等", "台灣的首都是哪裡？", "怎麼學好英文？", "如何修改 Gmail 的個人資料？",
+    "Excel 報表怎麼做樞紐分析？", "iPhone 如何開啟兩步驟驗證？", "數據分析要學什麼？",
+    "相關係數是什麼？", "如何查證網路謠言？", "哲學的研究範疇有哪些？", "幫我寫 Python 計算相關係數",
+    "Excel 如何匯入數據？", "倉庫庫存盤查要注意什麼？", "GDP 的基準年是什麼意思？", "如何煮咖啡？",
+    "原始數據要怎麼清理？", "Excel 如何批次匯入資料？", "Google 帳戶沒有收到啟用信怎麼辦？",
+    "哲學的研究範疇一般如何劃分？", "兩步驟驗證和雙因素驗證有什麼差別？", "工廠廠區的消防規定有哪些？",
+    "論文的佐證文件要怎麼準備？", "如何在 Excel 製作數據填報表？", "Google 表單可以設定填報截止時間嗎？",
+    "Google 表單的填報人員怎麼設定？",
+]
+
 REQUIRED_CREDENTIALS = ("PINECONE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY")
 
 
@@ -80,6 +95,51 @@ async def check_retrieval(
     return problems, misses
 
 
+ROUTER_ERROR_PREFIX = "LLM 路由發生錯誤"
+
+
+async def check_routing(
+    must_rag: list[str], must_direct: list[str]
+) -> tuple[list[str], list[str], int]:
+    """Route questions as a user would (no history).
+
+    Returns (misroutes, service_errors, rule_decided): must_rag questions must
+    route to rag, must_direct questions the rule stage leaves uncertain must
+    route to direct. An LLM routing error is retried once and reported apart
+    from misroutes. rule_decided counts must_rag questions the rule stage
+    decided without the LLM.
+    """
+    from src import query_router
+
+    misroutes, errors = [], []
+
+    async def route(question):
+        result = await query_router.route_query(question)
+        if result.reasoning.startswith(ROUTER_ERROR_PREFIX):
+            result = await query_router.route_query(question)
+        return result
+
+    async def expect(question, wanted):
+        result = await route(question)
+        if result.reasoning.startswith(ROUTER_ERROR_PREFIX):
+            errors.append(f"{question}: {result.reasoning}")
+        elif result.route != wanted:
+            misroutes.append(f"{question}: {result.route} (expected {wanted}) — {result.reasoning}")
+
+    rule_decided = 0
+    for question in must_rag:
+        if query_router._rule_route(question) == "rag":
+            rule_decided += 1
+        await expect(question, "rag")
+    for question in must_direct:
+        rule = query_router._rule_route(question)
+        if rule == "rag":
+            misroutes.append(f"{question}: rag by rule (expected direct)")
+        elif rule == "uncertain":
+            await expect(question, "direct")
+    return misroutes, errors, rule_decided
+
+
 def _pinecone_client():
     from pinecone import Pinecone
 
@@ -125,6 +185,22 @@ def run_evaluation(pc, index_name: str) -> int:
     print(f"[eval-sample] Source found in fused candidates for {len(cases) - len(misses)}/{len(cases)} cases.", flush=True)
     for q in misses:
         print(f"[eval-sample]   source not retrieved: {q}", flush=True)
+
+    manual_questions = [e["question"] for e in entries]
+    misroutes, errors, rule_decided = asyncio.run(
+        check_routing(manual_questions + [c["question"] for c in cases], ROUTING_NEGATIVES)
+    )
+    for line in misroutes:
+        print(f"[eval-sample]   misroute: {line}", flush=True)
+    for line in errors:
+        print(f"[eval-sample]   routing service error: {line}", flush=True)
+    if misroutes or errors:
+        return fail("routing check failed.")
+    print(
+        f"[eval-sample] Routing check passed; rule stage decided "
+        f"{rule_decided}/{len(manual_questions) + len(cases)} knowledge-base questions.",
+        flush=True,
+    )
 
     from tests import evaluate_rag
 
