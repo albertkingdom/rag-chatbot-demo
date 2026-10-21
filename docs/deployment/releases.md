@@ -84,7 +84,8 @@
   - 範例手冊上傳至 `sample/uploaded_files/` 後執行 `sync-job-4xp2t`：成功，`Creating index: carbon-assistant-sample-index`、`Total vectors: 60`、`BM25 index rebuilt with 60 documents`、`Semantic cache cleared (1 entries)`（舊版 Set 索引留下的一筆）。新 index 60 筆。
   - preview `v110-preview`：`/health`、`/`、`/login` 200，未登入 API 401；登入後問「忘記密碼怎麼辦？」，回答與 3 筆來源皆來自範例手冊；log 出現 `[BM25Index] Loaded persisted index (60 docs) from /mnt/data/sample/models/...`，無 ERROR。
   - 切換流量後正式 URL 不需登入的檢查正常，新 revision 無 ERROR log；`carbon-assistant-qa-index` 仍為 126 筆。preview tag 已移除。
-- 未驗證：正式 URL 登入後的問答（與 preview 為同一 revision）；正式站「文件管理」上傳流程。
+  - 2026-10-21 使用者於正式 URL 登入確認問答正常。
+- 未驗證：正式站「文件管理」上傳流程。
 - 保留未刪：`carbon-assistant-qa-index`、GCS 上的 `uploaded_files/` 與 `models/`（回復用）。
 
 ## v1.0.5（2026-10-18）
