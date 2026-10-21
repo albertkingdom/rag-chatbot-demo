@@ -164,7 +164,8 @@ class BM25Index:
             self._built = True
             self._loaded_version = version
             print(
-                f"[BM25Index] Loaded persisted index ({len(self._doc_ids)} docs) from {version_path}"
+                f"[BM25Index] Loaded persisted index ({len(self._doc_ids)} docs) from {version_path}",
+                flush=True,
             )
         except Exception as e:
             print(f"[BM25Index] Warning: failed to load persisted file ({e}). Starting unbuilt.")

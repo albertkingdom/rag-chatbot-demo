@@ -10,7 +10,7 @@
 
 ## 3. 正式站設定
 
-- [ ] 3.0 （BM25 載入 log 立即輸出）`BM25Index._load` 的載入訊息加上 `flush=True`；驗證：`tests/test_bm25_index.py` 以 capsys 確認載入時輸出該訊息。
+- [x] 3.0 （BM25 載入 log 立即輸出）`BM25Index._load` 的載入訊息加上 `flush=True`；驗證：`tests/test_bm25_index.py` 以替換 `print` 的方式確認載入訊息含筆數且帶 `flush=True`。
 
 - [ ] 3.1 （Configurable Pinecone index name：Production uses its own index and data directories）`terraform/main.tf` 的 `pinecone_index_name` 改為 `carbon-assistant-sample-index`，新增 `knowledge_base_dir`，web 與 Job 的 `DATA_SOURCE_DIR`、`BM25_INDEX_DIR` 改用它；驗證：`terraform fmt -check`、`terraform validate` 通過，web 與 Job 的三個 env 都引用 local 值。
 - [ ] 3.2 （Isolated sample evaluation run：評估腳本的拒絕清單）`scripts/eval_sample_manual.py` 改為 `PRODUCTION_INDEXES`；驗證：`tests/test_eval_sample_manual.py` 以兩個正式 index 名稱參數化拒絕案例並通過。
