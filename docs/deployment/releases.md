@@ -70,6 +70,23 @@
 3. 以 preview 驗收這個新 revision，再把流量切過去。不要長期停在舊 revision：舊 revision 的快取沒有命名空間，Job 同步後清不到。
 4. 完成前不上傳手冊。
 
+## v1.1.0（2026-10-21）
+
+- 分支／commit：`release/v1.1.0`，`cbd1a44afd8cc26fd92bc4b1ec93f457009dcc31`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/39613037901) 成功。
+- Image digest：`sha256:ccfe33bb956a74bcc05a3e722b840393fd7b1b564773571bf3e02c729d3b2f48`。
+- Revision：`carbon-assistant-web-00020-5p7`，100% 流量。回復目標：`carbon-assistant-web-00019-pls`（v1.0.5，舊知識庫），回復步驟見上方「切換正式站知識庫」。
+- 內容：
+  - #15 公開 repo 的整理（README、LICENSE、文件佔位符；tfstate bucket 改由 `TF_STATE_BUCKET` secret 提供）。
+  - #16 自製範例手冊、`PINECONE_INDEX_NAME` 可設定、評估改用 demo index。
+  - #18 正式站改用 `carbon-assistant-sample-index` 與 `/mnt/data/sample/`；語意快取依 index 分命名空間；同步完成才清快取；同步失敗時 Job 記為失敗。
+- 切換紀錄（依「切換正式站知識庫」）：
+  - Terraform plan：0 add、2 change、0 destroy，只有 image 與 3 個 env，不動流量；CI 首次以 `TF_STATE_BUCKET` 初始化 backend，成功。
+  - 範例手冊上傳至 `sample/uploaded_files/` 後執行 `sync-job-4xp2t`：成功，`Creating index: carbon-assistant-sample-index`、`Total vectors: 60`、`BM25 index rebuilt with 60 documents`、`Semantic cache cleared (1 entries)`（舊版 Set 索引留下的一筆）。新 index 60 筆。
+  - preview `v110-preview`：`/health`、`/`、`/login` 200，未登入 API 401；登入後問「忘記密碼怎麼辦？」，回答與 3 筆來源皆來自範例手冊；log 出現 `[BM25Index] Loaded persisted index (60 docs) from /mnt/data/sample/models/...`，無 ERROR。
+  - 切換流量後正式 URL 不需登入的檢查正常，新 revision 無 ERROR log；`carbon-assistant-qa-index` 仍為 126 筆。preview tag 已移除。
+- 未驗證：正式 URL 登入後的問答（與 preview 為同一 revision）；正式站「文件管理」上傳流程。
+- 保留未刪：`carbon-assistant-qa-index`、GCS 上的 `uploaded_files/` 與 `models/`（回復用）。
+
 ## v1.0.5（2026-10-18）
 
 - 分支／commit：`release/v1.0.5`，`bc06ea74424b246b728725bed3718f2727002677`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/39138686537) 成功。
