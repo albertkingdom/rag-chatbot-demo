@@ -145,7 +145,7 @@ def test_format_sources_dedupes_by_qa_content_preserving_order():
 
 
 def test_format_sources_truncates_long_qa_content_to_100_chars():
-    long_answer = "重設密碼的信件的有效時間為24小時，超過時間請重新寄送驗證信。" * 3
+    long_answer = "重設連結 30 分鐘內有效，過期後請在登入畫面點選「忘記密碼？」重新申請。" * 3
     docs = [Document(page_content="ignored", metadata={
         "doc_id": "faq-01", "text": "重設密碼的信件可以撐多久？", "answer": long_answer,
     })]

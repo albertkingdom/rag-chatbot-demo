@@ -23,8 +23,8 @@ import src.query_router as query_router_module
 
 
 HISTORY = [
-    {"role": "user", "content": "門檻值設定該如何填寫？"},
-    {"role": "assistant", "content": "您需要填寫顯著性門檻、實質性門檻和排除門檻。"},
+    {"role": "user", "content": "排放係數從哪裡來？"},
+    {"role": "assistant", "content": "排放係數可以在「係數庫」查看，並標示來源與適用年度。"},
 ]
 
 
@@ -79,15 +79,15 @@ class TestRuleRoutingSystemOperation:
     @pytest.mark.parametrize(
         "query",
         [
-            "如果我忘記我的密碼，我該怎麼辦？",
-            "我該如何登入我的帳號？",
-            "如何在多廠區管理中切換邊界？",
-            "我該如何審核數據條目？",
-            "請問報告及清冊會以何種格式呈現？",
-            "為什麼角色分為「管理者」、「部門管理者」及「部門人員」？",
-            "「外購電力」排放代表什麼？能舉例嗎？",
-            "「冷媒」的假設情境「實際使用量」及「平均逸散法」的差別是什麼？",
-            "我該如何進入 Org CFV 儀表板？",
+            "忘記密碼怎麼辦？",
+            "登入失敗太多次會怎樣？",
+            "多廠區要怎麼切換盤查邊界？",
+            "如何審核數據條目？",
+            "報告和清冊的格式是什麼？",
+            "管理者可以看到所有廠區嗎？",
+            "外購電力的排放代表什麼？",
+            "冷媒逸散要怎麼計算？",
+            "儀表板可以看到哪些資訊？",
         ],
     )
     def test_system_operation_questions_route_to_rag(self, query):
@@ -208,18 +208,18 @@ class TestQueryRewriting:
     async def test_rag_rule_route_with_history_rewrites_query(self, monkeypatch):
         llm = MagicMock()
         llm.ainvoke = AsyncMock(
-            return_value=MagicMock(content="顯著性門檻、實質性門檻和排除門檻的建議值分別為3、5、0.5嗎？")
+            return_value=MagicMock(content="CarbonM 係數庫的排放係數適用哪一個年度？")
         )
         monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
 
-        result = await route_query("那建議值呢？碳盤查門檻要填多少？", HISTORY)
+        result = await route_query("那適用年度呢？碳排放係數要用哪一年的？", HISTORY)
 
         llm.ainvoke.assert_awaited_once()
         assert result.route == "rag"
-        assert result.rewritten_query == "顯著性門檻、實質性門檻和排除門檻的建議值分別為3、5、0.5嗎？"
+        assert result.rewritten_query == "CarbonM 係數庫的排放係數適用哪一個年度？"
         prompt = llm.ainvoke.call_args[0][0]
-        assert "門檻值設定該如何填寫？" in prompt
-        assert "您需要填寫顯著性門檻、實質性門檻和排除門檻。" in prompt
+        assert "排放係數從哪裡來？" in prompt
+        assert "排放係數可以在「係數庫」查看，並標示來源與適用年度。" in prompt
 
     @pytest.mark.asyncio
     async def test_direct_rule_route_without_history_returns_original(self, monkeypatch):
@@ -253,7 +253,7 @@ class TestQueryRewriting:
         llm.with_structured_output = MagicMock(side_effect=AssertionError("should not route via LLM"))
         monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
 
-        result = await route_query("碳盤查門檻的建議值是多少？", HISTORY)
+        result = await route_query("碳排放係數的適用年度是哪一年？", HISTORY)
 
         llm.ainvoke.assert_awaited_once()
         llm.with_structured_output.assert_not_called()
@@ -279,8 +279,8 @@ class TestQueryRewriting:
         structured_llm.ainvoke = AsyncMock(
             return_value=RouterResult(
                 route="rag",
-                rewritten_query="碳盤查的門檻值建議設定為多少？",
-                reasoning="追問碳盤查門檻設定，改寫為獨立問題",
+                rewritten_query="CarbonM 的排放係數來源是什麼？",
+                reasoning="追問排放係數的來源，改寫為獨立問題",
             )
         )
         llm = MagicMock()
@@ -289,15 +289,15 @@ class TestQueryRewriting:
         llm.ainvoke = AsyncMock(side_effect=AssertionError("should not call plain ainvoke"))
         monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
 
-        result = await route_query("那建議值呢？", HISTORY)
+        result = await route_query("那適用年度呢？", HISTORY)
 
-        # "那建議值呢？" alone doesn't hit either rule stage -> uncertain -> LLM
+        # "那適用年度呢？" alone doesn't hit either rule stage -> uncertain -> LLM
         structured_llm.ainvoke.assert_awaited_once()
         llm.ainvoke.assert_not_called()
         assert result.route == "rag"
-        assert result.rewritten_query == "碳盤查的門檻值建議設定為多少？"
+        assert result.rewritten_query == "CarbonM 的排放係數來源是什麼？"
         prompt = structured_llm.ainvoke.call_args[0][0]
-        assert "門檻值設定該如何填寫？" in prompt
+        assert "排放係數從哪裡來？" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +319,7 @@ class TestQueryRouterIntegration:
 
     @pytest.mark.asyncio
     async def test_real_llm_call_rewrites_followup_with_history(self):
-        result = await route_query("那建議值呢？", HISTORY)
+        result = await route_query("那適用年度呢？", HISTORY)
 
         assert isinstance(result, RouterResult)
         assert result.route in ("rag", "direct")

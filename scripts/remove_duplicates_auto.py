@@ -5,10 +5,15 @@ Keeps the first occurrence (lowest index) of each duplicate.
 """
 
 import os
-from dotenv import load_dotenv
-from pinecone import Pinecone
 from collections import defaultdict
-from src.config import PINECONE_INDEX_NAME
+
+from dotenv import load_dotenv
+
+# Load .env before reading src.config so PINECONE_INDEX_NAME set there applies.
+load_dotenv()
+
+from pinecone import Pinecone  # noqa: E402
+from src.config import PINECONE_INDEX_NAME  # noqa: E402
 
 
 def main():

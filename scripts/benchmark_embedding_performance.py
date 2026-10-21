@@ -3,7 +3,7 @@
 Benchmark script to compare sequential vs batch embedding performance.
 
 This script tests the performance improvement of batch embedding API
-over sequential embedding calls using the generated_user_manual.xlsx dataset.
+over sequential embedding calls using the bundled examples/carbonm_sample_manual.xlsx dataset.
 """
 
 import time
@@ -135,11 +135,11 @@ def main():
 
     print("\n🚀 EMBEDDING PERFORMANCE BENCHMARK")
     print("="*80)
-    print("Testing: generated_user_manual.xlsx")
+    print("Testing: examples/carbonm_sample_manual.xlsx")
     print("Comparing: Sequential vs Batch Embedding API")
 
     # Load data
-    file_path = "generated_user_manual.xlsx"
+    file_path = "examples/carbonm_sample_manual.xlsx"
     print(f"\nLoading data from {file_path}...")
     questions = load_qa_data(file_path)
     print(f"✅ Loaded {len(questions)} questions")

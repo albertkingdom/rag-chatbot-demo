@@ -10,10 +10,15 @@ This script connects to Pinecone and displays:
 """
 
 import os
-from dotenv import load_dotenv
-from pinecone import Pinecone
 import json
-from src.config import PINECONE_INDEX_NAME
+
+from dotenv import load_dotenv
+
+# Load .env before reading src.config so PINECONE_INDEX_NAME set there applies.
+load_dotenv()
+
+from pinecone import Pinecone  # noqa: E402
+from src.config import PINECONE_INDEX_NAME  # noqa: E402
 
 
 def inspect_index_info(pc: Pinecone, index_name: str):

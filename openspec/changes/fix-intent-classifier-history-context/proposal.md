@@ -1,10 +1,10 @@
 ## Problem
 
-同一主題的問題，只因為換了問法（例如把肯定句改寫成疑問句、或拿掉操作動詞），`IntentClassifier.classify()` 就可能給出不一致的分類結果：使用者問「門檻值設定該如何填寫？」被判定為 `relevant=true`，但緊接著問「你確定嗎」（會先被 `rewrite_query` 改寫成「您確定顯著性門檻、實質性門檻和排除門檻的建議值分別為3、5、0.5嗎？」）卻被判定為 `relevant=false`，導致使用者在同一個對話串中被擋下、看到離題提示訊息，即使他只是在追問同一個系統操作主題。
+同一主題的問題，只因為換了問法（例如把肯定句改寫成疑問句、或拿掉操作動詞），`IntentClassifier.classify()` 就可能給出不一致的分類結果：使用者問「排放係數從哪裡來？」被判定為 `relevant=true`，但緊接著問「你確定嗎」（會先被 `rewrite_query` 改寫成「您確定排放係數的來源是係數庫嗎？」）卻被判定為 `relevant=false`，導致使用者在同一個對話串中被擋下、看到離題提示訊息，即使他只是在追問同一個系統操作主題。
 
 ## Root Cause
 
-`chat_stream`（`src/rag_pipeline.py`）呼叫 `rewrite_query()` 把追問改寫成獨立問句後，只把這個改寫後的單一問句字串傳給 `IntentClassifier.classify()`。`classify()`（`src/intent_classifier.py`）的 prompt 完全不包含對話歷史，分類器只能看著這一句話本身判斷是否與 CarbonM 系統相關；當改寫後的問句偏向敘述數值細節（例如「顯著性門檻、實質性門檻和排除門檻的建議值分別為3、5、0.5」）而不含「填寫」「系統」等操作性詞彙時，LLM 容易把它誤判為通用知識問題，即使同一輪對話的上一句話已經確立了「這是在問 CarbonM 系統設定」的脈絡。
+`chat_stream`（`src/rag_pipeline.py`）呼叫 `rewrite_query()` 把追問改寫成獨立問句後，只把這個改寫後的單一問句字串傳給 `IntentClassifier.classify()`。`classify()`（`src/intent_classifier.py`）的 prompt 完全不包含對話歷史，分類器只能看著這一句話本身判斷是否與 CarbonM 系統相關；當改寫後的問句偏向敘述數值細節（例如「排放係數的來源是係數庫」）而不含「填寫」「系統」等操作性詞彙時，LLM 容易把它誤判為通用知識問題，即使同一輪對話的上一句話已經確立了「這是在問 CarbonM 系統設定」的脈絡。
 
 ## Proposed Solution
 

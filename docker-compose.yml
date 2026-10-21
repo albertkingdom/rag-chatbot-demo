@@ -18,6 +18,7 @@ services:
       - JOB_RUNNER=local
       - DATA_SOURCE_DIR=/app/uploaded_files
       - BM25_INDEX_DIR=/app/bm25
+      - PINECONE_INDEX_NAME=${PINECONE_INDEX_NAME:-rag-demo-qa-index}
       - APP_PUBLIC_ORIGIN=${APP_PUBLIC_ORIGIN:-}
       - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-26214400}
       - APP_API_KEY=${APP_API_KEY:-}
@@ -84,6 +85,7 @@ services:
       - MONGODB_URL=mongodb://mongodb:27017/chatbot
       - DATA_SOURCE_DIR=/app/uploaded_files
       - BM25_INDEX_DIR=/app/bm25
+      - PINECONE_INDEX_NAME=${PINECONE_INDEX_NAME:-rag-demo-qa-index}
       - APP_API_KEY=${APP_API_KEY:-}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}

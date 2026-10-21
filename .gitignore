@@ -19,6 +19,7 @@ temp_files/
 
 # Data and document files
 *.xlsx
+!examples/*.xlsx
 *.csv
 *.docx
 *.pdf

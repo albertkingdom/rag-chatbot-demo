@@ -21,8 +21,11 @@ BM25_INDEX_DIR = os.environ.get("BM25_INDEX_DIR", "models")
 # How many BM25 version files to retain after each sync (older ones pruned).
 BM25_VERSION_RETENTION = int(os.environ.get("BM25_VERSION_RETENTION", "3"))
 
-# Name of the Pinecone index
-PINECONE_INDEX_NAME = "carbon-assistant-qa-index"
+# Name of the Pinecone index. Defaults to the demo index so a local sync never
+# writes to production; production sets PINECONE_INDEX_NAME explicitly on both
+# the web Service and the sync Job (terraform/main.tf). An empty value falls
+# back to the default.
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME") or "rag-demo-qa-index"
 
 # Redis connection URL. Single source of truth — consumed by services.get_redis_conn()
 # and indirectly by ui.py / rag_pipeline.py / access_control.py. Do not re-read

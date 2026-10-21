@@ -20,7 +20,7 @@ def tmp_index_dir(tmp_path):
     return str(tmp_path / "bm25_index")
 
 
-PINECONE_TEST_INDEX = "carbon-assistant-qa-index"
+PINECONE_TEST_INDEX = "rag-demo-qa-index"
 
 
 @pytest.fixture
@@ -147,19 +147,19 @@ class TestChineseTokenization:
         # Spec example: a doc sharing 密碼 with the query must score > 0 and
         # rank no later than a doc sharing no term with the query.
         docs = [
-            Document(page_content="如果我忘記我的密碼，我該怎麼辦？", metadata={"doc_id": "D_pwd"}),
+            Document(page_content="忘記密碼怎麼辦？", metadata={"doc_id": "D_pwd"}),
             Document(page_content="如何登入系統？請輸入帳號。", metadata={"doc_id": "D_login"}),
             Document(page_content="碳排放範疇三的計算方式。", metadata={"doc_id": "D_carbon"}),
         ]
         idx = BM25Index(index_dir=tmp_index_dir)
         idx.build_from_documents(docs)
-        results = dict(idx.search("忘記密碼怎麼辦？", top_n=3))
+        results = dict(idx.search("密碼忘記了要怎麼重設？", top_n=3))
         assert results["D_pwd"] > 0
         # Doc with no shared term ranks no earlier than the matching doc.
         assert results["D_pwd"] >= results.get("D_carbon", 0.0)
 
     def test_same_tokenizer_at_build_and_search(self, tmp_index_dir):
-        text = "如果我忘記我的密碼，我該怎麼辦？"
+        text = "忘記密碼怎麼辦？"
         docs = [
             Document(page_content=text, metadata={"doc_id": "D1"}),
             Document(page_content="碳排放範疇三的計算方式。", metadata={"doc_id": "D2"}),
