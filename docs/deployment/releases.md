@@ -8,27 +8,27 @@
 
 1. **保存狀態**：記錄目前 revision 與 traffic，確認 traffic 固定在指定 revision（不是 latest）。
    ```sh
-   gcloud run services describe carbon-assistant-web --project carbon-rag-assistant-prod-2026 --region asia-east1 \
+   gcloud run services describe carbon-assistant-web --project <project-id> --region asia-east1 \
      --format='json(status.latestReadyRevisionName,status.traffic,status.url,spec.template.spec.containers[0].image)'
    ```
 2. **檢查 Terraform plan**（唯讀，`-lock=false`）：確認只變更 image，不動 traffic。
    ```sh
-   cd terraform && terraform init && terraform plan -lock=false \
+   cd terraform && terraform init -backend-config="bucket=<state-bucket>" && terraform plan -lock=false \
      -target=google_cloud_run_v2_service.web -target=google_cloud_run_v2_job.sync \
-     -var="project_id=carbon-rag-assistant-prod-2026" -var="region=asia-east1" \
+     -var="project_id=<project-id>" -var="region=asia-east1" \
      -var="image_tag=$(git rev-parse HEAD)" -var="github_repository=albertkingdom/rag-chatbot-demo"
    ```
 3. **push release 分支**：從 master 建立 `release/vX.Y.Z` 並 push，等 CI 成功，確認新 revision ready、正式流量未變。
 4. **加 preview tag 並驗收候選 URL**：
    ```sh
-   gcloud run services update-traffic carbon-assistant-web --project carbon-rag-assistant-prod-2026 --region asia-east1 \
+   gcloud run services update-traffic carbon-assistant-web --project <project-id> --region asia-east1 \
      --set-tags=<tag>=<new-revision>
    ```
    - 不需登入：`/health` 200、`/`、`/login`、`/admin` 回 SPA、hashed JS 可載入、未登入 API 回 JSON 401（未登入時不存在的 `/api/*` 也回 401，因為驗證在路由之前）、新 revision 無 ERROR log。
    - 需登入（由使用者操作）：聊天、來源、本版修改的功能。
 5. **切換流量**到明確的 revision，再驗收正式 URL 與 log：
    ```sh
-   gcloud run services update-traffic carbon-assistant-web --project carbon-rag-assistant-prod-2026 --region asia-east1 \
+   gcloud run services update-traffic carbon-assistant-web --project <project-id> --region asia-east1 \
      --to-revisions=<new-revision>=100
    ```
 6. **移除 preview tag**（保留 revision 供回復）：`--remove-tags=<tag>`。
