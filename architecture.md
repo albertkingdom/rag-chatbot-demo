@@ -98,9 +98,9 @@ flowchart TD
 以 regex 掃描 prompt injection（中英文規則，例如「ignore previous instructions」、「系統提示」、「繞過」）。命中即回覆統一安全訊息，並以 `response_source="guardrail"` 寫入 MongoDB，不呼叫任何 LLM。
 
 ### 1. 混合路由與查詢改寫（`query_router.py`）
-- **Stage 1 規則層（零延遲）**：先比對知識庫關鍵字 → `rag`。知識庫是 CarbonM 系統操作 Q&A，所以關鍵字包含碳盤查術語（碳、排放、燃料、冷媒、scope 1/2/3…）與系統功能（密碼、登入、帳號、邊界、審核、清冊、報告書…）；關鍵字是依照先前的知識庫挑選的：以 2026-10-11 正式站的 126 筆問題計算，122 筆可由規則層直接判定；換成範例手冊後只有 60 筆中的 40 筆可直接判定，其餘落入 `uncertain` 交給 LLM 路由（多一次 LLM 呼叫，但仍能正確走 RAG）。代價是一般問題若含這些詞（例如「忘記 Gmail 密碼」）也會走 rag，此時 prompt 允許 context 不相關時改用一般知識回答。真實環境實測（2026-10-14）中，「忘記 Gmail 密碼」的 top-1 重排分數為 0.645，高於門檻，所以**不會**被視為低信心，而是以知識庫的重設密碼流程回答並附上來源；只有分數低於門檻的誤路由問題才會被視為低信心：開頭加上固定說明、不送來源、也不寫入語意快取（見第 7 節）。再比對一般問答模式（招呼、感謝、簡單算式、翻譯、寫程式、笑話）→ `direct`；其餘為 `uncertain`。領域關鍵字優先，避免同時符合兩者的查詢被誤判為 direct。
+- **Stage 1 規則層（零延遲）**：先比對知識庫關鍵字 → `rag`。知識庫是 CarbonM 系統操作 Q&A，所以關鍵字包含碳盤查術語（碳、排放、燃料、冷媒、scope 1/2/3…）與系統功能（密碼、登入、帳號、邊界、審核、清冊、報告書…）；關鍵字最初依照先前的知識庫挑選；換成範例手冊後補上只在 CarbonM 情境出現的複合詞（盤查年度、盤查報告、範疇二、範疇三、第三方查證、係數庫），規則層可直接判定範例手冊 60 題中的 43 題（加上評估集共 52/72）。「係數」「盤查」「範疇」「廠區」「填報」「報表」「兩步驟驗證」等單詞不加入：子字串比對優先於 LLM，會讓「相關係數」「倉庫庫存盤查」「Google 表單填報截止」「iPhone 兩步驟驗證」這類問題直接走 rag。這些問題交給 LLM 層判斷，29 個一般問題反例列在 `scripts/eval_sample_manual.py` 的 `ROUTING_NEGATIVES`，規則層測試與評估腳本共用。代價是一般問題若含這些詞（例如「忘記 Gmail 密碼」）也會走 rag，此時 prompt 允許 context 不相關時改用一般知識回答。真實環境實測（2026-10-14）中，「忘記 Gmail 密碼」的 top-1 重排分數為 0.645，高於門檻，所以**不會**被視為低信心，而是以知識庫的重設密碼流程回答並附上來源；只有分數低於門檻的誤路由問題才會被視為低信心：開頭加上固定說明、不送來源、也不寫入語意快取（見第 7 節）。再比對一般問答模式（招呼、感謝、簡單算式、翻譯、寫程式、笑話）→ `direct`；其餘為 `uncertain`。領域關鍵字優先，避免同時符合兩者的查詢被誤判為 direct。
 - **規則命中且有對話歷史**：只呼叫 LLM 做查詢改寫（`_rewrite_only`），把追問（如「4.2 呢？」）改寫成獨立問題。
-- **Stage 2 LLM 層**：`uncertain` 的查詢交由 Gemini 2.5 Flash，以 Pydantic 結構化輸出（`RouterResult`）一次回傳 `route`、`rewritten_query`、`reasoning`。
+- **Stage 2 LLM 層**：`uncertain` 的查詢交由 Gemini 2.5 Flash，以 Pydantic 結構化輸出（`RouterResult`）一次回傳 `route`、`rewritten_query`、`reasoning`。 prompt 列出知識庫涵蓋的功能類別（帳號與安全、角色與權限、廠區與盤查邊界、排放源與排放係數、數據填報匯入與審核、報表清冊與儀表板、第三方查證），並規定：碳盤查與排放的概念，或在系統中的操作且沒有指明其他產品 → `rag`；指明其他產品（Gmail、iPhone、Excel、Google 表單）、一般 IT／資安概念、其他領域的同名詞（統計的相關係數、倉庫的庫存盤查）、無關操作、常識與閒聊 → `direct`。2026-10-21 實測：範例手冊與評估集中交給 LLM 的 20 題全部判為 `rag`（先前「如何修改個人資料？」「如何開啟兩步驟驗證？」會被判為 `direct`），28 個交給 LLM 的反例全部判為 `direct`，連續兩次結果相同。
 - **錯誤處理**：LLM 路由失敗時回退為 `direct`（不查知識庫）；`_rewrite_only` 失敗時沿用原始問題。
 - 規則命中 `direct` 且有對話歷史時，仍會呼叫一次 `_rewrite_only`，但 direct 路徑生成時使用原始問題，該改寫結果不會被用到。
 - 這層取代了舊的 intent classifier（舊版只能擋離題問題，不會分流到直接生成）。
@@ -270,7 +270,7 @@ flowchart TB
 - 正式環境由 `terraform/main.tf` 的 locals 在 web Service 與 sync Job 設定 `carbon-assistant-sample-index`，資料目錄為 GCS 上的 `/mnt/data/sample/uploaded_files` 與 `/mnt/data/sample/models`。先前的 `carbon-assistant-qa-index`（他方手冊，126 筆）與 `/mnt/data/uploaded_files`、`/mnt/data/models` 保留供回復，尚未刪除。2026-10-21 起（v1.1.0）正式站已切換到範例手冊。
 - 同步會刪除 index 中不在本地手冊裡的向量，所以不同部署或環境不可共用同一個 index。
 - `examples/carbonm_sample_manual.xlsx` 是自行撰寫的虛構範例手冊（60 筆，五類主題），可直接在「文件管理」上傳；附固定的 `uuid` 欄位，重新同步時 doc_id 不變。
-- `scripts/eval_sample_manual.py` 在單一程序中把範例手冊同步到 demo index，檢查 demo index 與 BM25 筆數等於手冊筆數、逐題確認 hybrid 檢索沒有 fallback 且有 BM25 結果（並列出標準答案來源出現在融合候選中的題數，未命中不中止），再執行 RAGAS。遇到正式 index 名稱（`carbon-assistant-sample-index`、`carbon-assistant-qa-index`）會直接拒絕；預設不讀其他 index，加上 `--audit-index <正式 index>` 時才會在執行前後比對該 index 的向量 ID（中途失敗或拋例外也會比對）。三組 API key 缺任一組時在呼叫 Pinecone 前就結束。需在專案 image 中執行，並另外掛入 `tests/`、`scripts/`、`examples/`（image 不含 `tests/`）。
+- `scripts/eval_sample_manual.py` 在單一程序中把範例手冊同步到 demo index，檢查 demo index 與 BM25 筆數等於手冊筆數、逐題確認 hybrid 檢索沒有 fallback 且有 BM25 結果（並列出標準答案來源出現在融合候選中的題數，未命中不中止），再以實際路由檢查範例手冊與評估集全部問題必須為 `rag`、`ROUTING_NEGATIVES` 必須不為 `rag`（LLM 路由錯誤重試一次並分開回報），最後執行 RAGAS。遇到正式 index 名稱（`carbon-assistant-sample-index`、`carbon-assistant-qa-index`）會直接拒絕；預設不讀其他 index，加上 `--audit-index <正式 index>` 時才會在執行前後比對該 index 的向量 ID（中途失敗或拋例外也會比對）。三組 API key 缺任一組時在呼叫 Pinecone 前就結束。需在專案 image 中執行，並另外掛入 `tests/`、`scripts/`、`examples/`（image 不含 `tests/`）。
 - **既有本機環境遷移**：預設 index 改變後，舊的本機 Compose 會改用空的 demo index，但 `manual_data`、`bm25_data` volume 與 Redis 語意快取仍保留舊資料。要沿用舊資料，在 `.env` 設定原本的 `PINECONE_INDEX_NAME`；要改用範例手冊，因介面沒有刪除手冊的功能，需以 `docker compose down -v` 清空本機資料（含已上傳手冊、BM25 索引、Redis 快取與 MongoDB 紀錄）後重新啟動，再上傳範例手冊並等待同步。
 - **正式站切換與回復**：步驟見 [docs/deployment/releases.md](docs/deployment/releases.md#切換正式站知識庫)。web Service 與 sync Job 必須一起改 index 與資料目錄；切換和回復期間不可上傳手冊，因為 web 觸發的 Job 使用 Job 自己的設定。
 
@@ -343,6 +343,6 @@ flowchart TB
 | 同一 index 更新手冊後仍可能寫入舊快取 | `build_vector_store.py` 同步後清快取、`hybrid_retriever.py` 每 30 秒檢查 BM25 pointer | 清除之後、web 載入新 BM25 之前（最長約 90 秒，含 GCS FUSE stat cache），或同步前已開始的請求，仍可能寫入依舊資料產生的答案並保留 24 小時；可用資料版本作為命名空間的一部分解決 |
 | 命中計數以 get、ttl、setex 三步更新，不是原子操作 | `cache_service.py`：`_increment_hit_count` | 與同一 key 的重新寫入或淘汰交錯時，可能以舊內容覆蓋新值，或在淘汰後留下一筆沒有索引的資料 key（最長 24 小時後過期）；不會造成錯誤命中，窗口極小 |
 | 評分門檻 0.3 缺乏標註資料驗證 | `config.py`：`GRADE_SCORE_THRESHOLD` | 實測樣本中知識庫內問題 0.89–1.0、知識庫外約 0.0001，區分明顯，但樣本很小；接近門檻的問題行為未知 |
-| 規則層關鍵字依舊知識庫挑選 | `query_router.py`：`RAG_KEYWORDS` | 範例手冊 60 題只有 40 題由規則層判定，其餘多一次 LLM 路由；補「範疇、廠區、盤查」等詞需搭配一般問題的反例測試，避免誤判 |
+| 約三成知識庫問題仍需 LLM 路由 | `query_router.py`：`RAG_KEYWORDS` | 範例手冊 60 題有 17 題由 LLM 判斷，每題多約 1–2.6 秒；評估腳本的路由關卡確保它們判為 `rag`，但 LLM 判斷可能隨模型或 prompt 改變而退化，修改後需重跑評估腳本 |
 | 正式 index 名稱寫在兩處 | `terraform/main.tf`（`local.pinecone_index_name`）、`scripts/eval_sample_manual.py`（`PRODUCTION_INDEXES`） | 之後再改正式 index 時，評估腳本的拒絕清單要一起更新；執行時仍應以 `--audit-index` 明確指定要保護的 index |
 | 評估題庫只有 12 題 | `tests/rag_eval_data.json` | 題數仍少，LLM 評分的隨機性足以影響版本比較；也沒有涵蓋路由、重試與低信心路徑 |

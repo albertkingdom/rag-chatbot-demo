@@ -52,6 +52,11 @@ RAG_KEYWORDS = [
     "邊界", "多廠區", "管理者",
     "數據條目", "審核", "清冊", "報告書", "戰情室", "儀表板", "cfv",
     "系統預設", "基本資訊",
+    # Sample-manual terms. Only compounds that do not occur outside CarbonM:
+    # substring matching wins over the LLM stage, so 係數/範疇/盤查/廠區/
+    # 填報/啟用信/批次匯入 alone would also catch questions about other
+    # products or general topics (ROUTING_NEGATIVES in scripts/eval_sample_manual.py).
+    "盤查年度", "盤查報告", "範疇二", "範疇三", "第三方查證", "係數庫",
     # English / mixed
     "carbon", "emission", "ghg", "carbonm",
     "scope 1", "scope 2", "scope 3", "scope1", "scope2", "scope3",
@@ -172,7 +177,21 @@ async def _llm_route(message: str, history: list) -> RouterResult:
     history_section = f"\nConversation history:\n{history_block}\n" if history_block else ""
 
     prompt = f"""You route a user query for a carbon-management assistant (CarbonM) that can also chat generally.
-Decide "rag" if the query needs the carbon-management knowledge base (碳盤查、排放、ESG、CarbonM 系統操作等), otherwise "direct".
+The knowledge base covers carbon accounting and the CarbonM system's features:
+- 帳號與安全：登入、密碼、個人資料、兩步驟驗證、帳號啟用與停用
+- 角色與權限
+- 廠區與盤查邊界
+- 排放源與排放係數
+- 數據填報、匯入與審核
+- 報表、清冊與儀表板
+- 第三方查證
+
+Decide "rag" when the query:
+- asks about carbon accounting, emissions or greenhouse-gas concepts or practice (碳盤查、排放、溫室氣體、ESG); the question itself must be about carbon or emissions, not a similarly named term from another field (統計的相關係數、倉庫的庫存盤查 are not carbon accounting), or
+- asks how to operate or configure something, or what the system does, within the features above, and 沒有指明其他產品或服務 (a question like "如何修改個人資料？" is about CarbonM).
+
+Decide "direct" when the query names another product or service (for example Gmail, iPhone, Excel, Google 表單), asks about a general IT or 資安概念 (for example the difference between two-step verification and multi-factor authentication), is a how-to unrelated to the features above, general knowledge, or chit-chat.
+
 If there is conversation history and the query is a follow-up, rewrite it into a standalone query; otherwise return it unchanged.
 {history_section}
 Query: {message}"""

@@ -9,7 +9,10 @@ Structure:
       "rule route + history calls rewrite-only, not routing" cases.
     - Integration tests: real LLM call, skipped without OPENROUTER_API_KEY.
 """
+import json as _json
 import os
+import re as _re
+from pathlib import Path as _Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,6 +23,7 @@ from src.query_router import (
     route_query,
 )
 import src.query_router as query_router_module
+from scripts.eval_sample_manual import ROUTING_NEGATIVES as GENERAL_QUESTIONS
 
 
 HISTORY = [
@@ -328,3 +332,64 @@ class TestQueryRouterIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ---------------------------------------------------------------------------
+# Spec: query-routing-coverage
+# ---------------------------------------------------------------------------
+
+
+_ROOT = _Path(__file__).resolve().parents[1]
+
+
+
+def _sample_manual_questions():
+    from src.build_vector_store import extract_from_xlsx
+
+    return [e["question"] for e in extract_from_xlsx(str(_ROOT / "examples" / "carbonm_sample_manual.xlsx"))]
+
+
+def _frontend_suggestions():
+    source = (_ROOT / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+    block = _re.search(r"const suggestions = \[(.*?)\];", source).group(1)
+    return _re.findall(r'"([^"]+)"', block)
+
+
+class TestRoutingCoverage:
+    def test_rule_stage_covers_the_sample_manual(self):
+        routes = [_rule_route(q) for q in _sample_manual_questions()]
+        assert routes.count("rag") >= 42
+        assert "direct" not in routes
+
+    def test_eval_questions_are_never_direct(self):
+        cases = _json.loads((_ROOT / "tests" / "rag_eval_data.json").read_text(encoding="utf-8"))
+        assert [c["question"] for c in cases if _rule_route(c["question"]) == "direct"] == []
+
+    def test_frontend_suggestions_are_never_direct(self):
+        suggestions = _frontend_suggestions()
+        assert suggestions
+        assert [q for q in suggestions if _rule_route(q) == "direct"] == []
+
+    @pytest.mark.parametrize("query", GENERAL_QUESTIONS)
+    def test_general_questions_do_not_route_to_rag(self, query):
+        assert _rule_route(query) != "rag"
+
+
+class TestLlmRoutingPrompt:
+    @pytest.mark.asyncio
+    async def test_prompt_lists_features_and_routing_rules(self, monkeypatch):
+        structured_llm = MagicMock()
+        structured_llm.ainvoke = AsyncMock(
+            return_value=RouterResult(route="rag", rewritten_query="q", reasoning="r")
+        )
+        llm = MagicMock()
+        llm.with_structured_output = MagicMock(return_value=structured_llm)
+        monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
+
+        await route_query("如何修改個人資料？", history=None)
+
+        prompt = structured_llm.ainvoke.call_args[0][0]
+        for feature in ["個人資料", "兩步驟驗證", "角色", "廠區", "排放係數", "數據填報", "報表", "第三方查證"]:
+            assert feature in prompt, feature
+        assert "沒有指明其他產品" in prompt
+        assert "資安概念" in prompt
