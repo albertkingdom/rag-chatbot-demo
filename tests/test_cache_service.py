@@ -343,6 +343,14 @@ def _index(fake_redis):
     return [m.decode() for m in fake_redis.zrange(INDEX_KEY, 0, -1)]
 
 
+@pytest.fixture(autouse=True)
+def unscoped_cache_namespace(monkeypatch):
+    """Most tests assert the unscoped key layout; namespaced keys have their own tests."""
+    from src import config as app_config
+
+    monkeypatch.setattr(app_config, "PINECONE_INDEX_NAME", "")
+
+
 @pytest.fixture
 def fake_redis():
     """In-memory Redis stand-in that behaves like a real server (see FakeRedis)."""
@@ -1124,13 +1132,15 @@ class TestCacheManagement:
         assert not any(fake_redis.has_key(k) for k in keys)
         assert max(len(args) for name, args in fake_redis.command_log if name == "DEL") <= 500
 
-    def test_clear_cache_returns_zero_on_redis_error(self, cache, fake_redis, monkeypatch):
+    def test_clear_cache_raises_on_redis_error(self, cache, fake_redis, monkeypatch):
+        # A failure must be distinguishable from an empty cache (returns 0).
         def boom(*args, **kwargs):
-            raise Exception("Redis error")
+            raise ConnectionError("Redis error")
 
         monkeypatch.setattr(fake_redis, "zrange", boom)
 
-        assert cache.clear_cache() == 0
+        with pytest.raises(ConnectionError):
+            cache.clear_cache()
 
     def test_get_cache_stats(self, cache, fake_redis):
         """Test retrieving cache statistics."""
@@ -1292,3 +1302,47 @@ class TestEdgeCases:
         _seed(fake_redis, "prompt_cache:123", data)
 
         assert cache.get_cached_response([0.1, 0.2, 0.3], threshold=0.85) is None
+
+
+class TestCacheNamespace:
+    """Spec: cache-namespace — entries are scoped by the Pinecone index name."""
+
+    def test_default_namespace_follows_the_index_name(self, fake_redis, fake_clock, monkeypatch):
+        from src import config as app_config
+
+        monkeypatch.setattr(app_config, "PINECONE_INDEX_NAME", "carbon-assistant-sample-index")
+        service = PromptCacheService(fake_redis, clock=fake_clock)
+
+        assert service.set_cached_response([1.0, 0.0], "q", "a", ["s"]) is True
+        expected = _key_for([1.0, 0.0]).replace("prompt_cache:", "prompt_cache:carbon-assistant-sample-index:")
+        assert fake_redis.has_key(expected)
+        index_key = "prompt_cache:carbon-assistant-sample-index:index:zset"
+        assert [m.decode() for m in fake_redis.zrange(index_key, 0, -1)] == [expected]
+        assert not fake_redis.has_key(INDEX_KEY)
+
+    def test_namespaces_do_not_share_entries(self, fake_redis, fake_clock):
+        a = PromptCacheService(fake_redis, clock=fake_clock, namespace="index-a")
+        b = PromptCacheService(fake_redis, clock=fake_clock, namespace="index-b")
+
+        a.set_cached_response([1.0, 0.0], "q", "answer from a", ["s"])
+
+        assert b.get_cached_response([1.0, 0.0]) is None
+        assert a.get_cached_response([1.0, 0.0])["answer"] == "answer from a"
+
+    def test_clearing_one_namespace_keeps_the_other(self, fake_redis, fake_clock):
+        a = PromptCacheService(fake_redis, clock=fake_clock, namespace="index-a")
+        b = PromptCacheService(fake_redis, clock=fake_clock, namespace="index-b")
+        a.set_cached_response([1.0, 0.0], "q", "from a", ["s"])
+        b.set_cached_response([1.0, 0.0], "q", "from b", ["s"])
+
+        assert a.clear_cache() == 1
+
+        assert a.get_cached_response([1.0, 0.0]) is None
+        assert b.get_cached_response([1.0, 0.0])["answer"] == "from b"
+
+    def test_empty_namespace_uses_the_unscoped_layout(self, fake_redis, fake_clock):
+        service = PromptCacheService(fake_redis, clock=fake_clock, namespace="")
+        service.set_cached_response([1.0, 0.0], "q", "a", ["s"])
+
+        assert fake_redis.has_key(_key_for([1.0, 0.0]))
+        assert _index(fake_redis) == [_key_for([1.0, 0.0])]

@@ -16,6 +16,8 @@ from .config import CACHE_TTL_SECONDS, CACHE_SIMILARITY_THRESHOLD
 class PromptCacheService:
     """Service for caching and retrieving similar question-answer pairs."""
     
+    # Unscoped layout. An instance with a namespace overrides both on itself:
+    # prompt_cache:<namespace>:<hash> and prompt_cache:<namespace>:index:zset.
     CACHE_PREFIX = "prompt_cache:"
     # Sorted Set of data keys, scored by write time (seconds). Capped at
     # CACHE_MAX_ENTRIES; the oldest entries are evicted on write.
@@ -31,6 +33,7 @@ class PromptCacheService:
         redis_connection: redis.Redis,
         clock: Optional[Callable[[], float]] = None,
         max_entries: Optional[int] = None,
+        namespace: Optional[str] = None,
     ):
         """
         Initialize the cache service.
@@ -41,6 +44,10 @@ class PromptCacheService:
                 Defaults to time.time. Injected by tests for a deterministic order.
             max_entries: Index size cap. Defaults to the CACHE_MAX_ENTRIES setting,
                 read at call time. Must be an integer >= 1.
+            namespace: Scopes keys and the index so caches built from different
+                knowledge bases never answer for each other. Defaults to the
+                PINECONE_INDEX_NAME setting; an empty string keeps the unscoped
+                layout.
         """
         if max_entries is not None and (
             isinstance(max_entries, bool)
@@ -51,6 +58,11 @@ class PromptCacheService:
         self.redis = redis_connection
         self._clock = clock if clock is not None else time.time
         self._max_entries = max_entries
+        if namespace is None:
+            namespace = app_config.PINECONE_INDEX_NAME
+        if namespace:
+            self.CACHE_PREFIX = f"prompt_cache:{namespace}:"
+            self.CACHE_INDEX_KEY = f"{self.CACHE_PREFIX}index:zset"
 
     def _limit(self) -> int:
         """Current index cap; the setting is read per call, not bound at import."""
@@ -297,28 +309,26 @@ class PromptCacheService:
     
     def clear_cache(self) -> int:
         """
-        Clear all cached entries, including those registered in the legacy
-        Set index from earlier releases.
+        Clear this namespace's cached entries, plus those registered in the
+        legacy Set index from earlier releases.
 
         Returns:
             Number of distinct data keys cleared (a key registered in both
             indexes counts once)
+
+        Raises:
+            Any Redis error, so a failure is not mistaken for an empty cache.
         """
-        try:
-            data_keys = set(self.redis.zrange(self.CACHE_INDEX_KEY, 0, -1))
-            data_keys |= set(self.redis.smembers(self.LEGACY_INDEX_KEY))
+        data_keys = set(self.redis.zrange(self.CACHE_INDEX_KEY, 0, -1))
+        data_keys |= set(self.redis.smembers(self.LEGACY_INDEX_KEY))
 
-            # DEL needs at least one key; batch so a large legacy index stays sane
-            ordered = sorted(data_keys)
-            for start in range(0, len(ordered), self.DELETE_BATCH_SIZE):
-                self.redis.delete(*ordered[start:start + self.DELETE_BATCH_SIZE])
+        # DEL needs at least one key; batch so a large legacy index stays sane
+        ordered = sorted(data_keys)
+        for start in range(0, len(ordered), self.DELETE_BATCH_SIZE):
+            self.redis.delete(*ordered[start:start + self.DELETE_BATCH_SIZE])
 
-            self.redis.delete(self.CACHE_INDEX_KEY, self.LEGACY_INDEX_KEY)
-            return len(data_keys)
-
-        except Exception as e:
-            print(f"Error clearing cache: {e}")
-            return 0
+        self.redis.delete(self.CACHE_INDEX_KEY, self.LEGACY_INDEX_KEY)
+        return len(data_keys)
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """

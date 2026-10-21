@@ -1,7 +1,7 @@
 ## 1. 快取命名空間
 
-- [ ] 1.1 （Cache keys are scoped by namespace）`PromptCacheService` 新增 `namespace`（預設 `config.PINECONE_INDEX_NAME`，空字串為不含命名空間的舊格式），資料 key 與索引 key 依命名空間組成，`clear_cache` 只清目前命名空間與 legacy Set，Redis 錯誤時拋出；驗證：`tests/test_cache_service.py` 新增預設命名空間、跨命名空間不命中、只清自己的命名空間、Redis 錯誤拋出等案例，既有案例以 `namespace=""` 維持通過。
-- [ ] 1.2 （Cache key stability）快取 key 由命名空間前綴加 hash 組成；驗證：`tests/test_cache_service.py` 的 key 穩定性案例以命名空間格式斷言並通過。
+- [x] 1.1 （Cache keys are scoped by namespace）`PromptCacheService` 新增 `namespace`（預設 `config.PINECONE_INDEX_NAME`，空字串為不含命名空間的舊格式），資料 key 與索引 key 依命名空間組成，`clear_cache` 只清目前命名空間與 legacy Set，Redis 錯誤時拋出；驗證：`tests/test_cache_service.py` 新增預設命名空間、跨命名空間不命中、只清自己的命名空間、Redis 錯誤拋出等案例，既有案例以 `namespace=""` 維持通過。
+- [x] 1.2 （Cache key stability）快取 key 由命名空間前綴加 hash 組成；驗證：`tests/test_cache_service.py` 的 key 穩定性案例以命名空間格式斷言並通過。
 
 ## 2. 同步結果
 
