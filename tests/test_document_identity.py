@@ -32,12 +32,14 @@ def _write_xlsx(path, rows):
 @pytest.fixture(autouse=True)
 def semantic_cache(monkeypatch):
     """Stand-in for the semantic cache cleared after a complete sync."""
-    from src import cache_service, services
+    import redis
+
+    from src import cache_service
 
     cache = MagicMock()
     cache.clear_cache.return_value = 0
     monkeypatch.setattr(cache_service, "PromptCacheService", MagicMock(return_value=cache))
-    monkeypatch.setattr(services, "get_redis_conn", MagicMock())
+    monkeypatch.setattr(redis.Redis, "from_url", MagicMock())
     return cache
 
 
@@ -142,7 +144,7 @@ class TestEnsureUuids:
         df = pd.read_excel(path)
         assert df.loc[0, "uuid"] == "keep-me"
 
-    def test_writeback_failure_aborts_sync(self, tmp_path, monkeypatch):
+    def test_writeback_failure_aborts_sync(self, tmp_path, monkeypatch, semantic_cache):
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         _write_xlsx(data_dir / "qa.xlsx", [{"question": "Q1", "answer": "A1"}])
@@ -159,6 +161,7 @@ class TestEnsureUuids:
             ]
             result = build_vector_store.sync_vector_store()
         assert result["status"] == "error"
+        semantic_cache.clear_cache.assert_not_called()  # a failed sync keeps the cache
 
 
 # --- 1.2 / 3.2 doc_id flows into metadata and stores -----------------
@@ -313,10 +316,17 @@ class TestSyncClearsSemanticCache:
 
         assert result["status"] == "success"
 
-    def test_failed_sync_keeps_the_cache(self, tmp_path, monkeypatch, semantic_cache):
-        TestEnsureUuids.test_writeback_failure_aborts_sync(None, tmp_path, monkeypatch)
 
-        semantic_cache.clear_cache.assert_not_called()
+class TestCacheClearConnection:
+    def test_cache_clear_uses_a_redis_client_from_the_config(self, monkeypatch, semantic_cache):
+        import redis
+
+        from src import config
+
+        build_vector_store._clear_semantic_cache()
+
+        redis.Redis.from_url.assert_called_once_with(config.REDIS_URL)
+        semantic_cache.clear_cache.assert_called_once_with()
 
 
 class TestSyncExitStatus:

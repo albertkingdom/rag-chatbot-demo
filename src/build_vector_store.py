@@ -129,10 +129,17 @@ def _ensure_uuids_xlsx(file_path: str) -> int:
 def _clear_semantic_cache():
     """Drop cached answers built from the previous knowledge base (best effort)."""
     try:
-        from .cache_service import PromptCacheService
-        from .services import get_redis_conn
+        import redis
 
-        cleared = PromptCacheService(get_redis_conn()).clear_cache()
+        from .cache_service import PromptCacheService
+        from .config import REDIS_URL
+
+        # A plain client: the sync job has no use for the chat-time services.
+        conn = redis.Redis.from_url(REDIS_URL)
+        try:
+            cleared = PromptCacheService(conn).clear_cache()
+        finally:
+            conn.close()
         print(f"Semantic cache cleared ({cleared} entries).", flush=True)
     except Exception as e:
         print(f"Warning: could not clear the semantic cache ({e}).", flush=True)
@@ -280,6 +287,15 @@ def sync_vector_store():
         _clear_semantic_cache()
 
     return {"status": "success", "message": f"Sync complete. Upserted: {len(ids_to_upsert)}, Deleted: {len(ids_to_delete)}. Total vectors: {final_count}."}
+
+
+def run_sync():
+    """Run one sync and raise unless it succeeded, so a queued (RQ) job that
+    returns status=error is recorded as failed, like the Cloud Run Job."""
+    result = sync_vector_store()
+    if result.get("status") != "success":
+        raise RuntimeError(result.get("message", "sync failed"))
+    return result
 
 
 def main() -> int:
