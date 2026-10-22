@@ -28,6 +28,16 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 Dev override 只掛載 `src`，不覆蓋 image 內的 `frontend/dist`；Python 修改後重啟 web/worker。前端修改需 Vite dev server 或重新 build image。web/worker 共用 `manual_data` 與 `bm25_data` volumes，讓背景 worker 能讀取已上傳文件、web 會在約 30 秒內自動載入 worker 重建的 BM25 index（`BM25_RELOAD_INTERVAL_SECONDS`）。移除 volumes 會清除這些本機資料。
 
+## CI
+
+`.github/workflows/ci.yml` 在每個 pull request 與 push 到 master 時執行三個 job，只需要讀取權限、不使用任何 secret：
+
+- **Backend tests**：Python 3.13，以 `pip install --require-hashes -r requirements.txt` 安裝（與 Dockerfile 相同的鎖定檔），執行 `python -m pytest tests`。測試不需要重排模型、jieba 大字典或網路；需要 `OPENROUTER_API_KEY` 的測試會 skip。
+- **Frontend checks**：Node 22、pnpm 11.19.0，`pnpm install --frozen-lockfile` 後執行 lint、`pnpm build`（含 typecheck）與 vitest。
+- **Terraform validation**：`terraform fmt -check -recursive`，以 `terraform init -backend=false` 後 `terraform validate`。
+
+CI 不建置 Docker 映像、不呼叫真實 LLM、不跑 RAGAS；這些仍以本機或 `scripts/eval_sample_manual.py` 執行。部署是另一個 workflow（`deploy.yml`，只在 `release/**` 觸發）。
+
 ## 前端驗收
 
 元件與 parser 測試：`cd frontend && pnpm exec vitest run --maxWorkers=1`。完整驗收證據與尚未完成項目見 `openspec/changes/archive/2026-10-03-replace-gradio-frontend/validation.md`。
