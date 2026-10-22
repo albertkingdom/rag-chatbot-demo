@@ -200,6 +200,10 @@ resource "google_cloud_run_v2_service" "web" {
         name  = "SESSION_TTL_SECONDS"
         value = tostring(var.session_ttl_seconds)
       }
+      env {
+        name  = "GUARDRAIL_ALLOWED_EMAIL_DOMAINS"
+        value = var.guardrail_allowed_email_domains
+      }
 
       dynamic "env" {
         for_each = toset(local.secret_names)

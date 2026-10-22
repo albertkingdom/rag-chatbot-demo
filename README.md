@@ -85,6 +85,7 @@ Compose 服務包含 `web`（FastAPI，提供 `/api/v1/*` 與 React 靜態成品
 - 部署維持單一 Cloud Run instance，未做壓測與背壓設計，冷啟動期間的並行請求可能被拒。
 - 「停止」只停止瀏覽器接收，不保證取消後端模型工作與計費。
 - 上傳僅做副檔名、MIME、大小與路徑的基本驗證，不含惡意檔案掃描。
+- 輸出防護預設只放行 `example.com` 網域的 email（範例手冊的客服信箱），其他 email 的答案會被整段攔截；換成自己的知識庫時，以環境變數 `GUARDRAIL_ALLOWED_EMAIL_DOMAINS` 設定逗號分隔的網域（例如 `support.example.org,example.com`），設為空字串則所有 email 都攔截。docker compose 與 Terraform（`guardrail_allowed_email_domains`）都會把這個設定帶進容器。
 
 細節見 [docs/development.md](docs/development.md#使用範圍細節)。
 

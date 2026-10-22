@@ -25,6 +25,12 @@ variable "rate_limit_rpm" {
   default     = 60
 }
 
+variable "guardrail_allowed_email_domains" {
+  description = "Comma-separated email domains the output guardrail lets through; empty string blocks every address."
+  type        = string
+  default     = "example.com"
+}
+
 variable "session_ttl_seconds" {
   description = "TTL in seconds for Redis-backed session tokens issued by /login."
   type        = number

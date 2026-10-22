@@ -95,7 +95,7 @@ flowchart TD
 所有路徑都會寫入 MongoDB（guardrail 擋下的也會，並附上命中的 PII 類型或 injection pattern）；direct、cache、rag 三條正常回覆路徑都會把這一輪寫入 Redis 短期對話；只有 rag 路徑會寫入語意快取，低信心的答案除外（見第 6、7 節）。rag 路徑寫入 MongoDB 時，metadata 帶有 `retrieval` 物件，記錄檢索分數與重試情形（見第 8 節）。
 
 ### 0. 輸入防護（`guardrails.py`）
-以 regex 掃描 prompt injection（中英文規則，例如「ignore previous instructions」、「系統提示」、「繞過」）。命中即回覆統一安全訊息，並以 `response_source="guardrail"` 寫入 MongoDB，不呼叫任何 LLM。
+以 regex 掃描 prompt injection（`INPUT_INJECTION_PATTERNS`，中英文）。規則用「動詞加目標」的句型，例如「ignore previous instructions」「reveal the system prompt」「reveal your API key」「繞過安全規則」，不用單字：`password`、`token`、`secret`、`api key`、`bypass` 單獨出現不會被擋，所以「How do I reset my password?」「What is a token?」可以通過。命中即回覆統一安全訊息，並以 `response_source="guardrail"` 寫入 MongoDB，不呼叫任何 LLM。
 
 ### 1. 混合路由與查詢改寫（`query_router.py`）
 - **Stage 1 規則層（零延遲）**：先比對知識庫關鍵字 → `rag`。知識庫是 CarbonM 系統操作 Q&A，所以關鍵字包含碳盤查術語（碳、排放、燃料、冷媒、scope 1/2/3…）與系統功能（密碼、登入、帳號、邊界、審核、清冊、報告書…）；關鍵字最初依照先前的知識庫挑選；換成範例手冊後補上只在 CarbonM 情境出現的複合詞（盤查年度、盤查報告、範疇二、範疇三、第三方查證、係數庫），規則層可直接判定範例手冊 60 題中的 43 題（加上評估集共 52/72）。「係數」「盤查」「範疇」「廠區」「填報」「報表」「兩步驟驗證」等單詞不加入：子字串比對優先於 LLM，會讓「相關係數」「倉庫庫存盤查」「Google 表單填報截止」「iPhone 兩步驟驗證」這類問題直接走 rag。這些問題交給 LLM 層判斷，29 個一般問題反例列在 `scripts/eval_sample_manual.py` 的 `ROUTING_NEGATIVES`，規則層測試與評估腳本共用。代價是一般問題若含這些詞（例如「忘記 Gmail 密碼」）也會走 rag，此時 prompt 允許 context 不相關時改用一般知識回答。真實環境實測（2026-10-14）中，「忘記 Gmail 密碼」的 top-1 重排分數為 0.645，高於門檻，所以**不會**被視為低信心，而是以知識庫的重設密碼流程回答並附上來源；只有分數低於門檻的誤路由問題才會被視為低信心：開頭加上固定說明、不送來源、也不寫入語意快取（見第 7 節）。再比對一般問答模式（招呼、感謝、簡單算式、翻譯、寫程式、笑話）→ `direct`；其餘為 `uncertain`。領域關鍵字優先，避免同時符合兩者的查詢被誤判為 direct。
@@ -149,7 +149,15 @@ Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（�
 - 固定說明與低信心說明都以測試確認不會觸發輸入輸出防護規則。
 
 ### 8. 輸出防護與回應（`guardrails.py`、`chat_events.py`）
-完整答案生成後，先做 PII（email、電話、信用卡、身分證字號、IP）與 injection 掃描（電話只比對台灣手機、台灣市話與 `+` 開頭的國際格式，不會誤判日期或一般數字），通過後才以 typed NDJSON 事件分段送出：
+完整答案生成後，先做 PII（email、電話、信用卡、身分證字號、IP）與 injection 掃描，通過後才以 typed NDJSON 事件分段送出。偵測規則：
+
+- **email**：取 `@` 前後最長的位址字元連續段，不用 `\b`，所以緊貼中文的 email 也會被偵測；網域必須在 `GUARDRAIL_ALLOWED_EMAIL_DOMAINS`（預設 `example.com`，設為空字串則全擋）內才放行，網域需完全相等，子網域不自動放行，多個 `@` 的連續段一律攔截。
+- **電話**：只比對台灣手機、台灣市話與 `+` 開頭的國際格式，不會誤判日期或一般數字。
+- **信用卡**：13–19 位數字（位數間至多一個空白或連字號）且通過 Luhn 檢查；每組都是 1900–2100 四位數的年份串（如「2023 2024 2025 2026」，Luhn 剛好通過）不算。
+- **IP**：四段數字且每段 ≤255。
+- **injection（輸出端）**：`OUTPUT_INJECTION_PATTERNS` 只判斷答案正在呈現系統或開發者指令的句型（例如「My system prompt: …」「Here is my system prompt」「系統提示：…」），單純提到 system prompt、API key、token 的答案可以通過。這是盡力偵測，不保證攔下改寫過的洩漏。
+
+輸入端與輸出端用不同清單，`detect_prompt_injection(text, direction=...)` 由呼叫端指定；命中後的處理方式不變。
 
 | 事件 | 內容 |
 |------|------|
@@ -334,10 +342,7 @@ flowchart TB
 
 | 問題 | 位置 | 影響 |
 |------|------|------|
-| 輸出防護的 email 規則會誤擋含客服信箱的正常答案 | `guardrails.py`：`PII_PATTERNS["email"]` | 真實環境中「密碼忘記了要怎麼重設啊？」（檢索分數 0.998）的答案因帶有客服信箱，被換成安全訊息 |
-| email 緊貼中文字時不會被偵測 | 同上（`\b` 邊界在中文字旁不成立） | 「…客服信箱support@example.com以…」會原樣送出；實測「忘記 Gmail 密碼」的答案就送出了知識庫中的客服信箱。與上一列合起來，是同時有誤擋與漏判 |
-| 輸入端 injection 規則過寬 | `guardrails.py`：`INJECTION_PATTERNS`（`password`、`token`、`secret`、`api key`、`bypass`、`顯示系統` 等） | 「How do I reset my password?」「What is a token?」等正常問題被擋；純中文「密碼」不受影響；輸出端使用同一份清單，答案夾英文原詞也可能被擋；`test_guardrails.py` 沒有任何 injection 測試 |
-| 信用卡與 IP 規則誤判一般內容 | `guardrails.py`：`credit_card`（13–19 位數字，沒有 Luhn 檢查）、`ip_address` | 「2023 2024 2025 2026」被判成信用卡，章節號「1.2.3.4」被判成 IP；碳盤查的年度數字容易誤擋 |
+| 章節號「1.2.3.4」會被判成 IP，輸出端 injection 與輸入端的少見措辭仍有誤判或漏判 | `guardrails.py`：`ip_address`、`OUTPUT_INJECTION_PATTERNS`、`INPUT_INJECTION_PATTERNS` | 四段數字的章節號形狀上是合法 IP，答案帶有時整段被攔；「print the API key name」這類措辭會被輸入端攔下；輸出端只攔標題加冒號與「here is my system prompt」等句型，改寫過的洩漏攔不到 |
 | 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的檢索分數 0.645，高於門檻，仍以重設密碼流程回答並附來源 |
 | 快取查詢與寫入以同步 Redis 呼叫在 async 路徑執行 | `chat_service.py` 呼叫 `cache_service.py` | 查詢期間阻塞同一個事件迴圈；快取查詢範圍擴大後，每次讀回的資料量更大 |
 | 同一 index 更新手冊後仍可能寫入舊快取 | `build_vector_store.py` 同步後清快取、`hybrid_retriever.py` 每 30 秒檢查 BM25 pointer | 清除之後、web 載入新 BM25 之前（最長約 90 秒，含 GCS FUSE stat cache），或同步前已開始的請求，仍可能寫入依舊資料產生的答案並保留 24 小時；可用資料版本作為命名空間的一部分解決 |
