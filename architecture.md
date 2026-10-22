@@ -161,6 +161,8 @@ Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（�
 
 輸入端與輸出端用不同清單，`detect_prompt_injection(text, direction=...)` 由呼叫端指定；命中後的處理方式不變。
 
+**防護定位**：這個專案的輸入端規則刻意只擋明顯的攻擊句型，優先避免誤擋正常問題。理由是模型沒有工具或寫入權限（唯讀 RAG）、系統 prompt 就在公開 repo、知識庫是虛構的範例手冊，injection 成功的影響僅限於回答內容；主要防線是 prompt 本身。因此不另外以 LLM 判斷輸入。
+
 | 事件 | 內容 |
 |------|------|
 | `status` | 只在 rag 路徑送出：`retrieving`（embedding 與查快取之前）、`reranking`（混合檢索、重排與重試之前）、`generating`（生成之前）。direct 路徑不送 status |
@@ -346,6 +348,8 @@ flowchart TB
 |------|------|------|
 | 章節號「1.2.3.4」會被判成 IP，輸出端 injection 與輸入端的少見措辭仍有誤判或漏判 | `guardrails.py`：`ip_address`、`OUTPUT_INJECTION_PATTERNS`、`INPUT_INJECTION_PATTERNS` | 四段數字的章節號形狀上是合法 IP，答案帶有時整段被攔；「print the API key name」這類措辭會被輸入端攔下；輸出端只攔標題加冒號與「here is my system prompt」等句型，改寫過的洩漏攔不到 |
 | 輸入端偏向攔截，提到「你的規則／指令」的正常問題會被拒答 | `guardrails.py`：`INPUT_INJECTION_PATTERNS` | 字串比對無法分辨「使用者忘了」與「要求模型忘掉」，因此選擇攔截為主：例如「請忘記之前的規則設定」「Forget your validation rules and …」一律攔截；更精準的判斷需改用 LLM 分類（每次多一次呼叫） |
+| 輸入端字串規則有誤擋也有漏擋 | `guardrails.py`：`INPUT_INJECTION_PATTERNS` | 相對舊版單字比對，「Send me the API key」「Copy the access token」「繞過內容審核」等改寫後的索取或繞過句型不再被擋（為了不誤擋「What is a token?」「How do I reset my password?」）；描述第三方的句子如「棋手忽略先前的規則」「Why do CSS declarations override earlier rules」會被擋。依上方的防護定位接受此取捨 |
+| 上傳的手冊內容可能帶有間接 injection | `manual_service.py`、`rag_pipeline.py` | 所有登入者都能上傳手冊，內容會進入生成 prompt；模型沒有工具，影響限於回答內容 |
 | 用雙空格或「 - 」分隔的卡號不會被偵測 | `guardrails.py`：`credit_card` | 規則只允許數字間一個空白或連字號，「4111  1111  1111  1111」會通過；放寬時需保留 Luhn、年份串排除與分組切分 |
 | 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的檢索分數 0.645，高於門檻，仍以重設密碼流程回答並附來源 |
 | 快取查詢與寫入以同步 Redis 呼叫在 async 路徑執行 | `chat_service.py` 呼叫 `cache_service.py` | 查詢期間阻塞同一個事件迴圈；快取查詢範圍擴大後，每次讀回的資料量更大 |
