@@ -42,3 +42,24 @@ def test_empty_value_falls_back():
 @pytest.mark.parametrize("module", ["src.build_vector_store", "src.services"])
 def test_consumers_use_the_overridden_name(module):
     assert resolved_names("my-index", module) == "my-index"
+
+
+# --- spec: guardrail-detection — email allowlist parsing -----------------
+
+from src.config import DEFAULT_ALLOWED_EMAIL_DOMAINS, parse_allowed_email_domains  # noqa: E402
+
+
+def test_allowlist_unset_uses_sample_domain():
+    assert parse_allowed_email_domains(None) == DEFAULT_ALLOWED_EMAIL_DOMAINS
+    assert DEFAULT_ALLOWED_EMAIL_DOMAINS == frozenset({"example.com"})
+
+
+def test_allowlist_empty_string_is_empty():
+    assert parse_allowed_email_domains("") == frozenset()
+    assert parse_allowed_email_domains(" , ,") == frozenset()
+
+
+def test_allowlist_trims_lowercases_and_ignores_empty_items():
+    assert parse_allowed_email_domains(" Support.Test, ,CORP.test ") == frozenset(
+        {"support.test", "corp.test"}
+    )

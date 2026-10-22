@@ -219,7 +219,7 @@ async def chat_event_stream(
                 full_response += chunk
 
             pii_hit, pii_type = detect_pii(full_response)
-            injection_hit, injection_pattern = detect_prompt_injection(full_response)
+            injection_hit, injection_pattern = detect_prompt_injection(full_response, direction="output")
             if pii_hit or injection_hit:
                 guardrail_message = get_guardrail_message()
                 await get_conversation_db().async_save_conversation(
@@ -279,7 +279,7 @@ async def chat_event_stream(
             cached_answer = cached_response["answer"]
             cached_sources = cached_response.get("sources", [])
             pii_hit, pii_type = detect_pii(cached_answer)
-            injection_hit, injection_pattern = detect_prompt_injection(cached_answer)
+            injection_hit, injection_pattern = detect_prompt_injection(cached_answer, direction="output")
             if pii_hit or injection_hit:
                 guardrail_message = get_guardrail_message()
                 await get_conversation_db().async_save_conversation(
@@ -359,7 +359,7 @@ async def chat_event_stream(
 
         with langsmith.trace(name="Output Guardrail"):
             pii_hit, pii_type = detect_pii(full_response)
-            injection_hit, injection_pattern = detect_prompt_injection(full_response)
+            injection_hit, injection_pattern = detect_prompt_injection(full_response, direction="output")
 
         if pii_hit or injection_hit:
             guardrail_message = get_guardrail_message()
