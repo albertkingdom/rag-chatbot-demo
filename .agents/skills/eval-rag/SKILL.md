@@ -1,10 +1,6 @@
 ---
 name: eval-rag
 description: "在 demo index 上跑這個專案的 RAGAS 評估並和上一份報告比較：判斷變更需不需要評估、安全前置檢查（絕不對正式 index 執行）、執行 scripts/eval_sample_manual.py、比較四項指標與門檻、解讀結果與雜訊、決定要不要更新 tests/rag_eval_report.json 與文件裡的數字。當使用者說「跑評估」「跑 RAGAS」「評估一下檢索」「改完參數要不要重新評估」「比較評估結果」，或改了檢索、路由、重排、評分門檻、提示詞、模型設定、知識庫同步後需要驗證品質時使用。"
-license: MIT
-metadata:
-  author: yklin
-  version: "1.0"
 ---
 
 # RAGAS 評估與前後比較

@@ -1,17 +1,13 @@
 ---
-name: code-review
-description: "依這個專案的 RAG 管線與規則審查變更、找出問題：跑自動檢查、依變更區域套用檢查清單（檢索與路由、語意快取、guardrail、NDJSON 串流、存取控制、知識庫同步、前端、Terraform、文件同步）、問題分級（阻擋／重要／建議），通過後記錄審查結果讓 PR 閘門放行。當使用者說「code review」「審查」「review 一下」「準備開 PR」「可以開 PR 嗎」，或功能做完要開 PR／歸檔前使用。找到問題之後怎麼處理交給 review-findings。"
-license: MIT
-metadata:
-  author: yklin
-  version: "1.0"
+name: project-review
+description: "依這個專案的 RAG 管線與規則審查變更、找出問題：跑自動檢查、依變更區域套用檢查清單（檢索與路由、語意快取、guardrail、NDJSON 串流、存取控制、知識庫同步、前端、Terraform、文件同步）、問題分級（阻擋／重要／建議），通過後記錄審查結果讓 PR 閘門放行。當使用者說「code review」「審查」「review 一下」「準備開 PR」「可以開 PR 嗎」，或功能做完要開 PR 前使用。找到問題之後怎麼處理交給 review-findings。"
 ---
 
 # Code review（RAG demo 專案）
 
-專案規則（CLAUDE.md）：**review 完成、阻擋與重要問題都處理完，才能開 PR 或歸檔。** `.claude/hooks/guard-bash.sh` 會在 `gh pr create` 與 `spectra archive` 前檢查審查紀錄是否對應目前的 HEAD，沒有就擋下。
+專案規則（CLAUDE.md）：**review 完成、阻擋與重要問題都處理完，才能開 PR。** `.claude/hooks/guard-bash.sh` 會在 `gh pr create` 前檢查審查紀錄是否對應目前的 HEAD，沒有就擋下（只改文件與規格的分支除外）。
 
-這個 skill 負責**找問題**；整理、驗證、修正由 `review-findings` 接手。內建的 `/code-review` 可以當第二意見，但它不認識這個專案的規則，不能取代這份清單。
+這個 skill 負責**找問題**；整理、驗證、修正由 `review-findings` 接手。內建的 `/code-review` 可以當第二意見，但它不認識這個專案的規則，不能取代這份清單；這個 skill 取名 `project-review`，以免與它同名。派 subagent 審查時，要把這份清單與步驟交給它，結果仍由你驗證後才記錄。
 
 ## 邊界
 
@@ -46,7 +42,7 @@ CI 不跑 RAGAS，也不呼叫真實 LLM（見 `docs/development.md`）。檢索
 **檢索與路由**（`query_router.py`、`hybrid_retriever.py`、`bm25_index.py`、`rerank_stage.py`、`retrieval_grader.py`、`config.py`）
 - 參數（`VECTOR_TOP_N`、`BM25_TOP_N`、`RRF_K`、`FUSION_TOP_M`、`RERANK_TOP_K`、`GRADE_SCORE_THRESHOLD`…）有改，`architecture.md` 的 Key Parameters 是否同步、有沒有評估證據。
 - 環境變數覆寫：無效值要記警告並回到預設，不能讓服務起不來或靜默吞掉。
-- 低信心路徑三個行為要一起成立：固定說明「知識庫查無直接相關資料」、不顯示來源、**不寫入語意快取**。只改其中一個就是缺陷。
+- 低信心路徑三個行為要一起成立：答案開頭固定加上 `LOW_CONFIDENCE_PREFIX`（`rag_pipeline.py`，由 `chat_service.py` 加在模型回答前面）、不顯示來源、**不寫入語意快取**。只改其中一個就是缺陷。
 - 規則層路由的判斷要有對應的 `test_query_router.py` 案例，不能只靠 LLM 路由兜底。
 
 **語意快取**（`cache_service.py`）
@@ -109,9 +105,9 @@ CI 不跑 RAGAS，也不呼叫真實 LLM（見 `docs/development.md`）。檢索
 **沒有未處理的阻擋與重要問題，而且步驟 2 的檢查都通過**，才執行：
 
 ```bash
-.claude/hooks/mark-reviewed.sh
+"$(git rev-parse --show-toplevel)/.claude/hooks/mark-reviewed.sh"
 ```
 
-它把目前 HEAD 寫進本機的 `.claude/state/review-passed`（不進版控）。有未 commit 的追蹤檔案時會拒絕，先 commit。之後任何新 commit 都會讓紀錄失效，修正完要重審並重新記錄。
+它把目前 HEAD 寫進本機的 `.claude/state/review-passed`（不進版控）。有未 commit 的追蹤檔案時會拒絕，先 commit。之後任何新 commit 都會讓紀錄失效（只動 `openspec/` 的歸檔 commit 除外），修正完要重審並重新記錄。只改文件與規格、不動程式碼的分支，hook 不要求審查紀錄（程式碼的範圍定義在 `.claude/hooks/lib.sh` 的 `CODE_RE`）。
 
 有阻擋或重要問題時**不要記錄**，改交給 `review-findings` 處理。

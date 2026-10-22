@@ -1,10 +1,6 @@
 ---
 name: create-pr
 description: "依這個專案的流程開 Pull Request：開 PR 前的檢查（分支、code review 紀錄、測試、README 與 architecture.md 同步、Spectra 歸檔）、PR 標題與英文說明格式、推送與等 CI。當使用者說「開 PR」「建立 PR」「create PR」「推上去開 PR」「準備合併」時使用。需要使用者明確要求才會 push 與開 PR。"
-license: MIT
-metadata:
-  author: yklin
-  version: "1.0"
 ---
 
 # 開 Pull Request（RAG demo 專案）
@@ -22,7 +18,7 @@ git diff --stat origin/master...HEAD
 | 項目 | 標準 |
 |---|---|
 | Spectra | 有對應的 change 且任務完成；實作完成後已 `spectra-archive`（或 `spectra-wrapup`），主規格已同步。純文件或設定的小變更可以沒有 change，要在 PR 說明寫明 |
-| Code review | 已跑 `code-review`，阻擋與重要問題都處理完（`review-findings`）。`.claude/state/review-passed` 要等於目前 HEAD，否則 `gh pr create` 會被 hook 擋下。**不要手動寫這個檔案繞過**，補審查 |
+| Code review | 已跑 `project-review`，阻擋與重要問題都處理完（`review-findings`）。`.claude/state/review-passed` 要對應目前 HEAD（歸檔產生的、只動 `openspec/` 的 commit 不會讓它失效），否則 `gh pr create` 會被 hook 擋下；只改文件與規格的分支不需要。**不要手動寫這個檔案繞過**，補審查。順序是：實作 → 歸檔 → review → 開 PR；`git commit` 與 `gh pr create` 不要串在同一個指令（hook 會擋） |
 | 測試 | `python -m pytest tests -q`；動到前端再跑 `pnpm lint`、`pnpm build`、`pnpm exec vitest run --maxWorkers=1`；動到 `terraform/` 跑 `terraform fmt -check -recursive` 與 `terraform validate` |
 | 文件 | 新功能：README 功能條目加一行；改到 `architecture.md` 列出的檔案：該檔已同步 |
 | 機密 | `git diff origin/master...HEAD` 沒有金鑰、`.env`、內部網址 |

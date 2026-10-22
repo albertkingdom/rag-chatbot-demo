@@ -1,10 +1,6 @@
 ---
 name: unit-test
 description: "替這個專案的變更撰寫或修改單元測試：測試放哪裡、怎麼不靠真實 Pinecone／Redis／LLM／網路、既有的假物件與注入方式（FakeRedis、monkeypatch 提供者、AsyncMock）、非同步與 skip 慣例、先看到測試失敗再修、前端 vitest 慣例，以及測試跑法。當使用者說「寫測試」「補測試」「加單元測試」「測試怎麼寫」，或實作新行為、修 bug、處理 review 發現的問題需要測試時使用。"
-license: MIT
-metadata:
-  author: yklin
-  version: "1.0"
 ---
 
 # 單元測試（RAG demo 專案）
@@ -26,7 +22,7 @@ cd frontend && pnpm exec vitest run --maxWorkers=1
 
 - 後端：`tests/test_<模組名>.py`，對應 `src/<模組名>.py`。API 路由在 `test_api_routes.py`，對外契約（NDJSON 事件、錯誤格式）在 `test_api_contract.py`。
 - 前端：與原始檔並排，`App.test.tsx`、`api.test.ts`、`ui.test.tsx`。
-- 檔案開頭用一兩行說明它驗證哪個行為或規格（`openspec/specs/<name>`），測試名稱寫「在什麼情況下，會怎樣」，例如 `test_similarity_equal_to_threshold_is_a_miss`。
+- 檔案開頭用一兩行說明它驗證哪個行為或規格（`openspec/specs/<name>`），測試名稱寫「在什麼情況下，會怎樣」，例如 `test_similarity_equal_to_the_threshold_is_a_miss`。
 - 一個行為一個測試，不把多個斷言塞進一個「大測試」。邊界值（等於門檻、空輸入、上限）要有自己的案例。
 
 ## 不靠外部服務
@@ -38,7 +34,7 @@ cd frontend && pnpm exec vitest run --maxWorkers=1
 | Redis | 用 `test_cache_service.py` 的 `FakeRedis`：行為貼近真實伺服器（回傳 bytes、sorted set 排序、WRONGTYPE、pipeline 交易）。需要新指令時**擴充 FakeRedis 並讓它符合真實行為**，不要在單一測試裡臨時偽造 | `test_cache_service.py` |
 | `chat_service` 的各個提供者（歷史、資料庫、快取、路由、檢索、生成、embedding、guardrail） | 用 `test_chat_service.py` 的 `providers` fixture：`monkeypatch.setattr(chat, "<名稱>", ...)` 換掉模組層的工廠函式；非同步的用 `AsyncMock`，串流用 async generator | `test_chat_service.py` |
 | LLM／embedding／reranker | 回傳固定結果的假物件；需要真實 key 的測試加 `@pytest.mark.skipif(not os.environ.get("OPENROUTER_API_KEY"), reason="OPENROUTER_API_KEY not set")` | `test_query_router.py` |
-| 環境變數 | `monkeypatch.setenv` 或 `patch.dict(os.environ, {...})`，不要讓測試依賴開發機的 `.env` | `test_config.py` |
+| 環境變數 | `monkeypatch.setenv` 或 `patch.dict(os.environ, {...})`，不要讓測試依賴開發機的 `.env` | `test_services.py`、`test_access_control.py`（`monkeypatch.setenv`）；`test_eval_sample_manual.py`、`test_bm25_index.py`（`patch.dict`） |
 | 時間、亂數 | 注入或 monkeypatch，不用 `sleep` | |
 
 非同步測試用 `@pytest.mark.asyncio`（已安裝 `pytest-asyncio`）。

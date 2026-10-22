@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# PostToolUse hook for Edit|Write: architecture.md describes the RAG flow and parameters,
-# so editing the files that define them should be paired with an architecture.md update
-# (CLAUDE.md，文件). Reminds once; stays quiet after architecture.md is changed.
+# PostToolUse hook for Edit|Write: architecture.md describes the RAG flow and parameters, so editing
+# the files that define them should be paired with an architecture.md update (CLAUDE.md, 文件).
+# Reminds once per file and HEAD; stays quiet while architecture.md has uncommitted changes.
+# Requires jq.
 set -u
 
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib.sh
+. "$here/lib.sh"
+
+command -v jq >/dev/null 2>&1 || exit 0
+
 input=$(cat)
-file=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty')
+file=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 [ -z "$file" ] && exit 0
 
 case "$file" in
@@ -16,10 +23,19 @@ case "$file" in
   *) exit 0 ;;
 esac
 
-cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
+cd "$(root_dir)" 2>/dev/null || exit 0
+git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 if git status --porcelain -- architecture.md 2>/dev/null | grep -q .; then
   exit 0
 fi
+
+state="$(root_dir)/.claude/state/docs-reminded"
+key="$(git rev-parse HEAD 2>/dev/null || echo none):$(basename "$file")"
+if grep -qxF "$key" "$state" 2>/dev/null; then
+  exit 0
+fi
+mkdir -p "$(dirname "$state")"
+printf '%s\n' "$key" >> "$state"
 
 jq -n --arg f "$(basename "$file")" '{
   hookSpecificOutput: {
