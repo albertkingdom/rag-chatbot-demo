@@ -43,3 +43,6 @@ terraform/terraform.tfvars
 
 # Local documentation images and acceptance screenshots
 docs/**/*.png
+
+# Third-party drawio skill checkout (local tooling, not part of this project)
+.claude/.drawio-skill-repo/
