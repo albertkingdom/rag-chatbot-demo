@@ -71,7 +71,6 @@ code:
   - docs/diagrams/rag_pipeline.drawio.png
   - src/app.py
   - src/build_vector_store.py
-  - docs/interview-guide.md
   - src/hybrid_retriever.py
   - src/config.py
   - docs/diagrams/rag_pipeline.svg
@@ -112,7 +111,6 @@ code:
   - docs/diagrams/rag_pipeline.drawio.png
   - src/app.py
   - src/build_vector_store.py
-  - docs/interview-guide.md
   - src/hybrid_retriever.py
   - src/config.py
   - docs/diagrams/rag_pipeline.svg
@@ -149,7 +147,6 @@ code:
   - src/hybrid_retriever.py
   - .spectra/touched/decouple-rerank-from-retriever.json
   - .spectra/touched/hybrid-search.json
-  - docs/interview-guide.md
   - docs/diagrams/rag_pipeline.png
   - .spectra/changes/decouple-rerank-from-retriever.started
   - docs/diagrams/rag_pipeline.drawio.png

@@ -30,7 +30,6 @@ code:
   - src/hybrid_retriever.py
   - .spectra/touched/decouple-rerank-from-retriever.json
   - .spectra/touched/hybrid-search.json
-  - docs/interview-guide.md
   - docs/diagrams/rag_pipeline.png
   - .spectra/changes/decouple-rerank-from-retriever.started
   - docs/diagrams/rag_pipeline.drawio.png
@@ -63,7 +62,6 @@ code:
   - src/hybrid_retriever.py
   - .spectra/touched/decouple-rerank-from-retriever.json
   - .spectra/touched/hybrid-search.json
-  - docs/interview-guide.md
   - docs/diagrams/rag_pipeline.png
   - .spectra/changes/decouple-rerank-from-retriever.started
   - docs/diagrams/rag_pipeline.drawio.png
@@ -96,7 +94,6 @@ code:
   - src/hybrid_retriever.py
   - .spectra/touched/decouple-rerank-from-retriever.json
   - .spectra/touched/hybrid-search.json
-  - docs/interview-guide.md
   - docs/diagrams/rag_pipeline.png
   - .spectra/changes/decouple-rerank-from-retriever.started
   - docs/diagrams/rag_pipeline.drawio.png
@@ -129,7 +126,6 @@ code:
   - src/hybrid_retriever.py
   - .spectra/touched/decouple-rerank-from-retriever.json
   - .spectra/touched/hybrid-search.json
-  - docs/interview-guide.md
   - docs/diagrams/rag_pipeline.png
   - .spectra/changes/decouple-rerank-from-retriever.started
   - docs/diagrams/rag_pipeline.drawio.png
@@ -161,7 +157,6 @@ code:
   - src/hybrid_retriever.py
   - .spectra/touched/decouple-rerank-from-retriever.json
   - .spectra/touched/hybrid-search.json
-  - docs/interview-guide.md
   - docs/diagrams/rag_pipeline.png
   - .spectra/changes/decouple-rerank-from-retriever.started
   - docs/diagrams/rag_pipeline.drawio.png
