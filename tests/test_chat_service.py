@@ -42,7 +42,7 @@ def providers(monkeypatch):
     monkeypatch.setattr(chat, "grade_documents", grade)
     monkeypatch.setattr(chat, "rewrite_for_retry", rewrite)
     monkeypatch.setattr(chat, "detect_pii", lambda *_: (False, None))
-    monkeypatch.setattr(chat, "detect_prompt_injection", lambda *_: (False, None))
+    monkeypatch.setattr(chat, "detect_prompt_injection", lambda *_, **__: (False, None))
     monkeypatch.setattr(chat, "_STREAM_CHUNK_DELAY", 0)
     return SimpleNamespace(history=history, database=database, cache=cache, router=router, generation=generation,
                            retrieval=retrieval, grade=grade, rewrite=rewrite)
@@ -54,7 +54,7 @@ async def collect():
 def test_answer_routes_have_one_done_and_correct_metadata(providers, monkeypatch, route):
     if route == "direct": providers.router.return_value.route = "direct"
     if route == "cache": providers.cache.get_cached_response.return_value = {"answer":"快取回答", "sources":["快取手冊"], "similarity":0.99}
-    if route == "guardrail": monkeypatch.setattr(chat,"detect_prompt_injection", lambda *_: (True,"input_injection"))
+    if route == "guardrail": monkeypatch.setattr(chat,"detect_prompt_injection", lambda *_, **__: (True,"input_injection"))
     events = asyncio.run(collect())
     assert events[-1].type == "done"
     assert sum(event.type == "done" for event in events) == 1
@@ -455,3 +455,16 @@ class TestRetrievalMetadata:
         asyncio.run(collect())
 
         assert "retrieval" not in (saved_metadata(providers) or {})
+
+
+@pytest.mark.parametrize("route", ["rag", "direct", "cache"])
+def test_injection_check_uses_input_list_for_question_and_output_list_for_answer(providers, monkeypatch, route):
+    if route == "direct": providers.router.return_value.route = "direct"
+    if route == "cache": providers.cache.get_cached_response.return_value = {"answer":"快取回答", "sources":["快取手冊"], "similarity":0.99}
+    calls = []
+    def recorder(text, direction="input"):
+        calls.append(direction)
+        return (False, None)
+    monkeypatch.setattr(chat, "detect_prompt_injection", recorder)
+    asyncio.run(collect())
+    assert calls == ["input", "output"]

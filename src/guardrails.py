@@ -1,9 +1,21 @@
 import re
-from typing import List, Tuple
+from typing import Callable, Dict, List, Tuple
 
+from . import config
+
+
+# Address characters. Email candidates are the maximal run of these around an
+# at-sign, so CJK text next to an address is a boundary, and an allowlisted
+# domain can never be matched as a prefix of a longer string.
+_EMAIL_RUN = re.compile(r"(?<![A-Za-z0-9._%+@-])[A-Za-z0-9._%+@-]*@[A-Za-z0-9._%+@-]*")
+_EMAIL_ADDRESS = re.compile(
+    r"[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})"
+)
 
 PII_PATTERNS = {
-    "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
+    # Email, credit card and IP are verified by the functions in _PII_CHECKS;
+    # the regex only finds candidates.
+    "email": _EMAIL_RUN,
     # Specific phone shapes only: the previous generic digit-group pattern
     # also matched dates (2026-10-11) and plain figures (123456 tCO2e).
     # Digit lookarounds instead of \b, because CJK characters count as word
@@ -15,48 +27,141 @@ PII_PATTERNS = {
         r"|\+\d{1,3}[-\s]?\(?\d{1,4}\)?(?:[-\s]?\d{2,4}){2,3}"  # international
         r")(?!\d)"
     ),
-    "credit_card": re.compile(r"\b(?:\d[ -]*?){13,19}\b"),
+    # 13-19 digits with at most one space or hyphen between digits.
+    "credit_card": re.compile(r"(?<!\d)(?=(\d(?:[ -]?\d){12,18})(?!\d))"),
     "taiwan_id": re.compile(r"\b[A-Z][12]\d{8}\b", re.IGNORECASE),
-    "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+    "ip_address": re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\d|\.\d)"),
 }
 
-INJECTION_PATTERNS = [
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in [
-        r"ignore (all|previous|the above) instructions",
-        r"disregard (all|previous|the above) instructions",
-        r"system prompt",
-        r"developer message",
-        r"reveal (the )?prompt",
-        r"print (the )?prompt",
-        r"api key",
-        r"secret",
-        r"password",
-        r"token",
-        r"bypass",
-        r"忽略(以上|之前)?(指令|規則)",
-        r"系統提示",
-        r"開發者(訊息|指令)",
-        r"洩漏(提示|指令|金鑰)",
-        r"顯示(系統|提示|指令)",
-        r"繞過",
-    ]
-]
+def _compile(patterns: List[str]) -> List["re.Pattern[str]"]:
+    return [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
+
+
+# Input: phrasing that tries to override instructions, extract the prompt or
+# secrets, or bypass rules. Single words such as "password" or "token" are
+# not listed: they are ordinary in questions about CarbonM accounts and APIs.
+INPUT_INJECTION_PATTERNS = _compile([
+    r"(ignore|disregard) (all |any |the )?((previous|prior|above|earlier) )?instructions",
+    r"忽略(以上|之前)?(指令|規則)",
+    r"(reveal|print|show|display|leak|disclose|repeat|tell me|give me) (me )?(your |the |my )?(system|developer|hidden|initial|secret) (prompt|message|instructions?)",
+    r"(reveal|print) (the |your )?prompt",
+    r"system prompt",
+    r"developer message",
+    r"(顯示|告訴我|印出|輸出|重複|洩漏)(你的|你|我的)?(系統提示|開發者(訊息|指令))",
+    r"洩漏(提示|指令|金鑰)",
+    r"(reveal|leak|disclose|expose|dump|print) (me )?(all |the |your |any )*(api[ _-]?keys?|secrets?|passwords?)\b",
+    r"(tell|give) me (your|the) (api[ _-]?key|password|secret)\b",
+    r"bypass (all |the |any |your )*(safety|security|guardrails?|filters?|restrictions?|rules?|polic(y|ies))",
+    r"繞過(所有|任何|全部)?(安全|防護|限制|規則|過濾)",
+])
+
+# Output: only an answer that presents the system or developer instructions.
+# Bare mentions ("I cannot disclose my system prompt", "系統提示您已成功登入")
+# and wording such as "API key" or "token" are ordinary answers. This is a
+# best-effort check; the prompt itself remains the main defence.
+OUTPUT_INJECTION_PATTERNS = _compile([
+    r"(?m)(^|[.!?。])[\s\-*#>_]*(my |the )?(system|developer) (prompt|instructions?)[\s*_]*[:：]",
+    r"(?m)(^|[.!?。])[\s\-*#>_]*(my |the )?developer message[\s*_]*[:：]",
+    r"(系統提示|開發者(訊息|指令))\s*[：:]\s*(你是|你的任務|you are)",
+    r"here (is|are) (my|the) (system|developer) (prompt|message|instructions?)",
+    r"(我的|以下是|這是)(系統提示|開發者(訊息|指令))(如下|內容)",
+])
+
+_INJECTION_PATTERNS_BY_DIRECTION = {
+    "input": INPUT_INJECTION_PATTERNS,
+    "output": OUTPUT_INJECTION_PATTERNS,
+}
+
+# Four-digit groups in this range are years, not card groups.
+_YEAR_RANGE = range(1900, 2101)
+
+
+def _luhn_valid(digits: str) -> bool:
+    total = 0
+    for index, char in enumerate(reversed(digits)):
+        value = int(char)
+        if index % 2 == 1:
+            value *= 2
+            if value > 9:
+                value -= 9
+        total += value
+    return total % 10 == 0
+
+
+def _has_email(text: str) -> bool:
+    allowed = config.GUARDRAIL_ALLOWED_EMAIL_DOMAINS
+    for match in PII_PATTERNS["email"].finditer(text):
+        # Trailing punctuation characters ("evil.com-", "evil.com.") are not
+        # part of the address.
+        run = match.group().rstrip(".-_%+")
+        if run.startswith("@") or run.endswith("@"):
+            continue  # "@handle", "name@" or a bare "@": not an address
+        if run.count("@") > 1:
+            return True  # never an allowlisted address
+        address = _EMAIL_ADDRESS.fullmatch(run)
+        if address is None:
+            # A dotted domain that is not a well-formed address ("evil.com-x")
+            # still looks like one and fails closed; "a@b" is not an address.
+            if re.search(r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", run):
+                return True
+            continue
+        if address.group(1).lower() not in allowed:
+            return True
+    return False
+
+
+def _has_credit_card(text: str) -> bool:
+    # The pattern is a lookahead, so it yields one candidate per digit-group
+    # start; a card that follows other digits ("2026 4111 ...") is still tried.
+    for match in PII_PATTERNS["credit_card"].finditer(text):
+        raw = match.group(1)
+        digits = re.sub(r"[ -]", "", raw)
+        if not 13 <= len(digits) <= 19:
+            continue
+        groups = re.split(r"[ -]", raw)
+        if len(groups) > 1 and all(
+            len(group) == 4 and int(group) in _YEAR_RANGE for group in groups
+        ):
+            continue  # "2023 2024 2025 2026" passes Luhn but is a year list
+        if _luhn_valid(digits):
+            return True
+    return False
+
+
+def _has_ip_address(text: str) -> bool:
+    return any(
+        all(int(group) <= 255 for group in match.group().split("."))
+        for match in PII_PATTERNS["ip_address"].finditer(text)
+    )
+
+
+_PII_CHECKS: Dict[str, Callable[[str], bool]] = {
+    "email": _has_email,
+    "credit_card": _has_credit_card,
+    "ip_address": _has_ip_address,
+}
 
 
 def detect_pii(text: str) -> Tuple[bool, str]:
     if not text:
         return False, ""
     for name, pattern in PII_PATTERNS.items():
-        if pattern.search(text):
+        check = _PII_CHECKS.get(name)
+        if check is not None:
+            if check(text):
+                return True, name
+        elif pattern.search(text):
             return True, name
     return False, ""
 
 
-def detect_prompt_injection(text: str) -> Tuple[bool, str]:
+def detect_prompt_injection(text: str, direction: str = "input") -> Tuple[bool, str]:
+    patterns = _INJECTION_PATTERNS_BY_DIRECTION.get(direction)
+    if patterns is None:
+        raise ValueError(f"direction must be 'input' or 'output', got {direction!r}")
     if not text:
         return False, ""
-    for pattern in INJECTION_PATTERNS:
+    for pattern in patterns:
         if pattern.search(text):
             return True, pattern.pattern
     return False, ""

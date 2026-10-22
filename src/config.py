@@ -67,6 +67,30 @@ def parse_cache_max_entries(raw: Optional[str]) -> int:
 # lookup compares, so it bounds both memory and per-request lookup cost.
 CACHE_MAX_ENTRIES = parse_cache_max_entries(os.environ.get("CACHE_MAX_ENTRIES"))
 
+# Email domains the output guardrail lets through. The sample knowledge base
+# publishes its support mailbox at example.com, so that is the default; set
+# GUARDRAIL_ALLOWED_EMAIL_DOMAINS to a comma-separated list to replace it, or
+# to an empty string to block every address.
+DEFAULT_ALLOWED_EMAIL_DOMAINS = frozenset({"example.com"})
+
+
+def parse_allowed_email_domains(raw: Optional[str]) -> frozenset:
+    """Resolve GUARDRAIL_ALLOWED_EMAIL_DOMAINS into a set of lowercase domains.
+
+    Unset yields the default. A set value is split on commas, trimmed and
+    lowercased; empty items are ignored, so an empty string yields no domains.
+    """
+    if raw is None:
+        return DEFAULT_ALLOWED_EMAIL_DOMAINS
+    return frozenset(
+        item.strip().lower() for item in raw.split(",") if item.strip()
+    )
+
+
+GUARDRAIL_ALLOWED_EMAIL_DOMAINS = parse_allowed_email_domains(
+    os.environ.get("GUARDRAIL_ALLOWED_EMAIL_DOMAINS")
+)
+
 # Agentic RAG: retrieval grading & retry
 GRADE_SCORE_THRESHOLD = float(os.environ.get("GRADE_SCORE_THRESHOLD", "0.3"))
 RETRIEVAL_MAX_RETRIES = int(os.environ.get("RETRIEVAL_MAX_RETRIES", "1"))
