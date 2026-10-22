@@ -16,7 +16,7 @@ metadata:
 - **不自動修。** 先整理、驗證、分級並報告，使用者同意後才改程式。需要確認時用純文字提問，不用 AskUserQuestion。**不要使用 `/code-review --fix`**（它會直接改工作樹）。
 - **不 amend、不 rebase 已存在的 commit**；不 push、不開 PR、不合併，除非使用者另外明確要求。
 - 逐檔 `git add <file>`，永遠不用 `git add .`、`-A`、`-u`。
-- commit 訊息遵守 CLAUDE.md：不得提及任何 AI 工具，不加 `Co-Authored-By` 或「Generated with」等署名。
+- commit 訊息遵守 CLAUDE.md：不得帶 AI 署名行，不加 `Co-Authored-By` 或「Generated with」等署名。
 - **審查意見不是事實，先驗證。** 意見可能是錯的或過度推論（模型與人都會）。每一筆都標明「已驗證（讀碼、重現、執行）」或「推測」，推測的先去驗證，再決定要不要修。
 
 ## 步驟

@@ -84,7 +84,7 @@ CI 不跑 RAGAS，也不呼叫真實 LLM（見 `docs/development.md`）。檢索
 
 **每次都看**
 - 機密或個人資料（`.env`、金鑰、內部 URL）進了 diff 嗎。
-- commit 訊息有沒有提到 AI 工具或署名（hook 會擋，但歷史上的 commit 要自己看）。
+- commit 訊息有沒有帶 AI 署名行（hook 會擋，但歷史上的 commit 要自己看）。
 - 新行為有測試嗎，測試是先失敗過才通過的嗎。
 
 ### 4. 分級與報告

@@ -40,7 +40,7 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 ### Commit 訊息
 
-- Commit 訊息不得提及任何 AI 工具（例如 Claude、Copilot、ChatGPT 或其他 AI 助手）。
+- Commit 訊息不得帶 AI 署名行（例如 `Co-Authored-By: <AI 工具>`、`Generated with <AI 工具>`）。訊息內文可以提到工具名稱。
 - commit 與 PR 說明用英文，採 Conventional Commits。
 
 ### 文件

@@ -34,7 +34,7 @@ cd frontend && pnpm exec vitest run --maxWorkers=1
 | Redis | 用 `test_cache_service.py` 的 `FakeRedis`：行為貼近真實伺服器（回傳 bytes、sorted set 排序、WRONGTYPE、pipeline 交易）。需要新指令時**擴充 FakeRedis 並讓它符合真實行為**，不要在單一測試裡臨時偽造 | `test_cache_service.py` |
 | `chat_service` 的各個提供者（歷史、資料庫、快取、路由、檢索、生成、embedding、guardrail） | 用 `test_chat_service.py` 的 `providers` fixture：`monkeypatch.setattr(chat, "<名稱>", ...)` 換掉模組層的工廠函式；非同步的用 `AsyncMock`，串流用 async generator | `test_chat_service.py` |
 | LLM／embedding／reranker | 回傳固定結果的假物件；需要真實 key 的測試加 `@pytest.mark.skipif(not os.environ.get("OPENROUTER_API_KEY"), reason="OPENROUTER_API_KEY not set")` | `test_query_router.py` |
-| 環境變數 | `monkeypatch.setenv` 或 `patch.dict(os.environ, {...})`，不要讓測試依賴開發機的 `.env` | `test_services.py`、`test_access_control.py`（`monkeypatch.setenv`）；`test_eval_sample_manual.py`、`test_bm25_index.py`（`patch.dict`） |
+| 環境變數 | `monkeypatch.setenv` 或 `patch.dict(os.environ, {...})`，不要讓測試依賴開發機的 `.env` | `test_eval_sample_manual.py`、`test_bm25_index.py`（`monkeypatch.setenv`）；`test_services.py`、`test_access_control.py`（`patch.dict`） |
 | 時間、亂數 | 注入或 monkeypatch，不用 `sleep` | |
 
 非同步測試用 `@pytest.mark.asyncio`（已安裝 `pytest-asyncio`）。

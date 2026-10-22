@@ -23,23 +23,23 @@ case "$file" in
   *) exit 0 ;;
 esac
 
-cd "$(root_dir)" 2>/dev/null || exit 0
-git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+init_repo "$input" || exit 0
 if git status --porcelain -- architecture.md 2>/dev/null | grep -q .; then
   exit 0
 fi
 
 state="$(root_dir)/.claude/state/docs-reminded"
-key="$(git rev-parse HEAD 2>/dev/null || echo none):$(basename "$file")"
+rel=${file#"$(root_dir)"/}; [ "$rel" = "$file" ] && rel=src/$(basename "$file")
+key="$(git rev-parse HEAD 2>/dev/null || echo none):$rel"
 if grep -qxF "$key" "$state" 2>/dev/null; then
   exit 0
 fi
 mkdir -p "$(dirname "$state")"
 printf '%s\n' "$key" >> "$state"
 
-jq -n --arg f "$(basename "$file")" '{
+jq -n --arg f "$rel" '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
-    additionalContext: ("You edited src/\($f), which architecture.md documents. If behavior, flow or a parameter changed, update architecture.md in the same change (Key Parameters table, request flow or known issues). For a new feature also add one README feature bullet.")
+    additionalContext: ("You edited \($f), which architecture.md documents. If behavior, flow or a parameter changed, update architecture.md in the same change (Key Parameters table, request flow or known issues). For a new feature also add one README feature bullet.")
   }
 }'

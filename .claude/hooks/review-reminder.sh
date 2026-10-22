@@ -14,8 +14,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 input=$(cat)
 [ "$(printf '%s' "$input" | jq -r '.stop_hook_active // false' 2>/dev/null)" = "true" ] && exit 0
 
-cd "$(root_dir)" 2>/dev/null || exit 0
-git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+init_repo "$input" || exit 0
 
 branch=$(git symbolic-ref --short -q HEAD || true)
 [ -n "$branch" ] || exit 0
@@ -26,7 +25,7 @@ base=$(base_ref)
 ahead=$(git rev-list --count "$base"..HEAD 2>/dev/null || echo 0)
 [ "$ahead" -gt 0 ] || exit 0
 
-git diff --name-only "$base"...HEAD 2>/dev/null | grep -Eq "$CODE_RE" || exit 0
+touches_code || exit 0
 reviewed_ok && exit 0
 
 head_sha=$(git rev-parse HEAD)
