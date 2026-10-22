@@ -46,3 +46,7 @@ docs/**/*.png
 
 # Local hook state (review records)
 .claude/state/
+
+# Third-party drawio skill checkout (local tooling, not part of this project)
+.claude/.drawio-skill-repo/
+.claude/skills/drawio-skill
