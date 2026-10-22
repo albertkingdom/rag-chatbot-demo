@@ -157,7 +157,7 @@ Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（�
 - **IP**：四段數字且每段 ≤255。
 - **injection（輸出端）**：`OUTPUT_INJECTION_PATTERNS` 只判斷答案正在呈現系統或開發者指令的句型（例如「My system prompt: …」「Here is my system prompt」「系統提示：…」），單純提到 system prompt、API key、token 的答案可以通過。這是盡力偵測，不保證攔下改寫過的洩漏。
 
-輸入端的 `INPUT_INJECTION_PATTERNS` 以「動詞＋目標」判斷：指令覆寫（ignore/disregard/forget/override 加上 your、all、previous 等限定詞的 instructions/rules；忽略/忘記/無視 加上 你的、之前的 等的 指令/規則/指示）、提示擷取（顯示/列出/說出/貼出 等加上 系統提示/開發者指令，以及「把系統提示…貼出來」句型；英文的 reveal/print the system prompt 與 bare `system prompt`）、索取金鑰密碼、繞過安全規則。「What is a token?」「How do I reset my password?」「我忘記密碼了」「登入後系統提示密碼錯誤」等一般問題不會命中。
+輸入端的 `INPUT_INJECTION_PATTERNS` 以「動詞＋目標」判斷，並刻意偏向攔截針對助理本身的請求：指令覆寫（ignore/disregard/forget/override 後同一子句內出現 your、previous、system 等字與 instructions/rules/prompts，否定提醒如「do not forget your rules」除外；忽略/忘記/無視 加上 你的、之前的、所有 等與 指令/規則/指示，但說話者自己忘記的「我忘記之前的規則了」除外）、提示擷取（列出/提供/分享 等動詞加上「你的系統提示」，不論後面接什麼；沒有「你的」時只在目標位於句尾時攔截，讓「請列出系統提示的錯誤碼」這類詢問產品通知的問題通過；以及「把系統提示…貼出來」句型與英文 reveal/print the system prompt、bare `system prompt`）、索取金鑰密碼、繞過安全規則。「What is a token?」「How do I reset my password?」「我忘記密碼了」「登入後系統提示密碼錯誤」等一般問題不會命中。
 
 輸入端與輸出端用不同清單，`detect_prompt_injection(text, direction=...)` 由呼叫端指定；命中後的處理方式不變。
 
@@ -345,6 +345,7 @@ flowchart TB
 | 問題 | 位置 | 影響 |
 |------|------|------|
 | 章節號「1.2.3.4」會被判成 IP，輸出端 injection 與輸入端的少見措辭仍有誤判或漏判 | `guardrails.py`：`ip_address`、`OUTPUT_INJECTION_PATTERNS`、`INPUT_INJECTION_PATTERNS` | 四段數字的章節號形狀上是合法 IP，答案帶有時整段被攔；「print the API key name」這類措辭會被輸入端攔下；輸出端只攔標題加冒號與「here is my system prompt」等句型，改寫過的洩漏攔不到 |
+| 輸入端偏向攔截，提到「你的規則／指令」的正常問題會被拒答 | `guardrails.py`：`INPUT_INJECTION_PATTERNS` | 字串比對無法分辨「使用者忘了」與「要求模型忘掉」，因此選擇攔截為主：例如「請忘記之前的規則設定」「Forget your validation rules and …」一律攔截；更精準的判斷需改用 LLM 分類（每次多一次呼叫） |
 | 用雙空格或「 - 」分隔的卡號不會被偵測 | `guardrails.py`：`credit_card` | 規則只允許數字間一個空白或連字號，「4111  1111  1111  1111」會通過；放寬時需保留 Luhn、年份串排除與分組切分 |
 | 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的檢索分數 0.645，高於門檻，仍以重設密碼流程回答並附來源 |
 | 快取查詢與寫入以同步 Redis 呼叫在 async 路徑執行 | `chat_service.py` 呼叫 `cache_service.py` | 查詢期間阻塞同一個事件迴圈；快取查詢範圍擴大後，每次讀回的資料量更大 |
