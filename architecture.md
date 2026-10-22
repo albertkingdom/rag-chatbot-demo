@@ -153,9 +153,11 @@ Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（�
 
 - **email**：取 `@` 前後最長的位址字元連續段，不用 `\b`，所以緊貼中文的 email 也會被偵測；網域必須在 `GUARDRAIL_ALLOWED_EMAIL_DOMAINS`（預設 `example.com`，設為空字串則全擋）內才放行，網域需完全相等，子網域不自動放行，多個 `@` 的連續段一律攔截。
 - **電話**：只比對台灣手機、台灣市話與 `+` 開頭的國際格式，不會誤判日期或一般數字。
-- **信用卡**：13–19 位數字（位數間至多一個空白或連字號）且通過 Luhn 檢查；每組都是 1900–2100 四位數的年份串（如「2023 2024 2025 2026」，Luhn 剛好通過）不算。
+- **信用卡**：13–19 位數字（位數間至多一個空白或連字號）且通過 Luhn 檢查，每個以分隔處結尾的候選都會檢查（「4111 1111 1111 1111 123」仍會命中）；每組都是 1900–2100 四位數的年份串（如「2023 2024 2025 2026」，Luhn 剛好通過）不算。
 - **IP**：四段數字且每段 ≤255。
 - **injection（輸出端）**：`OUTPUT_INJECTION_PATTERNS` 只判斷答案正在呈現系統或開發者指令的句型（例如「My system prompt: …」「Here is my system prompt」「系統提示：…」），單純提到 system prompt、API key、token 的答案可以通過。這是盡力偵測，不保證攔下改寫過的洩漏。
+
+輸入端的 `INPUT_INJECTION_PATTERNS` 以「動詞＋目標」判斷：指令覆寫（ignore/disregard/forget/override 加上 your、all、previous 等限定詞的 instructions/rules；忽略/忘記/無視 加上 你的、之前的 等的 指令/規則/指示）、提示擷取（顯示/列出/說出/貼出 等加上 系統提示/開發者指令，以及「把系統提示…貼出來」句型；英文的 reveal/print the system prompt 與 bare `system prompt`）、索取金鑰密碼、繞過安全規則。「What is a token?」「How do I reset my password?」「我忘記密碼了」「登入後系統提示密碼錯誤」等一般問題不會命中。
 
 輸入端與輸出端用不同清單，`detect_prompt_injection(text, direction=...)` 由呼叫端指定；命中後的處理方式不變。
 
@@ -343,6 +345,7 @@ flowchart TB
 | 問題 | 位置 | 影響 |
 |------|------|------|
 | 章節號「1.2.3.4」會被判成 IP，輸出端 injection 與輸入端的少見措辭仍有誤判或漏判 | `guardrails.py`：`ip_address`、`OUTPUT_INJECTION_PATTERNS`、`INPUT_INJECTION_PATTERNS` | 四段數字的章節號形狀上是合法 IP，答案帶有時整段被攔；「print the API key name」這類措辭會被輸入端攔下；輸出端只攔標題加冒號與「here is my system prompt」等句型，改寫過的洩漏攔不到 |
+| 用雙空格或「 - 」分隔的卡號不會被偵測 | `guardrails.py`：`credit_card` | 規則只允許數字間一個空白或連字號，「4111  1111  1111  1111」會通過；放寬時需保留 Luhn、年份串排除與分組切分 |
 | 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的檢索分數 0.645，高於門檻，仍以重設密碼流程回答並附來源 |
 | 快取查詢與寫入以同步 Redis 呼叫在 async 路徑執行 | `chat_service.py` 呼叫 `cache_service.py` | 查詢期間阻塞同一個事件迴圈；快取查詢範圍擴大後，每次讀回的資料量更大 |
 | 同一 index 更新手冊後仍可能寫入舊快取 | `build_vector_store.py` 同步後清快取、`hybrid_retriever.py` 每 30 秒檢查 BM25 pointer | 清除之後、web 載入新 BM25 之前（最長約 90 秒，含 GCS FUSE stat cache），或同步前已開始的請求，仍可能寫入依舊資料產生的答案並保留 24 小時；可用資料版本作為命名空間的一部分解決 |
