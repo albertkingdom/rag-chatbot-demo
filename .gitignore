@@ -43,3 +43,6 @@ terraform/terraform.tfvars
 
 # Local documentation images and acceptance screenshots
 docs/**/*.png
+
+# Local hook state (review records)
+.claude/state/

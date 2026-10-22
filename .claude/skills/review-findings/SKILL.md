@@ -77,3 +77,13 @@ Code review
 ```
 
 測試狀態也要如實寫：哪些實際執行過、哪些沒有。
+
+### 8. 記錄審查結果
+
+結論是「通過，可開 PR」時，所有修正都已 commit 後執行：
+
+```bash
+.claude/hooks/mark-reviewed.sh
+```
+
+它把目前 HEAD 記進本機的 `.claude/state/review-passed`，`gh pr create` 與 `spectra archive` 的 hook 閘門才會放行。結論是「尚不可開 PR」時**不要執行**。之後再有新 commit，紀錄會失效，需要重審。
