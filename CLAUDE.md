@@ -27,82 +27,83 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 <!-- SPECTRA:END -->
 
-## Development Rules
+## 開發規則
 
-### Branching
+### 分支
 
-- New features MUST be developed on a new branch created from `master`, `main`, or `develop`.
-- Branch naming convention: `feature/{feature-name}`
-- Before implementation, there must be a planning document or a completed Spectra flow (`/spectra-propose`).
-- Update `README.md` to reflect new features before merging.
-- Code review MUST be completed, and every blocking or important finding resolved, before a PR is opened.
-- Handle review findings as described in the `review-findings` skill (`.claude/skills/review-findings/`).
+- 新功能一律從 `master`、`main` 或 `develop` 開新分支開發。
+- 分支命名：`feature/{feature-name}`。
+- 實作前必須有規劃文件或已完成的 Spectra 流程（`/spectra-propose`）。
+- 合併前更新 `README.md`，反映新功能。
+- 開 PR 前必須完成 code review，且所有阻擋與重要問題都已解決。
+- review 發現的問題依 `review-findings` skill（`.claude/skills/review-findings/`）處理。
 
-### Commit Messages
+### Commit 訊息
 
-- Commit messages MUST NOT mention any AI tools (e.g., Claude, Copilot, ChatGPT, or any other AI assistant).
+- Commit 訊息不得提及任何 AI 工具（例如 Claude、Copilot、ChatGPT 或其他 AI 助手）。
+- commit 與 PR 說明用英文，採 Conventional Commits。
 
-### Documentation
+### 文件
 
-- `architecture.md` is the canonical description of the RAG request flow, ingestion flow, parameters, and known issues. Parameter values themselves live in code (`src/config.py` and the files listed in its Key Parameters table); behavioral requirements live in `openspec/specs/`.
-- Update `architecture.md` in the same change whenever you modify `src/chat_service.py`, `src/query_router.py`, `src/hybrid_retriever.py`, `src/bm25_index.py`, `src/rerank_stage.py`, `src/retrieval_grader.py`, `src/rag_pipeline.py`, `src/cache_service.py`, `src/guardrails.py`, `src/build_vector_store.py`, `src/manual_service.py`, model settings in `src/services.py`, or values in `src/config.py`.
-- `README.md` stays an entry point (overview, setup, API, deployment, limits). For a new feature, add one bullet to the README feature list and put the details in `architecture.md`; do not duplicate them.
-- Diagrams are written in Mermaid inside Markdown. Retired image diagrams live in `docs/archive/`.
+- `architecture.md` 是 RAG 請求流程、知識庫同步流程、參數與已知問題的正式說明。參數值本身在程式碼裡（`src/config.py` 及其 Key Parameters 表列出的檔案）；行為需求在 `openspec/specs/`。
+- 修改下列檔案時，要在同一個變更裡更新 `architecture.md`：`src/chat_service.py`、`src/query_router.py`、`src/hybrid_retriever.py`、`src/bm25_index.py`、`src/rerank_stage.py`、`src/retrieval_grader.py`、`src/rag_pipeline.py`、`src/cache_service.py`、`src/guardrails.py`、`src/build_vector_store.py`、`src/manual_service.py`、`src/services.py` 的模型設定，或 `src/config.py` 的值。
+- `README.md` 只當入口（概覽、安裝、API、部署、限制）。新功能只在 README 功能列表加一條，細節寫在 `architecture.md`，不重複。
+- 圖表用 Markdown 內的 Mermaid 繪製。已淘汰的圖片圖表放在 `docs/archive/`。
 
-## Project Map
+## 專案地圖
 
-| Path | Role |
+| 路徑 | 角色 |
 |---|---|
-| `src/chat_service.py` | Request flow: input guardrail → route → (rag: cache → retrieve → rerank → grade/retry) → generate → output guardrail → save; streams NDJSON events |
-| `src/query_router.py`, `hybrid_retriever.py`, `bm25_index.py`, `rerank_stage.py`, `retrieval_grader.py` | Routing and retrieval stages |
-| `src/cache_service.py`, `chat_history_service.py`, `conversation_db.py` | Redis semantic cache, short-term history, MongoDB conversation log |
-| `src/guardrails.py`, `access_control.py` | Input/output guardrails; API key and session authentication |
-| `src/build_vector_store.py`, `manual_service.py` | Ingestion: upload, incremental sync of Pinecone and BM25 |
-| `src/config.py` | Tunable parameters (see Key Parameters in `architecture.md`) |
-| `src/api/routes.py`, `chat_events.py` | HTTP routes and the typed NDJSON event models |
-| `frontend/` | React + TypeScript + Vite UI (pnpm) |
-| `tests/` | pytest suite (`test_*.py`) plus evaluation scripts that call real services |
-| `scripts/` | Evaluation, smoke tests and requirement compilation |
-| `openspec/specs/`, `openspec/changes/` | Behavioral specs and change proposals (Spectra) |
-| `terraform/` | Cloud Run deployment |
+| `src/chat_service.py` | 請求流程：輸入防護 → 路由 →（rag：快取 → 檢索 → 重排 → 評分／重試）→ 生成 → 輸出防護 → 儲存；以 NDJSON 事件串流回應 |
+| `src/query_router.py`、`hybrid_retriever.py`、`bm25_index.py`、`rerank_stage.py`、`retrieval_grader.py` | 路由與檢索各階段 |
+| `src/cache_service.py`、`chat_history_service.py`、`conversation_db.py` | Redis 語意快取、短期對話歷史、MongoDB 對話紀錄 |
+| `src/guardrails.py`、`access_control.py` | 輸入／輸出防護；API key 與 session 驗證 |
+| `src/build_vector_store.py`、`manual_service.py` | 知識庫同步：上傳、增量同步 Pinecone 與 BM25 |
+| `src/config.py` | 可調參數（見 `architecture.md` 的 Key Parameters） |
+| `src/api/routes.py`、`chat_events.py` | HTTP 路由與有型別的 NDJSON 事件模型 |
+| `frontend/` | React + TypeScript + Vite 介面（pnpm） |
+| `tests/` | pytest 測試（`test_*.py`），以及會呼叫真實服務的評估腳本 |
+| `scripts/` | 評估、smoke test、依賴鎖定 |
+| `openspec/specs/`、`openspec/changes/` | 行為規格與變更提案（Spectra） |
+| `terraform/` | Cloud Run 部署 |
 
-## Commands
+## 指令
 
 ```bash
-python -m pytest tests -q                                   # backend tests (no API keys needed)
+python -m pytest tests -q                                   # 後端測試（不需要 API key）
 cd frontend && pnpm lint && pnpm build && pnpm exec vitest run --maxWorkers=1
 cd terraform && terraform fmt -check -recursive && terraform init -backend=false -input=false && terraform validate
-scripts/compile_requirements.sh                             # after editing requirements.in; commit both files
-docker compose up --build                                   # run the app locally (needs real API keys in .env)
+scripts/compile_requirements.sh                             # 改 requirements.in 之後執行；兩個檔案一起 commit
+docker compose up --build                                   # 本機啟動（.env 需要真實 API key）
 ```
 
-CI (`.github/workflows/ci.yml`) runs the first three on every PR. It does not run RAGAS or call real LLMs. Evaluation (`tests/evaluate_rag.py`, `scripts/eval_sample_manual.py`) is run locally and must never target the production index.
+CI（`.github/workflows/ci.yml`）每個 PR 都會跑前三項，不跑 RAGAS，也不呼叫真實 LLM。評估（`tests/evaluate_rag.py`、`scripts/eval_sample_manual.py`）只在本機執行，而且**不得對正式 index 執行**。
 
-## Specs
+## 規格
 
-- A change that adds or alters behavior needs a Spectra change (`/spectra-propose`) before implementation. Specs describe observable behavior, not code structure.
-- One capability per directory under `openspec/specs/`, named in kebab-case after the behavior (`semantic-cache-lookup`, `low-confidence-handling`).
-- Requirements use `SHALL`/`SHALL NOT`; each requirement has at least one `#### Scenario:` written as WHEN / THEN.
-- Parameter values stay in code (`src/config.py`); specs state the rule ("strictly greater than the threshold"), not the number.
-- Archived changes are history. Do not edit them; open a new change instead.
-- Docs-only or tooling-only changes (README, `.claude/`, CI wiring) may skip the Spectra flow; say so in the PR description.
+- 新增或改變行為的變更，實作前要有 Spectra change（`/spectra-propose`）。規格描述可觀察的行為，不描述程式結構。
+- `openspec/specs/` 下一個 capability 一個資料夾，依行為用 kebab-case 命名（`semantic-cache-lookup`、`low-confidence-handling`）。
+- 需求用 `SHALL`／`SHALL NOT`；每條需求至少一個 `#### Scenario:`，以 WHEN／THEN 撰寫。
+- 參數值留在程式碼（`src/config.py`）；規格寫規則（例如「嚴格大於門檻」），不寫數字。
+- 已歸檔的 change 是歷史紀錄，不要修改；需要時另開新的 change。
+- 只動文件或工具設定的變更（README、`.claude/`、CI 設定）可以不走 Spectra 流程，並在 PR 說明寫明。
 
-## Skills and Hooks
+## Skills 與 Hooks
 
-Project skills in `.claude/skills/` (project-specific ones; the `spectra-*`, `langchain-*` and `langgraph-*` skills are general-purpose):
+`.claude/skills/` 的專案專屬 skill（`spectra-*`、`langchain-*`、`langgraph-*` 是通用 skill）：
 
-| Skill | Use when |
+| Skill | 使用時機 |
 |---|---|
-| `code-review` | Finding problems before a PR or archive; applies this repo's checklist and records the result |
-| `review-findings` | Handling the findings: verify, grade, fix with new commits, re-review |
-| `unit-test` | Writing or changing tests |
-| `create-pr` | Pushing and opening a PR |
+| `code-review` | 開 PR 或歸檔前找問題；套用本專案的檢查清單並記錄結果 |
+| `review-findings` | 處理 review 發現的問題：驗證、分級、用新 commit 修正、重審 |
+| `unit-test` | 撰寫或修改測試 |
+| `create-pr` | push 並開 PR |
 
-Hooks (`.claude/settings.json`, scripts in `.claude/hooks/`) enforce the rules above:
+Hooks（`.claude/settings.json`，腳本在 `.claude/hooks/`）把上面的規則變成閘門：
 
-| Hook | Effect |
+| Hook | 作用 |
 |---|---|
-| `guard-bash.sh` (PreToolUse, Bash) | Blocks `git add -A`/`.`/`-u`, commits on `master`/`main`/`develop`, commit messages with AI attribution, and `gh pr create` / `spectra archive` when HEAD has no recorded code review |
-| `remind-docs.sh` (PostToolUse, Edit/Write) | Reminds to update `architecture.md` when editing the files it documents |
-| `review-reminder.sh` (Stop) | Once per HEAD, asks for a code review when the branch has unreviewed code commits |
-| `mark-reviewed.sh` | Records the review for HEAD in `.claude/state/` (git-ignored); run by the skills, not by hand |
+| `guard-bash.sh`（PreToolUse，Bash） | 擋下 `git add -A`／`.`／`-u`、在 `master`／`main`／`develop` 上 commit、帶 AI 署名的 commit 訊息，以及 HEAD 沒有審查紀錄時的 `gh pr create`／`spectra archive` |
+| `remind-docs.sh`（PostToolUse，Edit/Write） | 編輯 `architecture.md` 涵蓋的檔案時，提醒同步更新它 |
+| `review-reminder.sh`（Stop） | 分支上有未審查的程式碼 commit 時，每個 HEAD 提醒一次要做 code review |
+| `mark-reviewed.sh` | 把 HEAD 的審查結果記在 `.claude/state/`（不進版控）；由 skill 呼叫，不要手動執行 |

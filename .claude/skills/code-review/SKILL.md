@@ -82,7 +82,7 @@ CI 不跑 RAGAS，也不呼叫真實 LLM（見 `docs/development.md`）。檢索
 - 依賴變更：改 `requirements.in` → `scripts/compile_requirements.sh` → 兩個檔案一起 commit，不手改 `requirements.txt`；Python 版本要與 Dockerfile 一致。
 
 **文件與規格**
-- 改了 `architecture.md` 列出的檔案，該檔要同步（CLAUDE.md 的 Documentation 段列出完整清單）。
+- 改了 `architecture.md` 列出的檔案，該檔要同步（CLAUDE.md 的「文件」段列出完整清單）。
 - 新功能：README 功能條目加一行，細節放 `architecture.md`，不重複。
 - 行為變更若涉及 `openspec/specs/`：要有對應的 change，**不手改已 archive 的產物**。
 

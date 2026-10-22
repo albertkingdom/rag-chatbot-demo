@@ -36,7 +36,7 @@ if printf '%s' "$cmd" | grep -Eq "${seg}git[[:space:]]+commit"; then
       deny "you are on '$branch'. Create feature/<name> first (git switch -c feature/<name>)." ;;
   esac
   if printf '%s' "$cmd" | grep -Eiq 'co-authored-by|generated with|noreply@anthropic|claude code|chatgpt|copilot'; then
-    deny "commit messages must not mention AI tools or carry Co-Authored-By / 'Generated with' lines (CLAUDE.md, Commit Messages)."
+    deny "commit messages must not mention AI tools or carry Co-Authored-By / 'Generated with' lines (CLAUDE.md，Commit 訊息)."
   fi
 fi
 

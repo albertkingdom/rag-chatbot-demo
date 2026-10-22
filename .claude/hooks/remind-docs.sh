@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PostToolUse hook for Edit|Write: architecture.md describes the RAG flow and parameters,
 # so editing the files that define them should be paired with an architecture.md update
-# (CLAUDE.md, Documentation). Reminds once; stays quiet after architecture.md is changed.
+# (CLAUDE.md，文件). Reminds once; stays quiet after architecture.md is changed.
 set -u
 
 input=$(cat)
