@@ -98,6 +98,7 @@ CI（`.github/workflows/ci.yml`）每個 PR 都會跑前三項，不跑 RAGAS，
 | `review-findings` | 處理 review 發現的問題：驗證、分級、用新 commit 修正、重審 |
 | `unit-test` | 撰寫或修改測試 |
 | `create-pr` | push 並開 PR |
+| `eval-rag` | 改了檢索、路由、提示詞或模型後，在 demo index 跑 RAGAS 並與上一份報告比較 |
 
 Hooks（`.claude/settings.json`，腳本在 `.claude/hooks/`）把上面的規則變成閘門：
 
