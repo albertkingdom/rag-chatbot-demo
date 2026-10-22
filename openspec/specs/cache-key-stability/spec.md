@@ -139,7 +139,6 @@ source: fix-cache-key-hash
 updated: 2026-07-04
 code:
   - src/cache_service.py
-  - 面試小抄.md
   - docs/industry-standard-gaps.md
 tests:
   - tests/test_cache_service.py

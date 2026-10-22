@@ -101,7 +101,6 @@ code:
   - docs/diagrams/rag_pipeline.drawio.png
   - src/app.py
   - src/build_vector_store.py
-  - docs/interview-guide.md
   - src/hybrid_retriever.py
   - src/config.py
   - docs/diagrams/rag_pipeline.svg
@@ -146,7 +145,6 @@ code:
   - docs/diagrams/rag_pipeline.drawio.png
   - src/app.py
   - src/build_vector_store.py
-  - docs/interview-guide.md
   - src/hybrid_retriever.py
   - src/config.py
   - docs/diagrams/rag_pipeline.svg
@@ -191,7 +189,6 @@ code:
   - docs/diagrams/rag_pipeline.drawio.png
   - src/app.py
   - src/build_vector_store.py
-  - docs/interview-guide.md
   - src/hybrid_retriever.py
   - src/config.py
   - docs/diagrams/rag_pipeline.svg
@@ -235,7 +232,6 @@ code:
   - docs/diagrams/rag_pipeline.drawio.png
   - src/app.py
   - src/build_vector_store.py
-  - docs/interview-guide.md
   - src/hybrid_retriever.py
   - src/config.py
   - docs/diagrams/rag_pipeline.svg

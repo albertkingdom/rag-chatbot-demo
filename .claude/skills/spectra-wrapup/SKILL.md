@@ -107,7 +107,7 @@ spectra archive <name>                      # 套用 delta specs 到主 spec 並
 
 commit 完成後，對整個分支相對於基底分支的差異做本機 code review：
 
-1. 審查範圍是 `master..HEAD`（基底分支以 `git merge-base` 為準）。預設用內建 `code-review`，強度 `medium`，使用者指定強度就照辦。**不要啟動 `ultra`**（雲端、計費，只能由使用者觸發），**也不要使用 `--fix`**。內建 skill 的行為會隨 Claude Code 版本變動，也可以改用其他審查方式，只要產出「位置、問題、證據、建議修法」即可。
+1. 審查範圍是 `master..HEAD`（基底分支以 `git merge-base` 為準）。預設用內建 `code-review`（或專案的 `project-review`，它套用本專案的檢查清單），強度 `medium`，使用者指定強度就照辦。**不要啟動 `ultra`**（雲端、計費，只能由使用者觸發），**也不要使用 `--fix`**。內建 skill 的行為會隨 Claude Code 版本變動，也可以改用其他審查方式，只要產出「位置、問題、證據、建議修法」即可。
 2. 把審查結果交給專案的 **`review-findings` skill**（`.claude/skills/review-findings/`）處理：驗證、分級、等使用者決定、新 commit 修正、重審、輪數上限與 PR 說明摘要都以它為準，這裡不重複。
 3. 沒有阻擋與重要問題：報告「通過，可開 PR」並附上 review 摘要。否則報告「尚不可開 PR：<原因>」，**停下等使用者決定**，不自動改程式。
 4. 若目前專案沒有 `review-findings` skill：列出問題、標明哪些已驗證，停下等使用者決定，不要自行發明處理流程。

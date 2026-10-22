@@ -32,7 +32,6 @@ The system SHALL derive the Redis history key (`history_key`) from the login ses
 source: persist-chat-history-redis
 updated: 2026-07-04
 code:
-  - docs/interview-guide.md
   - src/config.py
   - src/ui.py
   - src/rag_pipeline.py
@@ -75,7 +74,6 @@ The system SHALL store recent conversation turns (user and assistant messages) i
 source: persist-chat-history-redis
 updated: 2026-07-04
 code:
-  - docs/interview-guide.md
   - src/config.py
   - src/ui.py
   - src/rag_pipeline.py
@@ -111,7 +109,6 @@ After producing a response that is intended as genuine conversational content (a
 source: persist-chat-history-redis
 updated: 2026-07-04
 code:
-  - docs/interview-guide.md
   - src/config.py
   - src/ui.py
   - src/rag_pipeline.py
@@ -143,7 +140,6 @@ The system SHALL retain at most a configured maximum number of most-recent conve
 source: persist-chat-history-redis
 updated: 2026-07-04
 code:
-  - docs/interview-guide.md
   - src/config.py
   - src/ui.py
   - src/rag_pipeline.py
@@ -174,7 +170,6 @@ If Redis is unavailable or an operation against it raises an exception, the syst
 source: persist-chat-history-redis
 updated: 2026-07-04
 code:
-  - docs/interview-guide.md
   - src/config.py
   - src/ui.py
   - src/rag_pipeline.py
