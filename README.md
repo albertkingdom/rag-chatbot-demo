@@ -4,6 +4,8 @@
 
 > An agentic RAG chatbot over a product manual: hybrid BM25 + vector retrieval with reranking, self-corrective retry, semantic caching, two-way guardrails, and a streaming React UI. FastAPI backend, deployed on Cloud Run.
 
+![聊天畫面：以範例手冊回答冷媒逸散計算方式並附參考來源](assets/chat.jpg)
+
 ## 特色
 
 - **混合路由**：規則層零延遲判斷明確查詢，僅不確定的查詢交給 LLM 決定走 RAG 或直接生成，並同時改寫追問。規則層可直接判定範例手冊 60 題中的 43 題，其餘由 LLM 路由，評估腳本會實際檢查全部判給知識庫。
