@@ -37,5 +37,5 @@ printf '%s' "$head_sha" > "$state/review-nagged"
 
 jq -n --arg n "$ahead" --arg b "$base" --arg s "${head_sha:0:7}" '{
   decision: "block",
-  reason: ("Branch is \($n) commit(s) ahead of \($b), changes code, and HEAD \($s) has no recorded code review. If this work is ready for a PR, run the project-review skill now and resolve blocking and important findings with review-findings. If it is not ready, say so in your final message and tell the user the review is still pending. gh pr create is blocked until a review is recorded.")
+  reason: ("This branch has \($n) commit(s) not in \($b) (the whole branch, not only recent ones), it changes code, and HEAD \($s) has no recorded code review. If this work is ready for a PR, run the project-review skill now and resolve blocking and important findings with review-findings. If it is not ready, say so in your final message and tell the user the review is still pending. gh pr create is blocked until a review is recorded.")
 }'

@@ -31,6 +31,8 @@ check() { # check <want-rc> <label> <got-rc>
 }
 guard() { printf '%s' "$(jq -n --arg c "$1" '{tool_input:{command:$c}}')" | "$GUARD" >/dev/null 2>&1; }
 expect() { guard "$2"; check "$1" "$2" "$?"; }
+guard_err() { printf '%s' "$(jq -n --arg c "$1" '{tool_input:{command:$c}}')" | "$GUARD" 2>&1 >/dev/null; }
+says() { case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac; } # says <text> <substring>
 commit_file() { mkdir -p "$(dirname "$1")"; echo "$RANDOM" >> "$1"; git add "$1"; git commit -q -m "chore: change $1"; }
 branch() { git checkout -q master; git branch -q -D "$1" 2>/dev/null; git checkout -q -b "$1"; }
 unmark() { rm -rf "$tmp/repo/.claude/state"; }
@@ -73,6 +75,14 @@ git add .
 Co-Authored-By: Claude
 EOF'
 
+echo "== block messages"
+err=$(guard_err 'git commit -m "feat: x
+
+Co-Authored-By: Claude <noreply@anthropic.com>"')
+says "$err" 'Matched line: "Co-Authored-By: Claude'; check 0 "attribution block names the matched line" "$?"
+err=$(guard_err 'git commit -m "feat: x" -m "Generated with [Claude Code](https://claude.com/claude-code)"')
+says "$err" 'Matched line: "'; check 0 "footer attribution block names the matched line" "$?"
+
 echo "== parser edge cases"
 branch feature/code; commit_file "$CODE_FILE"; unmark
 for c in 'git commit -m "fix: support the -a flag"' 'git commit -m "feat: add -max option"' 'git commit -m "-a"' 'git commit -m "docs: use --all"' \
@@ -103,7 +113,9 @@ expect 2 'git branch -c a b; git commit -m x'
 expect 0 'git switch feature/code && git commit -m x'
 expect 2 'git switch master && git commit -m x'
 expect 0 'git status'
-git checkout -q -b develop; expect 2 'git commit -m x'; git checkout -q master; git branch -q -D develop
+git checkout -q -b develop; expect 2 'git commit -m x'
+err=$(guard_err 'git commit -m x'); says "$err" "protected branch"; check 0 "protected-branch block names the rule" "$?"
+git checkout -q master; git branch -q -D develop
 
 echo "== pr gate (branch changes code)"
 branch feature/code; commit_file "$CODE_FILE"; unmark
@@ -112,6 +124,7 @@ for c in 'gh pr create --title x' 'gh pr new' 'gh -R a/b pr create' 'gh --repo a
 for c in 'gh pr view' 'gh pr list' 'gh pr checks' 'gh pr create-foo' 'gh pr merge 1' 'echo gh pr create'; do expect 0 "$c"; done
 expect 2 'git commit -m x && gh pr create'
 expect 2 'git add a; git commit -m x; gh pr create'
+err=$(guard_err 'gh pr create'); says "$err" "uncommitted changes"; check 0 "review block explains mark-reviewed needs a clean tree" "$?"
 "$MARK" >/dev/null 2>&1; check 0 "mark-reviewed on a clean tree" "$?"
 expect 0 'gh pr create --title x'
 commit_file "$CODE_FILE"
@@ -167,6 +180,7 @@ echo "== stop hook"
 stop() { printf '%s' "${1:-{\}}" | "$STOP" 2>/dev/null; }
 branch feature/code; commit_file "$CODE_FILE"; unmark
 out=$(stop); [ "$(printf '%s' "$out" | jq -r .decision 2>/dev/null)" = "block" ]; check 0 "first stop asks for a review" "$?"
+says "$(printf '%s' "$out" | jq -r .reason)" "the whole branch"; check 0 "stop message says the count covers the whole branch" "$?"
 out=$(stop); [ -z "$out" ]; check 0 "second stop at the same HEAD is silent" "$?"
 commit_file "$CODE_FILE"
 out=$(stop '{"stop_hook_active":true}'); [ -z "$out" ]; check 0 "stop_hook_active is silent" "$?"
