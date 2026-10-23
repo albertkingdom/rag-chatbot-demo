@@ -265,8 +265,8 @@ scan_command() {
 
 # AI attribution lines: a trailer or footer that credits an AI tool. Mentioning a tool in the
 # message text is not attribution. Anchored to the start of a line.
-has_attribution() {
-  printf '%s\n' "$1" | grep -Eiq '^[[:space:]]*co-authored-by:.*(claude|anthropic|openai|copilot|chatgpt|gemini|codex|cursor)|^[[:space:]]*(🤖[[:space:]]*)?generated (with|by)[[:space:]]+\[?(claude|copilot|chatgpt|codex|gemini|cursor)|noreply@anthropic\.com'
+attribution_line() {
+  printf '%s\n' "$1" | grep -Eim1 '^[[:space:]]*co-authored-by:.*(claude|anthropic|openai|copilot|chatgpt|gemini|codex|cursor)|^[[:space:]]*(🤖[[:space:]]*)?generated (with|by)[[:space:]]+\[?(claude|copilot|chatgpt|codex|gemini|cursor)|noreply@anthropic\.com'
 }
 
 scan_command "$cmd"
@@ -279,15 +279,17 @@ if [ "$HAS_COMMIT" = 1 ]; then
   if [ "$CREATES_BRANCH" = 0 ]; then
     branch=$(git -C "${COMMIT_DIR:-.}" symbolic-ref --short -q HEAD 2>/dev/null || true)
     if [ -n "$branch" ] && is_protected "$branch"; then
-      deny "you are on '$branch'. Create feature/<name> first (git switch -c feature/<name>), in a separate command."
+      deny "you are on '$branch', a protected branch (master, main, develop). Commit on another branch: create one first (git switch -c feature/<name>), in a separate command."
     fi
   fi
   text="$MSG_TEXT
 $cmd"
   if [ -n "$COMMIT_FILE" ] && [ -f "$COMMIT_FILE" ]; then text="$text
 $(cat "$COMMIT_FILE" 2>/dev/null)"; fi
-  if has_attribution "$text"; then
-    deny "commit messages must not carry an AI attribution line (Co-Authored-By: <AI tool>, 'Generated with <AI tool>'). Mentioning a tool in the message text is fine; only attribution lines are blocked."
+  bad_line=$(attribution_line "$text")
+  if [ -n "$bad_line" ]; then
+    bad_line=$(printf '%s' "$bad_line" | sed 's/^[[:space:]]*//' | cut -c1-80)
+    deny "commit messages must not carry an AI attribution line (Co-Authored-By: <AI tool>, 'Generated with <AI tool>'). Matched line: \"$bad_line\". Remove it and commit again; mentioning a tool in the message text is fine, only attribution lines are blocked."
   fi
 fi
 
@@ -295,7 +297,7 @@ if [ "$PR_GATE" = 1 ] || { [ "$ARCHIVE_GATE" = 1 ] && [ "$GATE_ARCHIVE" = 1 ]; }
   [ "$HAS_COMMIT" = 1 ] && deny "do not chain 'git commit' with 'gh pr create' / 'spectra archive': the commit changes HEAD after the review check. Run them as separate commands."
   if touches_code && ! reviewed_ok; then
     head_sha=$(git rev-parse --short HEAD 2>/dev/null || echo "?")
-    deny "no code review is recorded for HEAD ($head_sha). Run the project-review skill first and resolve blocking and important findings (review-findings skill); it records the result with mark-reviewed.sh. A later commit invalidates the record, except spec/archive-only commits after a review. Branches that change no code (docs and specs only) are exempt."
+    deny "no code review is recorded for HEAD ($head_sha). Run the project-review skill first and resolve blocking and important findings (review-findings skill); it records the result with mark-reviewed.sh, which refuses while tracked files have uncommitted changes (commit the fixes first, then record). A later commit invalidates the record, except spec/archive-only commits after a review. Branches that change no code (docs and specs only) are exempt."
   fi
 fi
 
