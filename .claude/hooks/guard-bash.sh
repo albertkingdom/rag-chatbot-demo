@@ -7,6 +7,7 @@
 #   3. git commit with an AI attribution line             project rule: no AI attribution in commits
 #   4. gh pr create (and spectra archive, if lib.sh says so) without a recorded review of HEAD
 #   5. git commit chained with gh pr create               the commit changes HEAD after the check
+#   6. gh pr merge without --merge                        project rule: PRs merge with a merge commit
 #
 # It is a guard rail against mistakes, not a security boundary: it reads the command text, so
 # indirect forms (scripts, aliases, eval) are not seen. Quotes are respected, so text inside a
@@ -39,7 +40,7 @@ RS=$'\x1e'; US=$'\x1f'; NL=$'\n'; TAB=$'\t'
 
 # ---- findings, set by scan_command ----------------------------------------------------------
 BAD_ADD=0; COMMIT_ALL=0; HAS_COMMIT=0; COMMIT_DIR=""; COMMIT_FILE=""; MSG_TEXT=""
-CREATES_BRANCH=0; PR_GATE=0; ARCHIVE_GATE=0
+CREATES_BRANCH=0; PR_GATE=0; ARCHIVE_GATE=0; BAD_MERGE=0
 
 # Remove heredoc bodies so text inside them is not mistaken for commands. A '<<' only starts a
 # heredoc when it is not part of '<<<' or '$(( ... ))', is not quoted text like "a << b", and a
@@ -229,7 +230,21 @@ scan_segment() {
         esac
       done
       if [ "${1:-}" = "pr" ]; then
-        case "${2:-}" in create|new) PR_GATE=1 ;; esac
+        case "${2:-}" in
+          create|new) PR_GATE=1 ;;
+          merge)
+            # only a merge commit keeps the branch history; --squash / --rebase or no method is blocked
+            shift 2; BAD_MERGE=1
+            for a in "$@"; do
+              case "$a" in
+                --merge) BAD_MERGE=0 ;;
+                --squash|--rebase) BAD_MERGE=2; break ;;
+                --*) ;;
+                -*[sr]*) BAD_MERGE=2; break ;;
+                -*m*) BAD_MERGE=0 ;;
+              esac
+            done ;;
+        esac
       fi ;;
 
     spectra)
@@ -274,6 +289,8 @@ scan_command "$cmd"
 # ---- verdicts -------------------------------------------------------------------------------
 [ "$BAD_ADD" = 1 ] && deny "stage files by name (git add <file>); 'git add .', '-A' and '-u' can sweep in .env, local state or unrelated changes."
 [ "$COMMIT_ALL" = 1 ] && deny "'git commit -a' stages every tracked change like 'git add -u'. Stage files by name, then commit."
+
+[ "$BAD_MERGE" != 0 ] && deny "merge pull requests with a merge commit: gh pr merge <N> --merge. Squash and rebase merges drop the branch's commit history (project rule in CLAUDE.md)."
 
 if [ "$HAS_COMMIT" = 1 ]; then
   if [ "$CREATES_BRANCH" = 0 ]; then

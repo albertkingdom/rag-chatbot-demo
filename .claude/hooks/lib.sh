@@ -8,7 +8,7 @@ CODE_RE='^(src/|tests/|frontend/|scripts/|terraform/|Dockerfile|docker-compose|r
 # Files an archive commit may touch after a review without invalidating it.
 SPEC_RE='^(openspec/|\.spectra/)'
 # 1 = 'spectra archive' also needs a recorded review (the project requires review before archive).
-GATE_ARCHIVE=0
+GATE_ARCHIVE=1
 
 PROTECTED_BRANCHES="main master develop"
 
