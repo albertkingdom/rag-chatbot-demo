@@ -128,7 +128,9 @@ for c in 'gh pr merge 1' 'gh pr merge 1 --squash' 'gh pr merge 1 --rebase' 'gh p
   'gh pr merge 1 --merge --squash' 'gh pr merge 1 --auto' 'gh -R a/b pr merge 1 --squash' 'bash -c "gh pr merge 1 --squash"' \
   'cd x && gh pr merge 1 -d'; do expect 2 "$c"; done
 for c in 'gh pr merge 1 --merge' 'gh pr merge 1 -m' 'gh pr merge 1 --merge --delete-branch' 'gh pr merge 1 -md' 'gh pr merge --merge 1' \
-  'gh -R a/b pr merge 1 --merge' 'echo gh pr merge 1 --squash' 'gh pr view 1'; do expect 0 "$c"; done
+  'gh -R a/b pr merge 1 --merge' 'echo gh pr merge 1 --squash' 'gh pr view 1' 'gh pr merge 1 --disable-auto' \
+  'gh pr merge 1 --merge -t "-s fix"' 'gh pr merge 1 -m -b -rough' 'gh pr merge 1 --merge --subject -s'; do expect 0 "$c"; done
+for c in 'gh pr merge 1 -t "-m x"' 'gh pr merge 1 --body -m --squash'; do expect 2 "$c"; done
 err=$(guard_err 'gh pr merge 1 --squash'); says "$err" "--merge"; check 0 "merge block names the allowed form" "$?"
 expect 2 'git commit -m x && gh pr create'
 expect 2 'git add a; git commit -m x; gh pr create'

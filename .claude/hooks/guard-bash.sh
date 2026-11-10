@@ -233,14 +233,19 @@ scan_segment() {
         case "${2:-}" in
           create|new) PR_GATE=1 ;;
           merge)
-            # only a merge commit keeps the branch history; --squash / --rebase or no method is blocked
+            # only a merge commit keeps the branch history; --squash / --rebase or no method is blocked.
+            # --disable-auto only cancels auto-merge. Values of -t/-b/-F/-A are skipped, not read as flags.
             shift 2; BAD_MERGE=1
-            for a in "$@"; do
+            while [ $# -gt 0 ]; do
+              a=$1; shift
               case "$a" in
+                --disable-auto) BAD_MERGE=0; break ;;
                 --merge) BAD_MERGE=0 ;;
                 --squash|--rebase) BAD_MERGE=2; break ;;
+                --subject|--body|--body-file|--author-email|--match-head-commit|-R|--repo) [ $# -gt 0 ] && shift ;;
                 --*) ;;
                 -*[sr]*) BAD_MERGE=2; break ;;
+                -*[tbFA]) case "$a" in *m*) BAD_MERGE=0 ;; esac; [ $# -gt 0 ] && shift ;;
                 -*m*) BAD_MERGE=0 ;;
               esac
             done ;;
