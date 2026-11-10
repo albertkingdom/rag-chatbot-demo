@@ -36,6 +36,7 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 - 實作前必須有規劃文件或已完成的 Spectra 流程（`/spectra-propose`），而且計畫要先通過計畫審查（見下方）。
 - 合併前更新 `README.md`，反映新功能。
 - 開 PR 前必須完成 code review，且所有阻擋與重要問題都已解決。
+- 歸檔（`spectra archive`）也要等 code review 通過：改了程式碼的分支用 `spectra-wrapup` 收尾（commit → review → 歸檔），不要在 review 前直接跑 `/spectra-archive`，hook 會擋。
 - review 發現的問題依 `review-findings` skill（`.claude/skills/review-findings/`）處理。
 
 ### Spectra 計畫審查
