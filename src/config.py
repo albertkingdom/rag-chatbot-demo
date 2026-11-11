@@ -105,21 +105,6 @@ FUSION_TOP_M = 5       # Max candidates after fusion, fed to reranker (halved 10
 # after a manual upload, so checking on every query is wasted I/O.
 BM25_RELOAD_INTERVAL_SECONDS = float(os.environ.get("BM25_RELOAD_INTERVAL_SECONDS", "30"))
 
-# Access Control Settings
-# Toggle for auth/rate-limiting; defaults to True so production is locked down.
-# Set AUTH_ENABLED=false or leave APP_API_KEY unset for local dev / hermetic tests.
-AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
-# Shared API key presented via X-API-Key header or the /login form. When auth is
-# enabled but this is unset, build_auth_config() degrades to disabled (see
-# src/access_control.py) instead of silently rejecting every request.
-APP_API_KEY = os.environ.get("APP_API_KEY")
-# Per-API-key request rate limit (requests per minute). The bucket key is the
-# first 16 hex chars of sha256(api_key) so all sessions from one key share one
-# quota.
-RATE_LIMIT_RPM = int(os.environ.get("RATE_LIMIT_RPM", "60"))
-# TTL for Redis-backed session tokens issued by POST /login (seconds).
-SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "86400"))
-
 # Chat History Settings (short-term, Redis-backed multi-turn context)
 # Idle TTL for a session's stored chat history (seconds). Refreshed on each
 # new turn; expired history falls back to client-supplied history.

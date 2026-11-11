@@ -57,8 +57,7 @@ def load_thresholds() -> dict:
 
 async def collect_samples(cases: list[dict]) -> list[dict]:
     """Run each case through the existing retrieval + generation chains."""
-    from src.app import get_retrieval_chain, get_generation_chain
-    from src.rag_pipeline import _today_str
+    from src.rag_pipeline import _today_str, get_generation_chain, get_retrieval_chain
 
     retrieval_chain = get_retrieval_chain()
     generation_chain = get_generation_chain()
@@ -93,7 +92,7 @@ def _build_judge_llm():
     streamed chat and raises ``LLMDidNotFinishException`` inside RAGAS otherwise.
     """
     from langchain_openai import ChatOpenAI
-    from src.app import get_llm
+    from src.services import get_llm
 
     base = get_llm()
     api_key = base.openai_api_key
@@ -121,7 +120,7 @@ def score_with_ragas(samples: list[dict]) -> dict:
     )
     from ragas.llms import LangchainLLMWrapper
     from ragas.embeddings import LangchainEmbeddingsWrapper
-    from src.app import get_embeddings
+    from src.services import get_embeddings
 
     dataset = EvaluationDataset(
         samples=[

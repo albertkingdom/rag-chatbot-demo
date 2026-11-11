@@ -83,13 +83,7 @@ def revoke_session(redis_conn: "redis.Redis", sid: str) -> None:
 
 @dataclass
 class AuthConfig:
-    """Resolved access-control configuration.
-
-    ``enabled`` is the single gate the middleware checks. It is False when
-    AUTH_ENABLED is false OR when APP_API_KEY is unset (degraded mode), so a
-    misconfigured prod app degrades to open-with-warning rather than
-    silently rejecting every request.
-    """
+    """Resolved access-control configuration checked by the middleware."""
 
     enabled: bool
     api_key: Optional[str]
@@ -99,31 +93,18 @@ class AuthConfig:
 
 
 def build_auth_config() -> AuthConfig:
-    """Build an AuthConfig from environment variables.
-
-    Reads AUTH_ENABLED, APP_API_KEY, RATE_LIMIT_RPM, SESSION_TTL_SECONDS.
-    Redis connection is obtained from the shared services.get_redis_conn()
-    provider so the whole app uses one connection source. When AUTH_ENABLED
-    is true but APP_API_KEY is unset, logs an error and returns enabled=False
-    (degraded) instead of producing a config that would 401 every request.
-    """
-    # Lazy import to avoid a circular dependency at module load (services
-    # imports config, not access_control; this is safe but kept lazy for
-    # clarity).
-    from .services import get_redis_conn
-
+    """Resolve access-control settings and reject a missing key when enabled."""
     auth_enabled = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
     api_key = os.environ.get("APP_API_KEY")
+    if auth_enabled and not api_key:
+        raise RuntimeError(
+            "AUTH_ENABLED=true requires APP_API_KEY to be set and nonempty."
+        )
+
     rate_limit_rpm = int(os.environ.get("RATE_LIMIT_RPM", "60"))
     session_ttl_seconds = int(os.environ.get("SESSION_TTL_SECONDS", "86400"))
 
-    if auth_enabled and not api_key:
-        logger.error(
-            "AUTH_ENABLED=true but APP_API_KEY is unset; degrading to "
-            "auth-disabled. Set APP_API_KEY (Secret Manager / .env) to enforce "
-            "access control."
-        )
-        auth_enabled = False
+    from .services import get_redis_conn
 
     return AuthConfig(
         enabled=auth_enabled,
