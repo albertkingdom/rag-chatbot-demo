@@ -1,9 +1,11 @@
-"""Tests for src/access_control.py.
+"""Tests for src/access_control.py and the access-control specification.
 
 Hermetic: Redis is mocked (MagicMock); no external services required.
 """
 import json
 import logging
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,6 +18,7 @@ from src.access_control import (
     AuthRateLimitMiddleware,
     build_auth_config,
     create_session,
+    mount_auth,
     revoke_session,
     validate_session,
 )
@@ -73,7 +76,7 @@ def client(enabled_config):
 
 
 class TestBuildAuthConfig:
-    """build_auth_config() environment parsing and degradation behavior."""
+    """build_auth_config() environment parsing and startup validation."""
 
     def test_enabled_when_auth_enabled_true_and_key_set(self):
         with patch.dict(
@@ -87,29 +90,52 @@ class TestBuildAuthConfig:
         assert cfg.rate_limit_rpm == 60
         assert cfg.session_ttl_seconds == 86400
 
-    def test_disabled_when_auth_enabled_true_but_key_unset(self, caplog):
-        # Ensure APP_API_KEY is absent.
+    @pytest.mark.parametrize("auth_enabled", ["true", None], ids=["enabled", "default"])
+    @pytest.mark.parametrize("api_key", [None, ""], ids=["unset", "empty"])
+    def test_mount_rejects_missing_key(self, monkeypatch, auth_enabled, api_key):
         with patch.dict(
-            "os.environ",
-            {"AUTH_ENABLED": "true"},
-            clear=False,
-        ), patch("os.environ.get") as mock_get:
-            # Map APP_API_KEY lookups to None while keeping others.
-            def fake_get(key, default=None):
-                if key == "APP_API_KEY":
-                    return None
-                if key == "AUTH_ENABLED":
-                    return "true"
-                if key == "RATE_LIMIT_RPM":
-                    return "60"
-                if key == "SESSION_TTL_SECONDS":
-                    return "86400"
-                return default
-            mock_get.side_effect = fake_get
-            with caplog.at_level(logging.ERROR, logger="access_control"):
-                cfg = build_auth_config()
-        assert cfg.enabled is False
-        assert any("APP_API_KEY is unset" in r.message for r in caplog.records)
+            "os.environ", {"RATE_LIMIT_RPM": "60", "SESSION_TTL_SECONDS": "86400"}
+        ), patch("src.services.get_redis_conn"):
+            for name, value in (("AUTH_ENABLED", auth_enabled), ("APP_API_KEY", api_key)):
+                if value is None:
+                    monkeypatch.delenv(name, raising=False)
+                else:
+                    monkeypatch.setenv(name, value)
+
+            with pytest.raises(RuntimeError, match=r"AUTH_ENABLED.*APP_API_KEY"):
+                mount_auth(FastAPI())
+
+    @pytest.mark.parametrize("invalid_setting", ["RATE_LIMIT_RPM", "SESSION_TTL_SECONDS"])
+    def test_mount_reports_missing_key_before_invalid_numeric_setting(
+        self, monkeypatch, invalid_setting
+    ):
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        monkeypatch.delenv("APP_API_KEY", raising=False)
+        monkeypatch.setenv(invalid_setting, "invalid")
+
+        with patch("src.services.get_redis_conn"):
+            with pytest.raises(RuntimeError, match=r"AUTH_ENABLED.*APP_API_KEY"):
+                mount_auth(FastAPI())
+
+    @pytest.mark.parametrize("invalid_setting", ["RATE_LIMIT_RPM", "SESSION_TTL_SECONDS"])
+    def test_app_import_reports_missing_key_before_invalid_numeric_setting(
+        self, monkeypatch, invalid_setting
+    ):
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        monkeypatch.delenv("APP_API_KEY", raising=False)
+        monkeypatch.setenv("RATE_LIMIT_RPM", "60")
+        monkeypatch.setenv("SESSION_TTL_SECONDS", "86400")
+        monkeypatch.setenv(invalid_setting, "invalid")
+
+        result = subprocess.run(
+            [sys.executable, "-c", "import src.app"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode != 0
+        assert "RuntimeError: AUTH_ENABLED=true requires APP_API_KEY" in result.stderr
 
     def test_disabled_when_auth_enabled_false(self):
         with patch.dict(
@@ -375,14 +401,21 @@ class TestAuthDisabled:
         r = c.get("/api/protected")  # no credential
         assert r.status_code == 200
 
-    def test_auth_disabled_logs_warning(self, caplog):
-        redis_mock = MagicMock()
-        config = _make_config(enabled=False, api_key=None, redis_mock=redis_mock)
-        app = _build_app(config)
-        with caplog.at_level(logging.WARNING, logger="access_control"):
-            # mount_auth logs the warning when building; simulate by calling it.
-            from src.access_control import _health
-            # Re-trigger the warning path directly.
-            import src.access_control as ac
-            ac.logger.warning("AUTH DISABLED — not for production")
-        assert any("AUTH DISABLED" in r.message for r in caplog.records)
+    def test_mount_with_auth_disabled_and_no_key(self, monkeypatch, caplog):
+        monkeypatch.setenv("AUTH_ENABLED", "false")
+        monkeypatch.delenv("APP_API_KEY", raising=False)
+        app = FastAPI()
+
+        @app.get("/api/protected")
+        def protected():
+            return {"ok": True}
+
+        with patch("src.services.get_redis_conn"), caplog.at_level(
+            logging.WARNING, logger="access_control"
+        ):
+            mount_auth(app)
+
+        with TestClient(app) as client:
+            assert client.get("/api/protected").status_code == 200
+            assert client.get("/health").json() == {"status": "ok"}
+        assert any("AUTH DISABLED" in record.message for record in caplog.records)

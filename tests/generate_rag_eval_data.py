@@ -22,7 +22,7 @@ from src.build_vector_store import (
     extract_from_xlsx,
     extract_from_pdf,
 )
-from src.app import get_llm
+from src.services import get_llm
 
 ACTIVE_DATASET_PATH = "tests/rag_eval_data.json"
 DEFAULT_DRAFT_PATH = "tests/rag_eval_data.draft.json"

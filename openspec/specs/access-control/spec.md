@@ -206,45 +206,24 @@ tests:
 ---
 ### Requirement: Auth-disabled development mode
 
-When `AUTH_ENABLED` is set to `false` (case-insensitive) OR `APP_API_KEY` is unset, the system SHALL bypass authentication and rate limiting on all routes except that `/health` remains available. The system SHALL log a prominent startup warning stating that authentication is disabled and is not safe for production. When `AUTH_ENABLED` is `true` (default) and `APP_API_KEY` is set, authentication, session issuance, and rate limiting SHALL be active.
+When `AUTH_ENABLED` is set to `false` (case-insensitive), the application SHALL bypass authentication and rate limiting, keep `/health` available, and log a startup warning that authentication is disabled and unsafe for production. When authentication is enabled (the default) and `APP_API_KEY` is nonempty, authentication, session issuance, and rate limiting SHALL be active. When authentication is enabled and `APP_API_KEY` is unset or empty, application startup SHALL fail with a diagnostic naming `APP_API_KEY`.
 
 #### Scenario: auth disabled allows all routes
 
-- **WHEN** `AUTH_ENABLED=false` and a client requests any route without a credential
+- **WHEN** `AUTH_ENABLED=false`, `APP_API_KEY` is unset, and a client requests a route without a credential
 - **THEN** the request proceeds to the route handler
 
 #### Scenario: auth disabled logs a startup warning
 
-- **WHEN** the application starts with `AUTH_ENABLED=false` or `APP_API_KEY` unset
-- **THEN** the startup log contains a warning that authentication is disabled and not for production use
+- **WHEN** the application starts with `AUTH_ENABLED=false`
+- **THEN** the startup log warns that authentication is disabled and unsafe for production
 
 #### Scenario: auth enabled enforces the gate
 
 - **WHEN** `AUTH_ENABLED=true` and `APP_API_KEY` is set and a client requests a non-exempt route without a credential
 - **THEN** the system responds HTTP 401
 
-<!-- @trace
-source: add-access-control
-updated: 2026-07-01
-code:
-  - docs/industry-standard-gaps.md
-  - architecture-diagram.svg
-  - README.md
-  - terraform/main.tf
-  - architecture-diagram.png
-  - docs/deployment-handoff.md
-  - project-architecture-slide.html
-  - terraform/variables.tf
-  - scripts/dev_auth_smoke.py
-  - project-intro-slide.html
-  - architecture-diagram.drawio
-  - project-architecture-slide.standalone.html
-  - docker-compose.yml
-  - src/access_control.py
-  - src/app.py
-  - src/config.py
-  - TODO.md
-tests:
-  - tests/test_access_control.py
-  - tests/test_health_endpoint.py
--->
+#### Scenario: missing key prevents startup
+
+- **WHEN** the application starts with `AUTH_ENABLED=true` or the default and `APP_API_KEY` is unset or empty
+- **THEN** the application fails startup and reports that `APP_API_KEY` is required

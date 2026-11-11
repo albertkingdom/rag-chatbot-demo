@@ -306,7 +306,7 @@ flowchart TB
 | Embedding | Dimensions / batch | 1536 / 100 docs per call | `build_vector_store.py` |
 | Vector Upsert | Batch Size | 100 vectors | `build_vector_store.py` |
 | LLM | Model / temperature | `google/gemini-2.5-flash` / 0 | `services.py` |
-| Access | `RATE_LIMIT_RPM` | 60 | `config.py`（env 可覆寫） |
+| Access | `RATE_LIMIT_RPM` | 60 | `access_control.py`（env 可覆寫） |
 
 ## Evaluation
 
