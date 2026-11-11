@@ -121,7 +121,17 @@ echo "== pr gate (branch changes code)"
 branch feature/code; commit_file "$CODE_FILE"; unmark
 for c in 'gh pr create --title x' 'gh pr new' 'gh -R a/b pr create' 'gh --repo a/b pr create' 'GH_TOKEN=1 gh pr create' '/opt/homebrew/bin/gh pr create' \
   'timeout 5 gh pr create' 'xargs gh pr create' 'bash -c "gh pr create"' '(gh pr create)' 'if true; then gh pr create; fi' 'cd x && gh pr create --fill'; do expect 2 "$c"; done
-for c in 'gh pr view' 'gh pr list' 'gh pr checks' 'gh pr create-foo' 'gh pr merge 1' 'echo gh pr create'; do expect 0 "$c"; done
+for c in 'gh pr view' 'gh pr list' 'gh pr checks' 'gh pr create-foo' 'echo gh pr create'; do expect 0 "$c"; done
+
+echo "== pr merge"
+for c in 'gh pr merge 1' 'gh pr merge 1 --squash' 'gh pr merge 1 --rebase' 'gh pr merge 1 -s' 'gh pr merge 1 -r' 'gh pr merge 1 -sd' \
+  'gh pr merge 1 --merge --squash' 'gh pr merge 1 --auto' 'gh -R a/b pr merge 1 --squash' 'bash -c "gh pr merge 1 --squash"' \
+  'cd x && gh pr merge 1 -d'; do expect 2 "$c"; done
+for c in 'gh pr merge 1 --merge' 'gh pr merge 1 -m' 'gh pr merge 1 --merge --delete-branch' 'gh pr merge 1 -md' 'gh pr merge --merge 1' \
+  'gh -R a/b pr merge 1 --merge' 'echo gh pr merge 1 --squash' 'gh pr view 1' 'gh pr merge 1 --disable-auto' \
+  'gh pr merge 1 --merge -t "-s fix"' 'gh pr merge 1 -m -b -rough' 'gh pr merge 1 --merge --subject -s'; do expect 0 "$c"; done
+for c in 'gh pr merge 1 -t "-m x"' 'gh pr merge 1 --body -m --squash'; do expect 2 "$c"; done
+err=$(guard_err 'gh pr merge 1 --squash'); says "$err" "--merge"; check 0 "merge block names the allowed form" "$?"
 expect 2 'git commit -m x && gh pr create'
 expect 2 'git add a; git commit -m x; gh pr create'
 err=$(guard_err 'gh pr create'); says "$err" "uncommitted changes"; check 0 "review block explains mark-reviewed needs a clean tree" "$?"

@@ -42,7 +42,7 @@ cd frontend && pnpm exec vitest run --maxWorkers=1
 ## 寫什麼
 
 1. **新行為**：先寫測試，確認它**會失敗**（而且因為對的原因失敗），再實作。
-2. **修 bug／處理 review 意見**：先寫能重現的測試並確認失敗，再修；commit 訊息 `fix(review): ...`（見 `review-findings`）。
+2. **修 bug／處理 review 意見**：先寫能重現的測試並確認失敗（因為這個 bug，不是匯入或打錯名稱），再修；修好後把修正暫時改壞，確認測試會失敗再還原。`fix` commit 內文附這三次的結果（見 CLAUDE.md「Bug 修正流程」與 `review-findings`）。
 3. **成對案例**：guardrail 規則要同時有「該擋」與「不該擋」；路由要有走 rag 與走 direct 兩邊；快取要有命中與未命中。
 4. **低信心路徑**：固定說明、不顯示來源、不寫快取三件事分別斷言。
 5. **契約**：NDJSON 事件型別（`status`、`delta`、`sources`、`metadata`、`done`、`error`）與錯誤格式改動，要更新 `test_api_contract.py`，前端 parser 測試也要同步。

@@ -5,20 +5,20 @@ description: "依這個專案的流程開 Pull Request：開 PR 前的檢查（�
 
 # 開 Pull Request（RAG demo 專案）
 
-只在使用者**明確要求**時 push 與開 PR。預設分支是 `master`；功能都從它開 `feature/<name>`，不直接 commit 到 master（hook 會擋）。
+只在使用者**明確要求**時 push 與開 PR。預設分支是 `master`；從它開 `feature/<name>`、`fix/<name>` 或 `chore/<name>`，不直接 commit 到 master（hook 會擋）。
 
 ## 1. 開 PR 前檢查（有一項沒過就停下回報）
 
 ```bash
-git status -sb                                  # 工作區乾淨、在 feature/* 分支
+git status -sb                                  # 工作區乾淨、在 feature/*、fix/* 或 chore/* 分支
 git log --oneline origin/master..HEAD           # commit 都是 Conventional Commits、沒有 AI 署名
 git diff --stat origin/master...HEAD
 ```
 
 | 項目 | 標準 |
 |---|---|
-| Spectra | 有對應的 change 且任務完成；實作完成後已 `spectra-archive`（或 `spectra-wrapup`），主規格已同步。純文件或設定的小變更可以沒有 change，要在 PR 說明寫明 |
-| Code review | 已跑 `project-review`，阻擋與重要問題都處理完（`review-findings`）。`.claude/state/review-passed` 要對應目前 HEAD（歸檔產生的、只動 `openspec/` 的 commit 不會讓它失效），否則 `gh pr create` 會被 hook 擋下；只改文件與規格的分支不需要。**不要手動寫這個檔案繞過**，補審查。順序是：實作 → 歸檔 → review → 開 PR；`git commit` 與 `gh pr create` 不要串在同一個指令（hook 會擋） |
+| Spectra | 有對應的 change 且任務完成；review 通過後已歸檔（`spectra-wrapup`），主規格已同步。純文件或設定的小變更可以沒有 change，要在 PR 說明寫明 |
+| Code review | 已跑 `project-review`，阻擋與重要問題都處理完（`review-findings`）。`.claude/state/review-passed` 要對應目前 HEAD（歸檔產生的、只動 `openspec/` 的 commit 不會讓它失效），否則 `gh pr create` 會被 hook 擋下；只改文件與規格的分支不需要。**不要手動寫這個檔案繞過**，補審查。順序是：實作 → commit → review → 歸檔 → 開 PR（HEAD 沒有審查紀錄時，`spectra archive` 也會被 hook 擋下）；`git commit` 與 `gh pr create` 不要串在同一個指令（hook 會擋） |
 | 測試 | `python -m pytest tests -q`；動到前端再跑 `pnpm lint`、`pnpm build`、`pnpm exec vitest run --maxWorkers=1`；動到 `terraform/` 跑 `terraform fmt -check -recursive` 與 `terraform validate` |
 | 文件 | 新功能：README 功能條目加一行；改到 `architecture.md` 列出的檔案：該檔已同步 |
 | 機密 | `git diff origin/master...HEAD` 沒有金鑰、`.env`、內部網址 |

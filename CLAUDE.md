@@ -31,17 +31,46 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 ### 分支
 
-- 新功能一律從 `master`、`main` 或 `develop` 開新分支開發。
-- 分支命名：`feature/{feature-name}`。
-- 實作前必須有規劃文件或已完成的 Spectra 流程（`/spectra-propose`）。
+- 一律從 `master`、`main` 或 `develop` 開新分支開發。
+- 分支命名：新功能 `feature/{name}`；bug 修正 `fix/{name}`；雜務（文件、工具設定、歸檔）`chore/{name}`。
+- 實作前必須有規劃文件或已完成的 Spectra 流程（`/spectra-propose`），而且計畫要先通過計畫審查（見下方）。
 - 合併前更新 `README.md`，反映新功能。
 - 開 PR 前必須完成 code review，且所有阻擋與重要問題都已解決。
+- 歸檔（`spectra archive`）也要等 code review 通過：改了程式碼的分支用 `spectra-wrapup` 收尾（commit → review → 歸檔），不要在 review 前直接跑 `/spectra-archive`，hook 會擋。
 - review 發現的問題依 `review-findings` skill（`.claude/skills/review-findings/`）處理。
+
+### Spectra 計畫審查
+
+propose 完成後（之後改了 proposal、design、tasks 或 delta spec 也一樣），**apply 之前**要先審查計畫，不必等使用者要求：
+
+1. 用 Agent 工具另開一個唯讀的審查者（`model: "opus"`），它不改任何檔案。交給它 change 名稱、artifact 路徑和相關程式碼位置，請它檢查：計畫和現有程式碼是否一致、有沒有漏掉邊界與失敗情境、任務的順序與相依、每個任務的驗證方式能不能實際執行、規格的 SHALL 與 Scenario 能不能測。
+2. 結果依嚴重度（高／中／低）記錄在 `docs/reviews/{YYYY-MM-DD}-{change}-plan.md`（不進版控），每項附 artifact 位置與理由。
+3. 高、中嚴重度要修正 artifact（需要使用者決定的先問），修完再審，直到沒有高、中嚴重度。低嚴重度由使用者決定修不修。
+4. 計畫審查完成前，不得 apply，也不得說計畫「可以實作」。
+
+### Bug 修正流程
+
+修 bug（包括 review 發現的問題）依序做：
+
+1. 先寫能重現問題的測試，執行並確認它**因為這個 bug 而失敗**（斷言不成立或重現錯誤）。編譯錯誤、匯入錯誤、打錯名稱都不算。
+2. 修改程式碼。
+3. 重跑該測試與同檔案的其他測試，確認通過。
+4. 把修正的關鍵處暫時改回或改壞，確認該測試會失敗，再還原。改壞後仍然通過，代表測試沒測到 bug，要補強。
+
+`fix` commit 的內文要附測試證據：修正前的失敗訊息、第 4 步改壞時失敗的測試、修正後通過的結果與測試數量。用這次實際跑出來的結果，不可編造；缺一項就不算修好。無法用自動化測試重現時（例如純 UI），改寫原因與手動驗證步驟。
 
 ### Commit 訊息
 
 - Commit 訊息不得帶 AI 署名行（例如 `Co-Authored-By: <AI 工具>`、`Generated with <AI 工具>`）。訊息內文可以提到工具名稱。
 - commit 與 PR 說明用英文，採 Conventional Commits。
+- 不寫 Spectra 的內部追蹤資訊（例如 `Change: <name>`、`Tasks: N/M complete`）。
+- `fix` commit 內文附測試證據（見上方 Bug 修正流程）。
+
+### PR 合併
+
+- 一律用 merge commit：`gh pr merge <N> --merge`，不用 squash 或 rebase，保留分支上的 commit 歷史（`guard-bash.sh` 會擋）。
+- 合併前確認 CI（`.github/workflows/ci.yml`）通過。
+- 上一個 PR 合併後，才從最新的基底分支切下一個分支，避免把還沒合併的 commit 帶進新分支。
 
 ### 文件
 
@@ -100,11 +129,13 @@ CI（`.github/workflows/ci.yml`）每個 PR 都會跑前三項，不跑 RAGAS，
 | `create-pr` | push 並開 PR |
 | `eval-rag` | 改了檢索、路由、提示詞或模型後，在 demo index 跑 RAGAS 並與上一份報告比較 |
 
+`.claude/settings.json` 也關掉了 Claude Code 自動加的 commit／PR 署名（`attribution`），並設定 `git push`、`git commit --amend`、`gh pr create`、`gh pr merge` 執行前一律先詢問。
+
 Hooks（`.claude/settings.json`，腳本在 `.claude/hooks/`）把上面的規則變成閘門。它們讀指令文字做判斷，是防止疏忽的護欄，不是安全邊界；需要 `jq`（沒有時 `guard-bash.sh` 會顯示警告並停用，不會擋住所有指令）。改 hook 後執行 `.claude/hooks/test-hooks.sh` 做回歸測試。
 
 | Hook | 作用 |
 |---|---|
-| `guard-bash.sh`（PreToolUse，Bash） | 擋下 `git add -A`／`.`／`-u` 與 `git commit -a`、在 `master`／`main`／`develop` 上 commit、帶 AI 署名行（`Co-Authored-By`、`Generated with`）的 commit 訊息，以及 HEAD 沒有審查紀錄時的 `gh pr create`（只改文件與規格的分支免審；歸檔產生的 `openspec/` commit 不會讓審查紀錄失效）。`git commit` 與 `gh pr create` 不能串在同一個指令 |
+| `guard-bash.sh`（PreToolUse，Bash） | 擋下 `git add -A`／`.`／`-u` 與 `git commit -a`、在 `master`／`main`／`develop` 上 commit、帶 AI 署名行（`Co-Authored-By`、`Generated with`）的 commit 訊息、沒加 `--merge` 的 `gh pr merge`，以及 HEAD 沒有審查紀錄時的 `gh pr create` 與 `spectra archive`（只改文件與規格的分支免審；歸檔產生的 `openspec/` commit 不會讓審查紀錄失效）。`git commit` 不能和 `gh pr create`、`spectra archive` 串在同一個指令 |
 | `remind-docs.sh`（PostToolUse，Edit/Write） | 編輯 `architecture.md` 涵蓋的檔案時，每個檔案每個 HEAD 提醒一次同步更新它 |
 | `review-reminder.sh`（Stop） | 分支上有未審查的程式碼 commit 時，每個 HEAD 提醒一次要做 code review（程式碼範圍同 `guard-bash.sh`） |
 | `mark-reviewed.sh` | 把 HEAD 的審查結果記在 `.claude/state/`（不進版控），可在任何子目錄執行；由 skill 呼叫，不要手動執行 |

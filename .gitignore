@@ -50,3 +50,6 @@ docs/**/*.png
 # Third-party drawio skill checkout (local tooling, not part of this project)
 .claude/.drawio-skill-repo/
 .claude/skills/drawio-skill
+
+# Plan and code review working notes (not tracked)
+docs/reviews/
