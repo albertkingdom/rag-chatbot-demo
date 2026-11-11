@@ -59,6 +59,8 @@ flowchart LR
    AUTH_ENABLED=true                               # 本機開發/測試可設為 false
    ```
 
+   驗證預設啟用。若 `APP_API_KEY` 未設定或為空字串，應用程式會回報設定錯誤並停止啟動。本機開發可明確設定 `AUTH_ENABLED=false`。
+
 2. 啟動：
 
    ```bash
