@@ -63,3 +63,24 @@ def test_allowlist_trims_lowercases_and_ignores_empty_items():
     assert parse_allowed_email_domains(" Support.Test, ,CORP.test ") == frozenset(
         {"support.test", "corp.test"}
     )
+
+
+# --- RERANK_TIMEOUT_SECONDS (spec: rerank-stage, bounded inference latency) ---
+
+from src.config import DEFAULT_RERANK_TIMEOUT_SECONDS, parse_rerank_timeout  # noqa: E402
+
+
+def test_rerank_timeout_unset_uses_default(caplog):
+    assert parse_rerank_timeout(None) == DEFAULT_RERANK_TIMEOUT_SECONDS
+    assert not caplog.records
+
+
+def test_rerank_timeout_valid_override():
+    assert parse_rerank_timeout("2.5") == 2.5
+
+
+@pytest.mark.parametrize("raw", ["abc", "0", "-1", "", "nan", "inf"])
+def test_rerank_timeout_invalid_falls_back_with_warning(raw, caplog):
+    with caplog.at_level("WARNING", logger="config"):
+        assert parse_rerank_timeout(raw) == DEFAULT_RERANK_TIMEOUT_SECONDS
+    assert "RERANK_TIMEOUT_SECONDS" in caplog.text
