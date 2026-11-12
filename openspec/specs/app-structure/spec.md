@@ -33,7 +33,7 @@ Each singleton provider in `src/services.py` SHALL be thread-safe under concurre
 #### Scenario: concurrent first calls initialize exactly once
 
 - **WHEN** two threads call `get_reranker_model()` simultaneously while the singleton is uninitialized
-- **THEN** the BGE model is constructed exactly once and both threads receive the same instance
+- **THEN** the hosted reranker client is constructed exactly once and both threads receive the same instance
 
 #### Scenario: subsequent calls return cached instance
 
@@ -44,6 +44,11 @@ Each singleton provider in `src/services.py` SHALL be thread-safe under concurre
 
 - **WHEN** `get_embeddings()` is called and `OPENAI_API_KEY` is unset
 - **THEN** the provider raises `ValueError` mentioning `OPENAI_API_KEY` (behavior preserved from the original app.py)
+
+#### Scenario: reranker provider raises on missing key
+
+- **WHEN** `get_reranker_model()` is called and `PINECONE_API_KEY` is unset
+- **THEN** the provider raises `ValueError` mentioning `PINECONE_API_KEY` and does not construct a client
 
 ---
 ### Requirement: No module-level side effects on import
@@ -98,7 +103,7 @@ The existing test suite SHALL pass after the refactor, with test files updated t
 ---
 ### Requirement: Local web and worker share synchronization data
 
-Docker Compose web and worker services SHALL use the same persistent volumes and DATA_SOURCE_DIR/BM25_INDEX_DIR values for uploaded manuals and BM25 index versions. Source-only development mounts SHALL NOT replace compiled frontend assets or model-cache files.
+Docker Compose web and worker services SHALL use the same persistent volumes and DATA_SOURCE_DIR/BM25_INDEX_DIR values for uploaded manuals and BM25 index versions. Source-only development mounts SHALL NOT replace compiled frontend assets.
 
 #### Scenario: A worker reads a manual uploaded by the web service
 
