@@ -128,7 +128,7 @@ flowchart TD
 ### 5. 重排（`rerank_stage.py`、`rag_pipeline.py`）
 `BAAI/bge-reranker-v2-m3` 由 Pinecone Inference 托管，web 程序不載入模型權重。`src/hosted_reranker.py` 的 client 以 `requests` 直接呼叫 Pinecone rerank REST API（`truncate=END`，每次最多 100 筆），依回傳的 index 把分數放回輸入順序，再由 `rerank_stage.py` 取 Top 3（`RERANK_TOP_K`）。分數範圍 0 到 1，與原本本機模型套 sigmoid 後的尺度相同，所以 `GRADE_SCORE_THRESHOLD` 沿用（一致性數據見 Evaluation）。
 
-- **逾時**：`rag_pipeline.py` 以 `asyncio.to_thread` 呼叫並用 `RERANK_TIMEOUT_SECONDS`（5 秒）限制等待時間；client 端 HTTP 逾時再多 1 秒，請求只送一次、不重試。
+- **逾時**：`rag_pipeline.py` 以 `asyncio.to_thread` 呼叫並用 `RERANK_TIMEOUT_SECONDS`（5 秒）限制等待時間；client 端 HTTP 逾時再多 1 秒，請求只送一次、不重試。client 共用一個 `requests.Session`，連續重排時重用連線，不必每次重做 TCP 與 TLS 交握。
 - **失敗退回**：取得 client 失敗（例如沒有 `PINECONE_API_KEY`）、API 回錯誤或逾時，請求不會失敗：改用融合排序的前 3 筆、`rerank_scores` 為空，並帶 `rerank_error`（`timeout` 或 `error`）。`chat_service.py` 看到 `rerank_error` 就停止重試，這次檢索走低信心路徑（見第 7 節）：生成不帶 context、加上固定說明、不送來源、不寫快取；對話紀錄的 top-1 分數為 null。沒有候選時不呼叫重排服務。
 - **紀錄**：失敗只以 warning 記錄種類、例外類別與耗時，不記錄查詢、文件內容、例外訊息或 traceback。LangSmith 的 span 名稱是 "Rerank (Pinecone)"。
 - **費用**：約每千次請求 2 美元；每次 RAG 請求重排一次，重試時再一次。
@@ -301,7 +301,7 @@ flowchart TB
 | Fusion | `RRF_K` | 60 | `config.py` |
 | Fusion | `FUSION_TOP_M` | 5 | `config.py` |
 | Reranking | `RERANK_TOP_K` | 3 | `rerank_stage.py` |
-| Reranking | `RERANK_TIMEOUT_SECONDS` | 5（須為大於 0 的有限數字，無效值記警告並回到 5） | `config.py`（env 可覆寫） |
+| Reranking | `RERANK_TIMEOUT_SECONDS` | 5（須為大於 0 的有限數字，無效值記警告並回到 5） | `config.py`（env 可覆寫；docker-compose.yml 與 Terraform 尚未傳遞這個變數，正式環境要調整得先補上） |
 | Reranking | Model / per-request limit | `bge-reranker-v2-m3` on Pinecone Inference / 100 documents | `hosted_reranker.py` |
 | BM25 Reload | `BM25_RELOAD_INTERVAL_SECONDS` | 30 | `config.py`（env 可覆寫） |
 | Retrieval Grader | `GRADE_SCORE_THRESHOLD` | 0.3 | `config.py`（env 可覆寫） |

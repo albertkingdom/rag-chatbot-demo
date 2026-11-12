@@ -75,7 +75,7 @@ async def main(concurrent_only=False):
         ask("如何新增排放源？"),
         ask("如何產生盤查報告書？"),
     ), timeout=240)
-    print(json.dumps({"model_startup_seconds": startup, "single": one, "concurrent_two": two, "persistence": "isolated", "cache": "disabled", "tracing": "disabled"}, ensure_ascii=False))
+    print(json.dumps({"reranker_client_startup_seconds": startup, "single": one, "concurrent_two": two, "persistence": "isolated", "cache": "disabled", "tracing": "disabled"}, ensure_ascii=False))
     if (one is not None and not one["passed"]) or any(not result["passed"] for result in two):
         raise SystemExit(1)
 
