@@ -9,7 +9,7 @@ candidates through ``rerank_candidates``, so only the reranker differs.
 Rerankers (skipped with a notice when their key or dependency is missing):
     bge-local      BAAI/bge-reranker-v2-m3 in this process via sentence-transformers
                    (CrossEncoder.predict default: sigmoid for a single output, the
-                   same call HuggingFaceCrossEncoder.score made)
+                   same call the former in-process reranker made)
     pinecone-bge   bge-reranker-v2-m3 on Pinecone Inference, through the service's
                    own client (src/hosted_reranker.py)
     voyage         Voyage AI rerank API          (VOYAGE_API_KEY)

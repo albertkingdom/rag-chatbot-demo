@@ -23,17 +23,6 @@ COPY requirements.txt .
 # which make pip enforce hash verification automatically.
 RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 
-# Pre-download the BGE reranker into the image so cold starts never fetch it.
-# MODEL_CACHE_DIR is the single source of truth shared with get_reranker_model().
-# Placed before COPY . . so code changes don't invalidate this heavy layer.
-ENV MODEL_CACHE_DIR=/app/models
-RUN python -c "import os; from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-reranker-v2-m3', cache_dir=os.environ['MODEL_CACHE_DIR'])"
-
-# Force offline use of the cached model at runtime: no download and no
-# revision HEAD check at cold start. Must come AFTER the download above.
-ENV HF_HUB_OFFLINE=1 \
-    TRANSFORMERS_OFFLINE=1
-
 # Pre-download the jieba traditional-Chinese dictionary (dict.txt.big) so
 # runtime never fetches it. JIEBA_DICT_PATH is read once at module load by
 # src/bm25_index.py (jieba.set_dictionary). Placed before COPY . . so code
@@ -51,6 +40,6 @@ EXPOSE 8080
 
 # Run the web server. Shell form so ${PORT} is expanded at runtime:
 # Cloud Run injects PORT=8080; local docker-compose leaves it unset -> 80.
-# Single worker with async event loop; CPU-bound reranking uses
-# asyncio.to_thread() to avoid blocking the event loop.
+# Single worker with async event loop; blocking calls (BM25 search, the
+# hosted rerank HTTP request) run in asyncio.to_thread().
 CMD ["sh", "-c", "uvicorn src.app:app --host 0.0.0.0 --port ${PORT:-80}"]

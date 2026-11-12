@@ -5,8 +5,7 @@ ragas (0.2.x through 0.4.3) imports ``ChatVertexAI`` from
 ``langchain_community.llms`` at import time, only to use them in
 ``isinstance`` checks. langchain-community 0.4 removed both. Downgrading
 langchain-community is not an option: 0.3.x imports ``langchain.retrievers``,
-which langchain 1.x removed, and that breaks the BGE reranker in
-``src/services.py``.
+which langchain 1.x removed.
 
 This module registers inert stand-in classes for the two missing names. The
 project never uses Vertex AI, so the isinstance checks simply never match.

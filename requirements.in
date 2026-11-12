@@ -1,16 +1,3 @@
-# torch is a transitive dep (via sentence-transformers / langchain-huggingface
-# for the BGE reranker). Deploy target is CPU-only Cloud Run (see
-# terraform/main.tf OMP_NUM_THREADS tuning) — no GPU ever available. PyPI's
-# default Linux torch wheel pulls in the full CUDA toolkit (~GBs, unused).
-# This extra index publishes CPU-only builds (local version suffix `+cpu`,
-# which PEP 440 ranks higher than the plain version) so the resolver picks
-# the CUDA-free build instead.
---extra-index-url https://download.pytorch.org/whl/cpu
-# Explicit +cpu pin: with both indexes visible, pip's resolver does not
-# automatically prefer the local-version CPU build over PyPI's default
-# (CUDA-pulling) build, so the version has to be forced here.
-torch==2.12.1+cpu
-
 fastapi
 uvicorn
 requests
@@ -34,9 +21,6 @@ numpy
 pytest
 pytest-asyncio
 python-Levenshtein
-sentence-transformers>=2.3,<6
-huggingface_hub>=0.20,<1
-langchain-huggingface
 langsmith
 pymongo
 tabulate
