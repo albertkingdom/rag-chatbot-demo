@@ -468,3 +468,45 @@ def test_injection_check_uses_input_list_for_question_and_output_list_for_answer
     monkeypatch.setattr(chat, "detect_prompt_injection", recorder)
     asyncio.run(collect())
     assert calls == ["input", "output"]
+
+
+def failed_rerank(kind="timeout", context="FALLBACK"):
+    """A retrieval whose rerank failed: fused fallback docs, no scores."""
+    return {"context": context, "sources": ["fallback"], "rerank_scores": [], "docs": [],
+            "rerank_error": kind}
+
+
+class TestRerankFailureIsLowConfidenceWithoutRetry:
+    def test_first_attempt_fails_to_rerank(self, graded):
+        graded.retrieval.ainvoke.side_effect = [failed_rerank("timeout")]
+
+        events = asyncio.run(collect())
+
+        graded.rewrite.assert_not_awaited()
+        assert graded.retrieval.ainvoke.await_count == 1
+        assert context_used(graded) == ""
+        assert delta_text(events).startswith(LOW_CONFIDENCE_PREFIX)
+        assert not [e for e in events if e.type == "sources"]
+        graded.cache.set_cached_response.assert_not_called()
+        assert saved_metadata(graded)["retrieval"] == {
+            "top1_score": None,
+            "attempt_scores": [None],
+            "retry_count": 0,
+            "kept_attempt": 0,
+            "low_confidence": True,
+            "threshold": 0.30,
+            "retry_skipped": False,
+        }
+
+    def test_retry_attempt_fails_to_rerank(self, graded, monkeypatch):
+        monkeypatch.setattr(chat, "RETRIEVAL_MAX_RETRIES", 2)
+        graded.retrieval.ainvoke.side_effect = [bundle(0.10), failed_rerank("error"), bundle(0.90)]
+
+        asyncio.run(collect())
+
+        assert graded.retrieval.ainvoke.await_count == 2  # no second retry
+        retrieval = saved_metadata(graded)["retrieval"]
+        assert retrieval["kept_attempt"] == 0
+        assert retrieval["attempt_scores"] == [0.10, None]
+        assert retrieval["low_confidence"] is True
+        assert retrieval["retry_skipped"] is False

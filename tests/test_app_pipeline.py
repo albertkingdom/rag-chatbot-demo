@@ -191,3 +191,110 @@ async def test_fusion_metadata_present(patched_chain):
     meta = result["fusion_metadata"]
     for key in ("bm25_results", "vector_results", "fusion_results"):
         assert key in meta, f"missing fusion key: {key}"
+
+
+# --- Rerank failure falls back to fused order (spec: rerank-stage) ---------------
+
+import logging  # noqa: E402
+import threading  # noqa: E402
+
+
+@pytest.fixture
+def fused(patched_chain):
+    """The fused candidates the fixture's retriever returns, in fused order."""
+    retriever = rag_module.get_hybrid_retriever()
+    return retriever.retrieve.return_value["candidates"]
+
+
+class BoomError(RuntimeError):
+    pass
+
+
+def _failing_reranker(exc):
+    reranker = MagicMock()
+    reranker.score = MagicMock(side_effect=exc)
+    return reranker
+
+
+@pytest.mark.asyncio
+async def test_scorer_error_falls_back_to_fused_order(patched_chain, fused, monkeypatch):
+    monkeypatch.setattr(rag_module, "get_reranker_model", lambda: _failing_reranker(BoomError("secret detail")))
+    result = await patched_chain.ainvoke("test query")
+    assert result["docs"] == fused[:3]
+    assert result["rerank_scores"] == []
+    assert result["rerank_error"] == "error"
+    assert result["fusion_metadata"]["fusion_results"]
+    assert result["contexts"] == [d.metadata["answer"] for d in fused[:3]]
+
+
+@pytest.mark.asyncio
+async def test_client_construction_failure_falls_back(patched_chain, fused, monkeypatch):
+    def broken():
+        raise ValueError("PINECONE_API_KEY not configured")
+
+    monkeypatch.setattr(rag_module, "get_reranker_model", broken)
+    result = await patched_chain.ainvoke("test query")
+    assert (result["docs"], result["rerank_scores"], result["rerank_error"]) == (fused[:3], [], "error")
+
+
+@pytest.mark.asyncio
+async def test_scorer_timeout_falls_back(patched_chain, fused, monkeypatch):
+    release = threading.Event()
+
+    def slow(pairs):
+        release.wait(5)
+        return [0.9] * len(pairs)
+
+    reranker = MagicMock()
+    reranker.score = MagicMock(side_effect=slow)
+    monkeypatch.setattr(rag_module, "get_reranker_model", lambda: reranker)
+    monkeypatch.setattr(rag_module, "RERANK_TIMEOUT_SECONDS", 0.05)
+    try:
+        result = await patched_chain.ainvoke("test query")
+    finally:
+        release.set()
+    assert (result["docs"], result["rerank_scores"], result["rerank_error"]) == (fused[:3], [], "timeout")
+
+
+@pytest.mark.asyncio
+async def test_requests_timeout_counts_as_timeout(patched_chain, monkeypatch):
+    import requests
+
+    monkeypatch.setattr(rag_module, "get_reranker_model", lambda: _failing_reranker(requests.Timeout("read timed out")))
+    result = await patched_chain.ainvoke("test query")
+    assert result["rerank_error"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_no_candidates_skip_the_reranker(patched_chain, monkeypatch):
+    retriever = rag_module.get_hybrid_retriever()
+    retriever.retrieve.return_value = {"candidates": [], "fusion_metadata": {"fallback": "none"}}
+    called = MagicMock()
+    monkeypatch.setattr(rag_module, "get_reranker_model", called)
+    result = await patched_chain.ainvoke("test query")
+    called.assert_not_called()
+    assert result["docs"] == [] and result["rerank_scores"] == [] and result["sources"] == []
+    assert result["context"] == "" and result["contexts"] == []
+    assert result["fusion_metadata"] == {"fallback": "none"}
+    assert "rerank_error" not in result
+
+
+@pytest.mark.asyncio
+async def test_successful_rerank_has_no_error_marker(patched_chain):
+    result = await patched_chain.ainvoke("test query")
+    assert result["rerank_scores"]
+    assert "rerank_error" not in result
+
+
+@pytest.mark.asyncio
+async def test_failure_log_carries_no_content(patched_chain, monkeypatch, caplog):
+    monkeypatch.setattr(rag_module, "get_reranker_model", lambda: _failing_reranker(BoomError("secret detail")))
+    with caplog.at_level(logging.WARNING):
+        await patched_chain.ainvoke("needle query text")
+    [record] = [r for r in caplog.records if "rerank" in r.getMessage().lower()]
+    message = record.getMessage()
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is None
+    assert "error" in message and "BoomError" in message and "ms" in message
+    for leaked in ("needle query text", "secret detail", "Q A", "ans A"):
+        assert leaked not in message

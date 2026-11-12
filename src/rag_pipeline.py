@@ -6,15 +6,19 @@ module has no module-level side effects beyond defining the QA prompt.
 """
 
 import asyncio
+import logging
+import time
 from datetime import datetime, timezone, timedelta
+
+import requests
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langsmith import traceable
 
-from .config import BM25_TOP_N, RRF_K, VECTOR_TOP_N
-from .rerank_stage import rerank_candidates
+from .config import BM25_TOP_N, RERANK_TIMEOUT_SECONDS, RRF_K, VECTOR_TOP_N
+from .rerank_stage import RERANK_TOP_K, rerank_candidates
 from .services import (
     get_hybrid_retriever,
     get_llm,
@@ -79,6 +83,38 @@ _QA_PROMPT = ChatPromptTemplate.from_messages([
 _retrieval_chain = None
 _generation_chain = None
 
+logger = logging.getLogger("rag_pipeline")
+
+_TIMEOUT_ERRORS = (TimeoutError, requests.Timeout)
+
+
+async def _rerank_or_fallback(query: str, candidates: list) -> tuple[dict, str | None]:
+    """Rerank with the hosted reranker; on any failure keep the fused order.
+
+    Returns ``(ranked, rerank_error)``. ``rerank_error`` is ``None`` on success,
+    ``"timeout"`` when RERANK_TIMEOUT_SECONDS elapsed or the HTTP request timed
+    out, otherwise ``"error"`` (including a client that cannot be built). The
+    log names only the failure kind, the error type and the elapsed time, never
+    the query, passages, error message or a traceback.
+    """
+    started = time.perf_counter()
+    try:
+        scorer = get_reranker_model().score
+        ranked = await asyncio.wait_for(
+            asyncio.to_thread(rerank_candidates, query, candidates, scorer),
+            timeout=RERANK_TIMEOUT_SECONDS,
+        )
+        return ranked, None
+    except Exception as e:
+        kind = "timeout" if isinstance(e, _TIMEOUT_ERRORS) else "error"
+        logger.warning(
+            "Rerank failed (%s, %s) after %.0f ms; using fused order",
+            kind,
+            type(e).__name__,
+            (time.perf_counter() - started) * 1000,
+        )
+        return {"docs": candidates[:RERANK_TOP_K], "rerank_scores": []}, kind
+
 
 @traceable(name="Prepare Context")
 def _format_docs(outputs):
@@ -137,21 +173,25 @@ def get_retrieval_chain():
             query = payload["query"]
             candidates = payload["candidates"]
             fusion_metadata = payload["fusion_metadata"]
-            ranked = await asyncio.to_thread(
-                rerank_candidates, query, candidates, get_reranker_model().score
-            )
+            if candidates:
+                ranked, rerank_error = await _rerank_or_fallback(query, candidates)
+            else:
+                ranked, rerank_error = {"docs": [], "rerank_scores": []}, None
             formatted = _format_docs(ranked)
-            return {
+            result = {
                 **formatted,
                 "sources": _format_sources(ranked["docs"]),
                 "docs": ranked["docs"],
                 "rerank_scores": ranked["rerank_scores"],
                 "fusion_metadata": fusion_metadata,
             }
+            if rerank_error:
+                result["rerank_error"] = rerank_error
+            return result
 
         _retrieval_chain = (
             RunnableLambda(_retrieve, name="Hybrid Retrieve")
-            | RunnableLambda(_rerank, name="Rerank (BGE)")
+            | RunnableLambda(_rerank, name="Rerank (Pinecone)")
         )
     return _retrieval_chain
 

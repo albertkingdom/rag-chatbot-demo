@@ -115,7 +115,9 @@ async def _retrieve_best(rewritten_query: str) -> _RetrievalOutcome:
 
     A retry that scores worse than what is already kept is discarded, and no
     retrieval is made for a rewritten query that is empty or repeats any query
-    already tried (the rewrite call itself still happens first).
+    already tried (the rewrite call itself still happens first). Once any
+    attempt reports a ``rerank_error`` no further retry is made: it would call
+    the same unavailable reranker and only add latency.
     """
     bundle = await get_retrieval_chain().ainvoke(rewritten_query)
     attempt_scores = [get_top_score(bundle.get("rerank_scores", []))]
@@ -125,8 +127,9 @@ async def _retrieve_best(rewritten_query: str) -> _RetrievalOutcome:
     tried = {rewritten_query.strip()}
     last_query, last_bundle = rewritten_query, bundle
     retry_skipped = False
+    rerank_failed = bool(bundle.get("rerank_error"))
 
-    while not passed and len(attempt_scores) - 1 < RETRIEVAL_MAX_RETRIES:
+    while not passed and not rerank_failed and len(attempt_scores) - 1 < RETRIEVAL_MAX_RETRIES:
         retry_query = (await rewrite_for_retry(last_query, last_bundle.get("docs", [])) or "").strip()
         if not retry_query or retry_query in tried:
             retry_skipped = True
@@ -135,6 +138,7 @@ async def _retrieve_best(rewritten_query: str) -> _RetrievalOutcome:
         bundle = await get_retrieval_chain().ainvoke(retry_query)
         score = get_top_score(bundle.get("rerank_scores", []))
         attempt_scores.append(score)
+        rerank_failed = bool(bundle.get("rerank_error"))
         if _is_better(score, attempt_scores[kept_attempt]):
             best = bundle
             kept_attempt = len(attempt_scores) - 1
