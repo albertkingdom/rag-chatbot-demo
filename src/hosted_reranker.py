@@ -4,7 +4,9 @@ Exposes the same ``score(pairs) -> list[float]`` method the in-process
 cross-encoder had, so ``rerank_candidates`` and the retrieval chain inject it
 unchanged. It calls the Pinecone rerank REST endpoint directly with
 ``requests`` so the HTTP timeout is explicit and a failed request is never
-retried; the retrieval chain turns any error or timeout into a fallback.
+retried; the retrieval chain turns any error or timeout into a fallback. One
+``requests.Session`` per client keeps connections alive, so repeated reranks
+skip the TCP and TLS handshake.
 No model weights are loaded into the service process.
 """
 
@@ -28,6 +30,8 @@ class PineconeReranker:
     def __init__(self, api_key: str, timeout: float):
         self._api_key = api_key
         self._http_timeout = timeout + HTTP_TIMEOUT_MARGIN_SECONDS
+        # A plain Session has no retry adapter, so a failed request is not retried.
+        self._session = requests.Session()
 
     def score(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Score ``(query, passage)`` pairs; one score per pair, in input order.
@@ -45,7 +49,7 @@ class PineconeReranker:
             raise ValueError(f"{len(pairs)} passages exceed the per-request limit of {MAX_DOCUMENTS}")
 
         query = pairs[0][0]
-        resp = requests.post(
+        resp = self._session.post(
             RERANK_URL,
             headers={
                 "Api-Key": self._api_key,

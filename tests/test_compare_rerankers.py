@@ -262,7 +262,7 @@ def test_pinecone_provider_uses_the_service_client(monkeypatch):
     monkeypatch.setenv("PINECONE_API_KEY", "pk-test")
     seen = {}
 
-    def fake_post(url, headers=None, json=None, timeout=None):
+    def fake_post(session, url, headers=None, json=None, timeout=None):
         seen["url"], seen["json"] = url, json
 
         class R:
@@ -273,7 +273,7 @@ def test_pinecone_provider_uses_the_service_client(monkeypatch):
 
         return R()
 
-    monkeypatch.setattr(hosted_reranker.requests, "post", fake_post)
+    monkeypatch.setattr(hosted_reranker.requests.Session, "post", fake_post)
     assert cmp.pinecone_scorer("ignored")("q", ["a", "b"]) == [0.2, 0.7]
     assert seen["url"] == hosted_reranker.RERANK_URL
     assert seen["json"]["parameters"] == {"truncate": "END"}

@@ -1,6 +1,6 @@
 """src/hosted_reranker.py — Pinecone Inference rerank client (spec: rerank-stage).
 
-requests.post is patched; no network.
+requests.Session.post is patched; no network.
 """
 
 import json
@@ -26,13 +26,14 @@ def post(monkeypatch):
     calls = []
 
     def install(status=200, body=None, exc=None):
-        def fake_post(url, headers=None, json=None, timeout=None):
-            calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        def fake_post(session, url, headers=None, json=None, timeout=None):
+            calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout,
+                          "session": session})
             if exc:
                 raise exc
             return FakeResponse(status, body)
 
-        monkeypatch.setattr(hr.requests, "post", fake_post)
+        monkeypatch.setattr(hr.requests.Session, "post", fake_post)
         return calls
 
     return install
@@ -115,3 +116,14 @@ def test_http_timeout_propagates_as_requests_timeout(post):
     post(exc=requests.Timeout("read timed out"))
     with pytest.raises(requests.Timeout):
         client().score(pairs("a"))
+
+
+def test_one_session_is_reused_across_calls(post):
+    """Connections (and their TLS handshake) are reused between rerank calls."""
+    calls = post(body={"data": [{"index": 0, "score": 0.4}]})
+    c = client()
+    c.score(pairs("a"))
+    c.score(pairs("b"))
+    assert len(calls) == 2
+    assert isinstance(calls[0]["session"], requests.Session)
+    assert calls[0]["session"] is calls[1]["session"]
