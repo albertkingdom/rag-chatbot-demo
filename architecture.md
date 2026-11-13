@@ -22,12 +22,12 @@ flowchart TB
         CRJob[Cloud Run Job<br/>JOB_RUNNER=gcp]
         Mongo[(MongoDB<br/>對話稽核紀錄)]
         BM25[(BM25 index<br/>bm25_data volume / GCS)]
-        Reranker[BGE Reranker v2-m3<br/>web 程序內推論]
     end
 
     subgraph External["External Services"]
         OpenAI[OpenAI Embeddings]
         Pinecone[(Pinecone)]
+        Reranker[Pinecone Inference<br/>bge-reranker-v2-m3]
         OpenRouter[OpenRouter<br/>Gemini 2.5 Flash]
         LangSmith[LangSmith]
     end
@@ -78,7 +78,7 @@ flowchart TD
     OutGuard2 -- 通過 --> SaveC[寫入 Redis 對話 · MongoDB] --> CacheAns([回覆 source=cache])
 
     Cache -- miss --> Retrieve[Hybrid Retrieve<br/>BM25 top10 + Pinecone top10<br/>RRF k=60 → top5]
-    Retrieve --> Rerank[BGE Rerank → top3]
+    Retrieve --> Rerank[Rerank（Pinecone Inference）→ top3]
     Rerank --> Grade{保留結果的<br/>rerank top-1 ≥ 0.3?}
     Grade -- 否, 未達重試上限且改寫查詢未重複 --> Retry[LLM 改寫查詢] --> Retrieve
     Grade -- 是 --> Gen[Gemini 生成<br/>context + 最近 3 輪]
@@ -126,7 +126,12 @@ flowchart TD
 - BM25 與向量結果、融合分數、fallback 原因記錄於 `fusion_metadata`，供 LangSmith 追蹤。
 
 ### 5. 重排（`rerank_stage.py`、`rag_pipeline.py`）
-`BAAI/bge-reranker-v2-m3` cross-encoder 在 web 程序內對 query–doc 成對評分，取 Top 3（`RERANK_TOP_K`）。`rag_pipeline.py` 以 `asyncio.to_thread` 呼叫，避免阻塞 event loop。
+`BAAI/bge-reranker-v2-m3` 由 Pinecone Inference 托管，web 程序不載入模型權重。`src/hosted_reranker.py` 的 client 以 `requests` 直接呼叫 Pinecone rerank REST API（`truncate=END`，每次最多 100 筆），依回傳的 index 把分數放回輸入順序，再由 `rerank_stage.py` 取 Top 3（`RERANK_TOP_K`）。分數範圍 0 到 1，與原本本機模型套 sigmoid 後的尺度相同，所以 `GRADE_SCORE_THRESHOLD` 沿用（一致性數據見 Evaluation）。
+
+- **逾時**：`rag_pipeline.py` 以 `asyncio.to_thread` 呼叫並用 `RERANK_TIMEOUT_SECONDS`（5 秒）限制等待時間；client 端 HTTP 逾時再多 1 秒，請求只送一次、不重試。client 共用一個 `requests.Session`，連續重排時重用連線，不必每次重做 TCP 與 TLS 交握。
+- **失敗退回**：取得 client 失敗（例如沒有 `PINECONE_API_KEY`）、API 回錯誤或逾時，請求不會失敗：改用融合排序的前 3 筆、`rerank_scores` 為空，並帶 `rerank_error`（`timeout` 或 `error`）。`chat_service.py` 看到 `rerank_error` 就停止重試，這次檢索走低信心路徑（見第 7 節）：生成不帶 context、加上固定說明、不送來源、不寫快取；對話紀錄的 top-1 分數為 null。沒有候選時不呼叫重排服務。
+- **紀錄**：失敗只以 warning 記錄種類、例外類別與耗時，不記錄查詢、文件內容、例外訊息或 traceback。LangSmith 的 span 名稱是 "Rerank (Pinecone)"。
+- **費用**：約每千次請求 2 美元；每次 RAG 請求重排一次，重試時再一次。
 
 ### 6. 自省式檢索（`retrieval_grader.py`）
 以 reranker top-1 分數判斷檢索品質，低於 `GRADE_SCORE_THRESHOLD`（0.3）時，由 LLM 參考低品質結果改寫查詢並重跑檢索與重排，最多 `RETRIEVAL_MAX_RETRIES`（1）次。直接沿用重排分數，不額外呼叫 LLM 評分。
@@ -188,7 +193,7 @@ sequenceDiagram
     participant R as Redis
     participant B as BM25
     participant P as Pinecone
-    participant RR as BGE Reranker
+    participant RR as Pinecone Inference rerank
     participant M as MongoDB
 
     U->>F: POST /api/v1/chat/stream
@@ -296,6 +301,8 @@ flowchart TB
 | Fusion | `RRF_K` | 60 | `config.py` |
 | Fusion | `FUSION_TOP_M` | 5 | `config.py` |
 | Reranking | `RERANK_TOP_K` | 3 | `rerank_stage.py` |
+| Reranking | `RERANK_TIMEOUT_SECONDS` | 5（須為大於 0 的有限數字，無效值記警告並回到 5） | `config.py`（env 可覆寫；docker-compose.yml 與 Terraform 尚未傳遞這個變數，正式環境要調整得先補上） |
+| Reranking | Model / per-request limit | `bge-reranker-v2-m3` on Pinecone Inference / 100 documents | `hosted_reranker.py` |
 | BM25 Reload | `BM25_RELOAD_INTERVAL_SECONDS` | 30 | `config.py`（env 可覆寫） |
 | Retrieval Grader | `GRADE_SCORE_THRESHOLD` | 0.3 | `config.py`（env 可覆寫） |
 | Retrieval Grader | `RETRIEVAL_MAX_RETRIES` | 1 | `config.py`（env 可覆寫） |
@@ -312,8 +319,10 @@ flowchart TB
 
 - `tests/generate_rag_eval_data.py`：從知識庫抽樣 Q&A，由 LLM 把問題改寫成口語問法，原答案作為 `ground_truth`，輸出到 draft 檔，經人工審核後才升為 `tests/rag_eval_data.json`。
 - `tests/evaluate_rag.py`：用 golden set 直接呼叫檢索 chain（hybrid + rerank）與生成 chain，不經過路由、語意快取、自省重試與 guardrail，也不帶對話歷史，因此也不涵蓋低信心路徑（固定說明、省略來源、不寫快取）；以 RAGAS 評估 faithfulness、answer_relevancy、context_precision、context_recall，judge 沿用專案的 Gemini 與 OpenAI embeddings。報告寫入 `tests/rag_eval_report.json`；任一指標低於門檻（預設 0.7，可用 `RAG_EVAL_MIN_<METRIC>` 覆寫）時 exit code 為 1。
-- `tests/evaluate_rerank.py`：評估重排效果。
-- ragas（0.2.x 到 0.4.3）在 import 時需要 langchain-community 0.4 已移除的 Vertex AI 類別，而 langchain-community 不能降回 0.3（會讓 reranker 無法 import）。`tests/ragas_compat.py` 在 import ragas 前補上不會被使用的替代類別，`tests/test_ragas_compat.py` 確保 ragas 與 reranker 都能 import。
+- `tests/evaluate_rag.py` 任何一題的檢索帶 `rerank_error` 時，印出題數並以 exit code 1 結束、不評分也不寫報告，避免把退回融合排序的結果算進指標。
+- `scripts/compare_rerankers.py`：實驗工具，不屬於服務本身。每題從 demo index 取一次融合候選（唯讀），讓本機 BGE（sentence-transformers）、Pinecone 上的 BGE（服務自己的 client）、Voyage、Cohere 透過同一個 `rerank_candidates` 排序，報告 hit@1、hit@3、MRR、每次呼叫的延遲、分數範圍，以及與第一個重排器的分數一致性（最大／平均絕對差、top-3 順序不同的題數）。manual 資料集有任何一題沒有候選或退回只用向量檢索時以失敗結束；`--dataset synthetic` 改用 `tests/rerank_eval_data.json`，不需要 index。缺金鑰或套件的重排器會略過。
+- **切換到 Pinecone 前的一致性檢查（2026-11-12）**：在 demo index 上以 `compare_rerankers.py --providers bge-local,pinecone-bge` 比較。manual 12 題、60 段：最大分數差 0.0014、平均 0.0001，top-3 順序全部相同，兩者 hit@1 11/12、hit@3 12/12。synthetic 2 題、16 段：最大差 0.0005。延遲（Mac 上的 Docker，不代表 Cloud Run）：本機 p50 151 ms、最大 257 ms；Pinecone p50 456 ms、最大 1883 ms。Pinecone 的單次延遲較高，換取的是映像檔不帶 torch 與 2GB 權重、冷啟動不必載入模型。切換後同一天以 `scripts/eval_sample_manual.py --audit-index carbon-assistant-sample-index` 在 demo index 重跑 RAGAS：faithfulness 1.0、answer_relevancy 0.943、context_precision 0.958、context_recall 1.0，與 2026-10-21 的報告差距都在 0.05 內，沒有任何一題重排失敗，正式 index 的向量 ID 前後一致；差距屬雜訊，所以沒有更新 `tests/rag_eval_report.json`。
+- ragas（0.2.x 到 0.4.3）在 import 時需要 langchain-community 0.4 已移除的 Vertex AI 類別，而 langchain-community 不能降回 0.3。`tests/ragas_compat.py` 在 import ragas 前補上不會被使用的替代類別，`tests/test_ragas_compat.py` 確保 ragas 能 import。
 - 題庫 12 題，`ground_truth` 逐字取自 `examples/carbonm_sample_manual.xlsx`，五類主題（帳號、盤查邊界、排放源、數據審核、報表）各至少 2 題；`tests/test_sample_manual.py` 檢查每題答案都在範例手冊中。
 - `tests/rag_eval_report.json` 於 2026-10-21 以 `scripts/eval_sample_manual.py --audit-index carbon-assistant-qa-index` 在 demo index 上產生：faithfulness 1.0、answer_relevancy 0.95、context_precision 0.94、context_recall 1.0，全部高於 0.7 門檻，12 題的標準答案來源都出現在融合候選中，正式 index 的向量 ID 前後一致。同一天較早的執行（手冊尚未改寫兩個與原手冊相同的問句時）為 1.0、0.93、0.86、0.92，當時「有好幾個廠區，要怎麼調整今年要納入盤查的範圍？」找不到來源；手冊問句改為「多廠區要怎麼切換盤查邊界？」後與口語問法有共同字詞而命中。知識庫只對問題文字建索引，口語問法與手冊問句用詞差異大時仍可能漏檢。評分帶有 LLM 隨機性，比較前後版本時應多跑幾次取平均。
 
@@ -322,8 +331,9 @@ flowchart TB
 | 優化 | 位置 | 效果 |
 |------|------|------|
 | Embedding 改批次（100 筆/次） | `build_vector_store.py` | API 呼叫數約減少 100 倍，同步時間明顯縮短（見下方估計） |
-| Rerank 改 `asyncio.to_thread` | `rag_pipeline.py` | cross-encoder 推論不再阻塞 event loop |
-| Fusion 候選 10 → 5 | `config.py` | 重排推論量減半 |
+| Rerank 改 `asyncio.to_thread` | `rag_pipeline.py` | 重排的 HTTP 呼叫不阻塞 event loop |
+| Fusion 候選 10 → 5 | `config.py` | 每次重排的文件數減半 |
+| 重排改用 Pinecone Inference | `hosted_reranker.py` | 映像檔不帶 torch、sentence-transformers 與模型權重，冷啟動不必載入模型 |
 | 規則路由 | `query_router.py` | 明確查詢不需呼叫 LLM |
 | 語意快取 | `cache_service.py` | 相似問題跳過整條 RAG |
 | 答案分段 yield | `chat_service.py` | 以固定大小分段串流 NDJSON `delta` |

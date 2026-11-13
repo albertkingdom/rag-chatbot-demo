@@ -71,14 +71,16 @@ async def collect_samples(cases: list[dict]) -> list[dict]:
         answer = await generation_chain.ainvoke(
             {"context": context_text, "question": question, "history": "", "today": _today_str()}
         )
-        samples.append(
-            {
-                "question": question,
-                "answer": answer,
-                "contexts": contexts,
-                "ground_truth": case["ground_truth"],
-            }
-        )
+        sample = {
+            "question": question,
+            "answer": answer,
+            "contexts": contexts,
+            "ground_truth": case["ground_truth"],
+        }
+        if bundle.get("rerank_error"):
+            # The chain fell back to fused order; main() refuses to score it.
+            sample["rerank_error"] = bundle["rerank_error"]
+        samples.append(sample)
         print(f"[evaluate] collected {i}/{len(cases)}: {question} ({len(contexts)} contexts)")
     return samples
 
@@ -191,6 +193,15 @@ def main() -> int:
     # Step 3: collect samples from the real pipeline.
     print(f"[evaluate] Collecting samples for {len(cases)} case(s)...")
     samples = asyncio.run(collect_samples(cases))
+
+    # A rerank failure silently swaps in fused-order context; scoring that
+    # would mix two different pipelines into one number, so stop here.
+    failed = [s["question"] for s in samples if s.get("rerank_error")]
+    if failed:
+        print(f"[evaluate] ERROR: rerank failed for {len(failed)}/{len(samples)} case(s); not scoring.")
+        for question in failed:
+            print(f"[evaluate]   rerank failed: {question}")
+        return 1
 
     # Step 4: score with RAGAS.
     print("[evaluate] Scoring with RAGAS...")

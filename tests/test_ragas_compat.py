@@ -13,6 +13,3 @@ def test_ragas_imports_with_compat_shim():
         faithfulness,
     )
 
-
-def test_reranker_import_still_works():
-    from langchain_community.cross_encoders import HuggingFaceCrossEncoder  # noqa: F401

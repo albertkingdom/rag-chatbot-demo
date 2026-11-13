@@ -75,7 +75,7 @@ propose 完成後（之後改了 proposal、design、tasks 或 delta spec 也一
 ### 文件
 
 - `architecture.md` 是 RAG 請求流程、知識庫同步流程、參數與已知問題的正式說明。參數值本身在程式碼裡（`src/config.py` 及其 Key Parameters 表列出的檔案）；行為需求在 `openspec/specs/`。
-- 修改下列檔案時，要在同一個變更裡更新 `architecture.md`：`src/chat_service.py`、`src/query_router.py`、`src/hybrid_retriever.py`、`src/bm25_index.py`、`src/rerank_stage.py`、`src/retrieval_grader.py`、`src/rag_pipeline.py`、`src/cache_service.py`、`src/guardrails.py`、`src/build_vector_store.py`、`src/manual_service.py`、`src/services.py` 的模型設定，或 `src/config.py` 的值。
+- 修改下列檔案時，要在同一個變更裡更新 `architecture.md`：`src/chat_service.py`、`src/query_router.py`、`src/hybrid_retriever.py`、`src/bm25_index.py`、`src/rerank_stage.py`、`src/hosted_reranker.py`、`src/retrieval_grader.py`、`src/rag_pipeline.py`、`src/cache_service.py`、`src/guardrails.py`、`src/build_vector_store.py`、`src/manual_service.py`、`src/services.py` 的模型設定，或 `src/config.py` 的值。
 - `README.md` 只當入口（概覽、安裝、API、部署、限制）。新功能只在 README 功能列表加一條，細節寫在 `architecture.md`，不重複。
 - 圖表用 Markdown 內的 Mermaid 繪製。已淘汰的圖片圖表放在 `docs/archive/`。
 
@@ -84,7 +84,7 @@ propose 完成後（之後改了 proposal、design、tasks 或 delta spec 也一
 | 路徑 | 角色 |
 |---|---|
 | `src/chat_service.py` | 請求流程：輸入防護 → 路由 →（rag：快取 → 檢索 → 重排 → 評分／重試）→ 生成 → 輸出防護 → 儲存；以 NDJSON 事件串流回應 |
-| `src/query_router.py`、`hybrid_retriever.py`、`bm25_index.py`、`rerank_stage.py`、`retrieval_grader.py` | 路由與檢索各階段 |
+| `src/query_router.py`、`hybrid_retriever.py`、`bm25_index.py`、`rerank_stage.py`、`hosted_reranker.py`、`retrieval_grader.py` | 路由與檢索各階段（`hosted_reranker.py` 是 Pinecone Inference 重排 client） |
 | `src/cache_service.py`、`chat_history_service.py`、`conversation_db.py` | Redis 語意快取、短期對話歷史、MongoDB 對話紀錄 |
 | `src/guardrails.py`、`access_control.py` | 輸入／輸出防護；API key 與 session 驗證 |
 | `src/build_vector_store.py`、`manual_service.py` | 知識庫同步：上傳、增量同步 Pinecone 與 BM25 |

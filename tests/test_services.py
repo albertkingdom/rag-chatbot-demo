@@ -42,13 +42,13 @@ class TestProviderErrors:
 
 
 class TestThreadSafety:
-    def test_concurrent_first_call_initializes_once(self):
+    def test_concurrent_first_call_initializes_once(self, monkeypatch):
         """Two threads racing on get_reranker_model() get the same instance,
         and the (slow) construction runs exactly once."""
         from src import services
 
-        # Reset the LazySingleton value.
-        services._reranker._value = None
+        # Reset the LazySingleton value; monkeypatch restores _build and _value.
+        monkeypatch.setattr(services._reranker, "_value", None)
 
         call_count = 0
         count_lock = threading.Lock()
@@ -62,7 +62,7 @@ class TestThreadSafety:
             return sentinel_instance
 
         # Swap the build callable on the existing LazySingleton.
-        services._reranker._build = slow_build
+        monkeypatch.setattr(services._reranker, "_build", slow_build)
 
         results = []
         results_lock = threading.Lock()
@@ -83,8 +83,25 @@ class TestThreadSafety:
         assert len(results) == 2
         assert results[0] is results[1] is sentinel_instance
 
-        # reset for other tests
-        services._reranker._value = None
+    def test_reranker_is_the_hosted_client(self, monkeypatch):
+        """get_reranker_model() builds the Pinecone client; no model weights."""
+        from src import config, hosted_reranker, services
+
+        monkeypatch.setattr(services._reranker, "_value", None)
+        monkeypatch.setenv("PINECONE_API_KEY", "pk-test")
+        client = services.get_reranker_model()
+        assert isinstance(client, hosted_reranker.PineconeReranker)
+        assert client._http_timeout == config.RERANK_TIMEOUT_SECONDS + hosted_reranker.HTTP_TIMEOUT_MARGIN_SECONDS
+        monkeypatch.setattr(services._reranker, "_value", None)
+
+    def test_reranker_requires_pinecone_key(self, monkeypatch):
+        from src import services
+
+        monkeypatch.setattr(services._reranker, "_value", None)
+        monkeypatch.delenv("PINECONE_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="PINECONE_API_KEY"):
+            services.get_reranker_model()
+        assert services._reranker._value is None
 
     def test_subsequent_call_returns_cached_instance(self):
         """Second call returns the same instance without re-entering lock."""

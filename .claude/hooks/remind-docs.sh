@@ -17,7 +17,7 @@ file=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null
 
 case "$file" in
   */src/chat_service.py|*/src/query_router.py|*/src/hybrid_retriever.py|*/src/bm25_index.py|\
-*/src/rerank_stage.py|*/src/retrieval_grader.py|*/src/rag_pipeline.py|*/src/cache_service.py|\
+*/src/rerank_stage.py|*/src/hosted_reranker.py|*/src/retrieval_grader.py|*/src/rag_pipeline.py|*/src/cache_service.py|\
 */src/guardrails.py|*/src/build_vector_store.py|*/src/manual_service.py|*/src/services.py|\
 */src/config.py) ;;
   *) exit 0 ;;

@@ -3,6 +3,7 @@ Configuration constants for the application.
 """
 
 import logging
+import math
 import os
 from typing import Optional
 
@@ -90,6 +91,36 @@ def parse_allowed_email_domains(raw: Optional[str]) -> frozenset:
 GUARDRAIL_ALLOWED_EMAIL_DOMAINS = parse_allowed_email_domains(
     os.environ.get("GUARDRAIL_ALLOWED_EMAIL_DOMAINS")
 )
+
+DEFAULT_RERANK_TIMEOUT_SECONDS = 5.0
+
+
+def parse_rerank_timeout(raw: Optional[str]) -> float:
+    """Resolve RERANK_TIMEOUT_SECONDS: a finite number > 0, else the default.
+
+    Unset yields the default silently. A value that is set but is not a finite
+    number above 0 yields the default and logs a warning, so a bad setting
+    cannot stop the application from starting.
+    """
+    if raw is None:
+        return DEFAULT_RERANK_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = None
+    if value is None or not math.isfinite(value) or value <= 0:
+        logger.warning(
+            "Invalid RERANK_TIMEOUT_SECONDS=%r (must be a number > 0); using default %s",
+            raw,
+            DEFAULT_RERANK_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_RERANK_TIMEOUT_SECONDS
+    return value
+
+
+# Upper bound for one hosted rerank call; a call that takes longer is handled
+# as a rerank failure (fused order, low confidence, no retry).
+RERANK_TIMEOUT_SECONDS = parse_rerank_timeout(os.environ.get("RERANK_TIMEOUT_SECONDS"))
 
 # Agentic RAG: retrieval grading & retry
 GRADE_SCORE_THRESHOLD = float(os.environ.get("GRADE_SCORE_THRESHOLD", "0.3"))

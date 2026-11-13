@@ -179,13 +179,6 @@ resource "google_cloud_run_v2_service" "web" {
         name  = "LANGCHAIN_TRACING_V2"
         value = "true"
       }
-      # Match torch/BLAS thread count to allocated vCPUs (resources.limits.cpu).
-      # Without this, torch defaults to 1 thread and the extra cores stay idle,
-      # so the BGE reranker would see no speedup from the CPU bump.
-      env {
-        name  = "OMP_NUM_THREADS"
-        value = "4"
-      }
       # Access control: auth is enabled in prod; APP_API_KEY comes from the
       # dynamic secret block below. Rate limit and session TTL are non-secret.
       env {

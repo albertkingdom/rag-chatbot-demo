@@ -16,7 +16,7 @@ python -m pytest tests -q -k "threshold"        # 依名稱
 cd frontend && pnpm exec vitest run --maxWorkers=1
 ```
 
-`tests/evaluate_rag.py`、`evaluate_rerank.py`、`generate_rag_eval_data.py` 是評估腳本，不是測試（檔名不以 `test_` 開頭，不會被收集），會呼叫真實服務，**不要放進一般測試流程**。
+`tests/evaluate_rag.py`、`generate_rag_eval_data.py` 與 `scripts/eval_sample_manual.py`、`scripts/compare_rerankers.py` 是評估腳本，不是測試（檔名不以 `test_` 開頭，不會被收集），會呼叫真實服務，**不要放進一般測試流程**。
 
 ## 放哪裡、怎麼命名
 

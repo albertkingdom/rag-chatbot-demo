@@ -11,7 +11,7 @@
 ## 特色
 
 - **混合路由**：規則層零延遲判斷明確查詢，僅不確定的查詢交給 LLM 決定走 RAG 或直接生成，並同時改寫追問。規則層可直接判定範例手冊 60 題中的 43 題，其餘由 LLM 路由，評估腳本會實際檢查全部判給知識庫。
-- **Hybrid Search**：BM25 關鍵字檢索 + Pinecone 向量檢索，以 RRF 融合後由 BGE Reranker 精排。
+- **Hybrid Search**：BM25 關鍵字檢索 + Pinecone 向量檢索，以 RRF 融合後由 Pinecone Inference 托管的 BGE Reranker 精排；重排服務失敗時退回低信心回答。
 - **自省式檢索**：重排分數不足時自動改寫查詢並重試（保留較佳結果）；仍不足時答案會標示「知識庫查無直接相關資料」、不顯示來源，也不寫入語意快取。
 - **語意快取**：Redis 攔截相似問題，降低延遲與 token 成本。
 - **雙端 Guardrail**：輸入端偵測 prompt injection，輸出端掃描 PII 與注入內容。
@@ -31,7 +31,7 @@ flowchart LR
     Web --> Mongo[(MongoDB<br/>對話紀錄)]
     Web --> Pinecone[(Pinecone)]
     Web --> LLM[Gemini 2.5 Flash<br/>via OpenRouter]
-    Web --> Rerank[BGE Reranker]
+    Web --> Rerank[Pinecone Inference<br/>BGE Reranker]
     Web --> Emb[OpenAI Embeddings]
     Web --> Job[RQ worker / Cloud Run Job]
     Job --> Emb

@@ -11,8 +11,7 @@ Public providers:
     get_vectorstore()       -> PineconeVectorStore
     get_bm25_index()        -> BM25Index
     get_hybrid_retriever()  -> HybridRetriever
-    get_reranker_model()    -> HuggingFaceCrossEncoder
-    _get_optimal_device()   -> str
+    get_reranker_model()    -> PineconeReranker (hosted bge-reranker-v2-m3)
 
 This module has NO import-time side effects (no network, no model loading,
 no Redis connection).
@@ -23,12 +22,12 @@ import os
 import threading
 
 import redis
-from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 
 from .bm25_index import BM25Index
-from .config import PINECONE_INDEX_NAME, REDIS_URL
+from .hosted_reranker import PineconeReranker
+from .config import PINECONE_INDEX_NAME, REDIS_URL, RERANK_TIMEOUT_SECONDS
 from .hybrid_retriever import HybridRetriever
 
 logger = logging.getLogger("services")
@@ -61,27 +60,6 @@ class LazySingleton:
                 if self._value is None:
                     self._value = self._build()
         return self._value
-
-
-# ---------------------------------------------------------------------------
-# Device helper
-# ---------------------------------------------------------------------------
-
-
-def _get_optimal_device():
-    """自動偵測最佳運算裝置（CUDA > MPS > CPU）。"""
-    import torch
-
-    if torch.cuda.is_available():
-        device = "cuda"
-        logger.info("Using CUDA GPU: %s", torch.cuda.get_device_name(0))
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = "mps"
-        logger.info("Using Apple Silicon MPS acceleration")
-    else:
-        device = "cpu"
-        logger.info("Using CPU")
-    return device
 
 
 # ---------------------------------------------------------------------------
@@ -143,23 +121,17 @@ def get_vectorstore():
 
 
 def _build_reranker():
-    logger.info("Initializing BGE-Reranker model (BAAI/bge-reranker-v2-m3)...")
-    model_dir = os.environ.get("MODEL_CACHE_DIR", os.path.join(os.getcwd(), "models"))
-    os.makedirs(model_dir, exist_ok=True)
-    device = _get_optimal_device()
-    model = HuggingFaceCrossEncoder(
-        model_name="BAAI/bge-reranker-v2-m3",
-        model_kwargs={"device": device, "cache_folder": model_dir},
-    )
-    logger.info("BGE-Reranker model initialized successfully on %s.", device)
-    return model
+    api_key = os.environ.get("PINECONE_API_KEY")
+    if not api_key:
+        raise ValueError("PINECONE_API_KEY not configured")
+    return PineconeReranker(api_key=api_key, timeout=RERANK_TIMEOUT_SECONDS)
 
 
 _reranker = LazySingleton(_build_reranker)
 
 
 def get_reranker_model():
-    """取得底層的 CrossEncoder 模型實體（thread-safe, 只初始化一次）。"""
+    """取得托管重排 client（Pinecone Inference；thread-safe, 只初始化一次）。"""
     return _reranker.get()
 
 
