@@ -70,6 +70,23 @@
 3. 以 preview 驗收這個新 revision，再把流量切過去。不要長期停在舊 revision：舊 revision 的快取沒有命名空間，Job 同步後清不到。
 4. 完成前不上傳手冊。
 
+## v1.2.0（2026-11-13）
+
+- 分支／commit：`release/v1.2.0`，`e41b8b0bebc13976cda1a0bcc6b11ae0efbf5b1d`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/43448077542) 成功。
+- Image digest：`sha256:6cb7ab86036ba94092224a5cf0fe3f163c62d40c7d017a6cdc0f8c02e70ecf22`。
+- Revision：`carbon-assistant-web-00023-tw4`，100% 流量（2026-11-14 切換）。回復目標：`carbon-assistant-web-00022-jt7`（v1.1.2）。
+- 內容：
+  - #32 重排改由 Pinecone Inference 托管的 `bge-reranker-v2-m3` 執行；重排失敗或逾時時退回融合排序並視為低信心、不重試；image 不再帶 torch、sentence-transformers 與模型權重，web 移除 `OMP_NUM_THREADS`。
+  - #31 `AUTH_ENABLED=true` 時缺少 `APP_API_KEY` 會在啟動時失敗（正式環境已有這個 secret）。
+  - #24–#30 只動文件、CI 與 `.claude/` 規則，不影響執行環境。
+- 驗收：
+  - Terraform plan：0 add、2 change、0 destroy；web 與 sync Job 換 image，web 移除 `OMP_NUM_THREADS = 4`。
+  - preview（`v120-preview`）：`/health`、`/`、`/login`、`/admin` 200，hashed JS 可載入，未登入 API 與不存在的 `/api/*` 回 401；新 revision 無 ERROR log。
+  - 登入後（內建瀏覽器）：「忘記密碼怎麼辦？」「多廠區要怎麼切換盤查邊界？」都以範例手冊回答並附 3 筆來源，沒有低信心提示；「如何煮咖啡？」直接婉拒、不附來源；log 沒有 `Rerank failed`。第一題約 19.5 秒，之後約 4.6 秒。
+  - 切換流量後正式 URL 不需登入的檢查正常；preview tag 已移除。
+  - 冷啟動（Cloud Monitoring `container/startup_latencies`）：新 revision 前 3 次約 10.5 秒；v1.1.2 近三週中位數約 42 秒、最慢約 78 秒。新 revision 樣本少，之後再確認。
+- 未驗證：正式站「文件管理」上傳流程；Pinecone 重排失敗時的退回路徑（只在單元測試與本機驗證）。
+
 ## v1.1.2（2026-10-22）
 
 - 分支／commit：`release/v1.1.2`，`1ada682a2bd0f252986b655e60c7b95638d43e8d`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/39728592847) 成功。
