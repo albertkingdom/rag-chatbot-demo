@@ -1,0 +1,336 @@
+# promtool unit tests for slo.yml (spec: slo-burn-rate-rules).
+#
+#   promtool test rules slo_test.yml
+#
+# Counters are synthetic: one sample per minute, `a+bxN` means start at a and
+# add b every minute for N minutes, so a ratio is errors / (errors + successes)
+# of the per-minute increments. Thresholds under test: fast burn is 14.4 x the
+# 0.005 error budget = 7.2% over 1h and 5m; slow burn is 6 x 0.005 = 3% over 6h
+# and 30m.
+rule_files:
+  - slo.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---- healthy and idle traffic never alerts -------------------------------
+
+  - name: healthy traffic does not alert
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+100x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+0x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts: []
+    promql_expr_test:
+      - expr: slo:chat_availability:ratio_rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'slo:chat_availability:ratio_rate5m'
+            value: 1
+
+  - name: no traffic gives no ratio and no alert, not NaN
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+0x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+0x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts: []
+    promql_expr_test:
+      # No exp_samples: the expression must return nothing at all.
+      - expr: slo:chat_availability:ratio_rate5m
+        eval_time: 7h
+      - expr: slo:chat_availability:error_ratio_rate5m
+        eval_time: 7h
+      - expr: slo:chat_availability:error_ratio_rate6h
+        eval_time: 7h
+
+  - name: no chat_requests_total series at all gives no ratio and no alert
+    interval: 1m
+    input_series:
+      - series: 'up{job="rag-web"}'
+        values: '1+0x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts: []
+    promql_expr_test:
+      - expr: slo:chat_availability:error_ratio_rate1h
+        eval_time: 7h
+
+  # ---- the availability SLI ------------------------------------------------
+
+  - name: the SLO target is 99.5 percent
+    interval: 1m
+    input_series:
+      - series: 'up{job="rag-web"}'
+        values: '1+0x60'
+    promql_expr_test:
+      - expr: slo:chat_availability:target
+        eval_time: 30m
+        exp_samples:
+          - labels: 'slo:chat_availability:target'
+            value: 0.995
+
+  - name: cancelled requests are in neither the numerator nor the denominator
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+90x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="cancelled"}'
+        values: '0+10x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+0x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts: []
+    promql_expr_test:
+      - expr: slo:chat_availability:ratio_rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'slo:chat_availability:ratio_rate5m'
+            value: 1
+      - expr: slo:chat_availability:error_ratio_rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'slo:chat_availability:error_ratio_rate5m'
+            value: 0
+
+  - name: errors recorded only under unknown still count
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+95x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+5x480'
+    promql_expr_test:
+      # round() so the comparison does not depend on the last floating point digit.
+      - expr: round(slo:chat_availability:ratio_rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 0.95
+      - expr: round(slo:chat_availability:error_ratio_rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 0.05
+
+  - name: successes and errors are summed across every response source
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+80x480'
+      - series: 'chat_requests_total{response_source="cache",outcome="success"}'
+        values: '0+10x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+5x480'
+      - series: 'chat_requests_total{response_source="rag",outcome="error"}'
+        values: '0+5x480'
+    promql_expr_test:
+      - expr: round(slo:chat_availability:ratio_rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 0.9
+      - expr: round(slo:chat_availability:error_ratio_rate6h, 0.001)
+        eval_time: 7h
+        exp_samples:
+          - labels: '{}'
+            value: 0.1
+
+  # ---- fast burn: above 7.2% over 1h and 5m --------------------------------
+
+  - name: sustained 10 percent errors fire the fast and the slow burn alerts
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+90x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+10x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels: &fast_labels
+              severity: critical
+              slo: availability
+            exp_annotations: &fast_annotations
+              summary: 聊天可用性錯誤預算快速燃燒：近 1 小時與近 5 分鐘的錯誤率都超過預算的 14.4 倍，需要立即處理。
+      - eval_time: 7h
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts:
+          - exp_labels: &slow_labels
+              severity: warning
+              slo: availability
+            exp_annotations: &slow_annotations
+              summary: 聊天可用性錯誤預算持續燃燒：近 6 小時與近 30 分鐘的錯誤率都超過預算的 6 倍，請排入處理。
+
+  - name: every request failing fires both alerts
+    interval: 1m
+    input_series:
+      # No success series at all: the missing side counts as 0.
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+10x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels: *fast_labels
+            exp_annotations: *fast_annotations
+      - eval_time: 7h
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts:
+          - exp_labels: *slow_labels
+            exp_annotations: *slow_annotations
+    promql_expr_test:
+      - expr: slo:chat_availability:ratio_rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'slo:chat_availability:ratio_rate5m'
+            value: 0
+      - expr: slo:chat_availability:error_ratio_rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'slo:chat_availability:error_ratio_rate5m'
+            value: 1
+
+  - name: 7.5 percent errors are just above the fast burn threshold
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+925x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+75x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels: *fast_labels
+            exp_annotations: *fast_annotations
+
+  - name: 6.5 percent errors are below fast burn but still slow burn
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+935x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+65x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts:
+          - exp_labels: *slow_labels
+            exp_annotations: *slow_annotations
+
+  # ---- slow burn: above 3% over 6h and 30m ----------------------------------
+
+  - name: 3.5 percent errors fire only the slow burn alert
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+965x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+35x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts:
+          - exp_labels: *slow_labels
+            exp_annotations: *slow_annotations
+
+  - name: 2.5 percent errors fire neither alert
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+975x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+25x480'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts: []
+
+  # ---- both windows must agree ---------------------------------------------
+
+  # 20% errors for the first hour, then clean. At 70m the 1h window is still
+  # above 7.2% but the 5m window is 0, so the fast burn alert is quiet; the 30m
+  # window still holds part of the burst, so the slow burn alert fires. At 100m
+  # the 6h window is still above 3% but the 30m window is clean: no alert.
+  - name: a burst that has ended stops the alerts through the short windows
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+80x60 4900+100x419'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+20x60 1200+0x419'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts:
+          - exp_labels: *slow_labels
+            exp_annotations: *slow_annotations
+      - eval_time: 100m
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts: []
+
+  # Three bad minutes in seven clean hours: the 5m and 30m windows are high, the
+  # 1h (4.8%) and 6h (0.8%) windows are below their thresholds.
+  - name: a short blip does not alert through the long windows
+    interval: 1m
+    input_series:
+      - series: 'chat_requests_total{response_source="rag",outcome="success"}'
+        values: '0+100x480'
+      - series: 'chat_requests_total{response_source="unknown",outcome="error"}'
+        values: '0+0x417 100+100x2 300+0x60'
+    alert_rule_test:
+      - eval_time: 420m
+        alertname: ChatAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 420m
+        alertname: ChatAvailabilitySlowBurn
+        exp_alerts: []
+    promql_expr_test:
+      # The blip is real: the 5m window sees it (3 error increments against 5
+      # success increments in the window).
+      - expr: round(slo:chat_availability:error_ratio_rate5m, 0.001)
+        eval_time: 420m
+        exp_samples:
+          - labels: '{}'
+            value: 0.375
