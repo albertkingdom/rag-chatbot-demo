@@ -28,6 +28,8 @@ rank_bm25
 jieba
 ragas>=0.2,<0.3
 datasets>=2.14
+prometheus-client
+pyyaml
 
 # Explicit pin (not just a transitive dep of sqlalchemy): sqlalchemy's
 # greenlet requirement is gated by a `platform_machine == "aarch64"` marker

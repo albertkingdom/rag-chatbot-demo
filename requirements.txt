@@ -745,9 +745,7 @@ greenlet==3.5.3 \
     --hash=sha256:efc6bd60ea02e085862c74a3ef64b147ffc6f1a5ea7d9f26e7a939943f68c1e3 \
     --hash=sha256:fad5aec764399f1b5cc347ad250a59660f20c8f8888ea6bae1f93b769cce1154 \
     --hash=sha256:fd2e02fa07485778536a036222d616ab957b1d533f36b3ed98ce725d9c9d3117
-    # via
-    #   -r requirements.in
-    #   sqlalchemy
+    # via -r requirements.in
 grpc-google-iam-v1==0.14.4 \
     --hash=sha256:392b3796947ed6334e61171d9ab06bf7eb357f554e5fc7556ad7aab6d0e17038 \
     --hash=sha256:412facc320fcbd94034b4df3d557662051d4d8adfa86e0ddb4dca70a3f739964
@@ -1710,6 +1708,10 @@ pluggy==1.6.0 \
     --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
     --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
     # via pytest
+prometheus-client==0.26.0 \
+    --hash=sha256:04a91bcf94e2cf74a44a1a874d651a2e853ed354b6e822f3b7487751465d5c2b \
+    --hash=sha256:fa93d06737aa02bacd05794768508bb97d2fbee28cb3bca04eaae92f0ca953d6
+    # via -r requirements.in
 propcache==0.5.2 \
     --hash=sha256:01c4fc7480cd0598bb4b57022df55b9ca296da7fc5a8760bd8451a7e63a7d427 \
     --hash=sha256:04dc2390d9edbbaef7461f33322555976ffddf0b650a038649d026358714e6c5 \
@@ -2259,6 +2261,7 @@ pyyaml==6.0.3 \
     --hash=sha256:fa160448684b4e94d80416c0fa4aac48967a969efe22931448d853ada8baf926 \
     --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0
     # via
+    #   -r requirements.in
     #   datasets
     #   huggingface-hub
     #   langchain-classic
