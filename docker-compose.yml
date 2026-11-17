@@ -28,6 +28,9 @@ services:
       - CHAT_HISTORY_TTL_SECONDS=${CHAT_HISTORY_TTL_SECONDS:-1800}
       - GUARDRAIL_ALLOWED_EMAIL_DOMAINS=${GUARDRAIL_ALLOWED_EMAIL_DOMAINS-example.com}
       - CHAT_HISTORY_MAX_TURNS=${CHAT_HISTORY_MAX_TURNS:-3}
+      # Local stack only: Prometheus scrapes web:80/metrics over the compose
+      # network. The Cloud Run deployment (terraform/) never sets this.
+      - METRICS_ENABLED=true
     volumes:
       - manual_data:/app/uploaded_files
       - bm25_data:/app/bm25
@@ -100,7 +103,41 @@ services:
       - redis
       - mongodb
 
+  # Local monitoring (spec: metrics-endpoint-exposure, service-level-metrics).
+  # Image tags are pinned on purpose; the CI promtool job must use the same
+  # Prometheus tag.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: rag-demo-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Longer than the 28-day SLO window so the error-budget panel has data.
+      - --storage.tsdb.retention.time=30d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - web
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: rag-demo-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
   manual_data:
   bm25_data:
   mongodb_data:
+  prometheus_data:
+  grafana_data:
