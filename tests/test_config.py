@@ -84,3 +84,33 @@ def test_rerank_timeout_invalid_falls_back_with_warning(raw, caplog):
     with caplog.at_level("WARNING", logger="config"):
         assert parse_rerank_timeout(raw) == DEFAULT_RERANK_TIMEOUT_SECONDS
     assert "RERANK_TIMEOUT_SECONDS" in caplog.text
+
+
+# --- METRICS_ENABLED (spec: metrics-endpoint-exposure, disabled by default) ---
+
+
+def resolved_metrics_enabled(value):
+    """Read METRICS_ENABLED in a fresh interpreter, the way a process start does."""
+    env = {k: v for k, v in os.environ.items() if k != "METRICS_ENABLED"}
+    if value is not None:
+        env["METRICS_ENABLED"] = value
+    out = subprocess.run(
+        [sys.executable, "-c", "import src.config as m; print(m.METRICS_ENABLED)"],
+        cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True,
+    )
+    return out.stdout.strip().splitlines()[-1]
+
+
+@pytest.mark.parametrize(
+    "raw, enabled",
+    [
+        (None, False),
+        ("true", True),
+        ("TRUE", True),
+        ("1", True),
+        ("false", False),
+        ("yes", False),
+    ],
+)
+def test_metrics_enabled_flag_parsing(raw, enabled):
+    assert resolved_metrics_enabled(raw) == str(enabled)

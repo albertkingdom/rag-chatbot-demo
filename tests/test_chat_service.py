@@ -510,3 +510,125 @@ class TestRerankFailureIsLowConfidenceWithoutRetry:
         assert retrieval["attempt_scores"] == [0.10, None]
         assert retrieval["low_confidence"] is True
         assert retrieval["retry_skipped"] is False
+
+
+# ---------------------------------------------------------------------------
+# Retrieval metrics (spec: service-level-metrics, retrieval outcomes are
+# counted per RAG request). Counters live on the default registry and are never
+# reset, so each test compares before and after.
+# ---------------------------------------------------------------------------
+
+from prometheus_client import REGISTRY  # noqa: E402
+from src import observability  # noqa: E402
+
+_RETRIEVAL_SERIES = ("rag_retrieval_total", "rag_retrieval_retries_total")
+
+
+def retrieval_counts():
+    return {
+        (sample.name, tuple(sorted(sample.labels.items()))): sample.value
+        for family in REGISTRY.collect()
+        for sample in family.samples
+        if sample.name in _RETRIEVAL_SERIES
+    }
+
+
+def retrieval_changes(before):
+    after = retrieval_counts()
+    return {key: after[key] - before.get(key, 0.0) for key in after if after[key] != before.get(key, 0.0)}
+
+
+def low_confidence_key(flag):
+    return ("rag_retrieval_total", (("low_confidence", flag),))
+
+
+RETRIES = ("rag_retrieval_retries_total", ())
+
+
+class TestRetrievalMetrics:
+    def test_two_attempts_ending_low_confidence_count_one_outcome_and_one_retry(self, graded):
+        graded.retrieval.ainvoke.side_effect = [bundle(0.10), bundle(0.12)]
+        before = retrieval_counts()
+
+        asyncio.run(collect())
+
+        assert graded.retrieval.ainvoke.await_count == 2
+        assert retrieval_changes(before) == {low_confidence_key("true"): 1.0, RETRIES: 1.0}
+
+    def test_retrieval_that_passes_first_time_counts_no_retry(self, graded):
+        graded.retrieval.ainvoke.side_effect = [bundle(0.80)]
+        before = retrieval_counts()
+
+        asyncio.run(collect())
+
+        assert retrieval_changes(before) == {low_confidence_key("false"): 1.0}
+
+    def test_retry_that_rescues_the_answer_counts_a_confident_outcome_and_a_retry(self, graded):
+        graded.retrieval.ainvoke.side_effect = [bundle(0.10), bundle(0.45)]
+        before = retrieval_counts()
+
+        asyncio.run(collect())
+
+        assert retrieval_changes(before) == {low_confidence_key("false"): 1.0, RETRIES: 1.0}
+
+    def test_skipped_retry_is_not_counted_as_a_retry(self, graded):
+        graded.rewrite.return_value = "question"  # repeats the original query
+        graded.retrieval.ainvoke.side_effect = [bundle(0.20)]
+        before = retrieval_counts()
+
+        asyncio.run(collect())
+
+        assert graded.retrieval.ainvoke.await_count == 1
+        assert retrieval_changes(before) == {low_confidence_key("true"): 1.0}
+
+    def test_rerank_failure_without_retry_is_one_low_confidence_outcome(self, graded):
+        graded.retrieval.ainvoke.side_effect = [failed_rerank("timeout")]
+        before = retrieval_counts()
+
+        asyncio.run(collect())
+
+        assert retrieval_changes(before) == {low_confidence_key("true"): 1.0}
+
+    def test_direct_route_does_not_touch_retrieval_metrics(self, providers):
+        providers.router.return_value.route = "direct"
+        before = retrieval_counts()
+
+        asyncio.run(collect())
+
+        assert retrieval_changes(before) == {}
+
+    def test_cache_hit_does_not_touch_retrieval_metrics(self, providers):
+        providers.cache.get_cached_response.return_value = {
+            "answer": "快取回答", "sources": ["快取手冊"], "similarity": 0.99,
+        }
+        before = retrieval_counts()
+
+        asyncio.run(collect())
+
+        providers.retrieval.ainvoke.assert_not_awaited()
+        assert retrieval_changes(before) == {}
+
+    def test_input_guardrail_does_not_touch_retrieval_metrics(self, providers, monkeypatch):
+        monkeypatch.setattr(chat, "detect_prompt_injection", lambda *_, **__: (True, "input_injection"))
+        before = retrieval_counts()
+
+        asyncio.run(collect())
+
+        assert retrieval_changes(before) == {}
+
+    def test_metric_failure_does_not_fail_the_request(self, graded, monkeypatch):
+        class Exploding:
+            def labels(self, *args, **kwargs):
+                raise RuntimeError("metric backend down")
+
+            def inc(self, *args, **kwargs):
+                raise RuntimeError("metric backend down")
+
+        monkeypatch.setattr(observability, "RAG_RETRIEVAL", Exploding())
+        monkeypatch.setattr(observability, "RAG_RETRIEVAL_RETRIES", Exploding())
+        graded.retrieval.ainvoke.side_effect = [bundle(0.10), bundle(0.12)]
+
+        events = asyncio.run(collect())
+
+        assert events[-1].type == "done"
+        assert next(e for e in events if e.type == "metadata").response_source == "rag"

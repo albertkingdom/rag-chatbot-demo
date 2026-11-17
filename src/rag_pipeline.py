@@ -18,6 +18,7 @@ from langchain_core.runnables import RunnableLambda
 from langsmith import traceable
 
 from .config import BM25_TOP_N, RERANK_TIMEOUT_SECONDS, RRF_K, VECTOR_TOP_N
+from .observability import record_rerank
 from .rerank_stage import RERANK_TOP_K, rerank_candidates
 from .services import (
     get_hybrid_retriever,
@@ -104,16 +105,19 @@ async def _rerank_or_fallback(query: str, candidates: list) -> tuple[dict, str |
             asyncio.to_thread(rerank_candidates, query, candidates, scorer),
             timeout=RERANK_TIMEOUT_SECONDS,
         )
-        return ranked, None
     except Exception as e:
         kind = "timeout" if isinstance(e, _TIMEOUT_ERRORS) else "error"
+        elapsed = time.perf_counter() - started
+        record_rerank(kind, elapsed)
         logger.warning(
             "Rerank failed (%s, %s) after %.0f ms; using fused order",
             kind,
             type(e).__name__,
-            (time.perf_counter() - started) * 1000,
+            elapsed * 1000,
         )
         return {"docs": candidates[:RERANK_TOP_K], "rerank_scores": []}, kind
+    record_rerank("ok", time.perf_counter() - started)
+    return ranked, None
 
 
 @traceable(name="Prepare Context")

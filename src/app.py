@@ -9,9 +9,11 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from . import config
 from .api_errors import api_error, install_api_error_handlers
 from .access_control import mount_auth
 from .api import router as api_router
@@ -30,6 +32,10 @@ from .services import (  # noqa: F401
 from .rag_pipeline import get_retrieval_chain, get_generation_chain  # noqa: F401
 
 
+async def _metrics(request) -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 def create_app() -> FastAPI:
     application = FastAPI()
     install_api_error_handlers(application)
@@ -39,6 +45,12 @@ def create_app() -> FastAPI:
     @application.post("/login", include_in_schema=False)
     async def legacy_login_redirect():
         return RedirectResponse("/login", status_code=303)
+
+    # Off by default: /metrics is outside /api, so the auth middleware does not
+    # protect it. Read from the module at call time so tests can switch it, and
+    # registered before the SPA catch-all below so the catch-all cannot answer.
+    if config.METRICS_ENABLED:
+        application.add_route("/metrics", _metrics, methods=["GET"], include_in_schema=False)
 
     dist_dir = Path(
         os.environ.get(

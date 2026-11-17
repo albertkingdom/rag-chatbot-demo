@@ -27,6 +27,7 @@ from .chat_history_service import ChatHistoryService
 from .config import CACHE_ENABLED, CACHE_SIMILARITY_THRESHOLD, RETRIEVAL_MAX_RETRIES
 from .conversation_db import get_conversation_db
 from .guardrails import detect_pii, detect_prompt_injection, get_guardrail_message
+from .observability import record_retrieval
 from .query_router import route_query
 from . import retrieval_grader
 from .rag_pipeline import _today_str, format_history
@@ -160,6 +161,10 @@ async def _retrieve_best(rewritten_query: str) -> _RetrievalOutcome:
         outcome.low_confidence,
         retry_skipped,
     )
+    # Once per RAG request, at the point the retrieval result is decided.
+    # Retries are the extra retrievals actually executed (a skipped retry
+    # makes none).
+    record_retrieval(low_confidence=outcome.low_confidence, retries=len(attempt_scores) - 1)
     return outcome
 
 
