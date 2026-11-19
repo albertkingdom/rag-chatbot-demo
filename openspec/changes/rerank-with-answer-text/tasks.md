@@ -9,5 +9,5 @@
 
 ## 3. 評估與文件
 
-- [ ] 3.1 評估改在 `switch-reranker-to-vertex` 的任務 3.1 一併進行：2026-11-19 量測途中 Pinecone 重排額度用完，同一分支接著把重排器換成 Vertex AI Ranking，評估以最終上線的組合（Vertex＋取較高分）進行。已完成的修正前後離線量測（BGE，第一次檢索）：65 題手冊問題低信心 27 → 5 題，18 題手冊外問題誤判通過 2 → 2 題，重排失敗 0 次。驗證：`switch-reranker-to-vertex` 任務 3.1 完成，且本項的 BGE 數字寫進 `architecture.md` 的 Evaluation 段落。
-- [ ] 3.2 文件更新改在 `switch-reranker-to-vertex` 的任務 3.2 一併進行（第 5 節「重排」說明每個條目以問題與問題＋答案評分、取較高分；第 7 節改寫「top-1 分數這麼低，代表沒有任何 FAQ 問題相似」的說法；第 8 節註明 `top1_score` 從這次修改起與先前紀錄不能直接比較；`docs/sli-slo.md` 基準段落補註已處理）。驗證：`switch-reranker-to-vertex` 任務 3.2 完成且涵蓋上述各點。
+- [x] 3.1 評估改在 `switch-reranker-to-vertex` 的任務 3.1 一併進行：2026-11-19 量測途中 Pinecone 重排額度用完，同一分支接著把重排器換成 Vertex AI Ranking，評估以最終上線的組合（Vertex＋取較高分）進行。已完成的修正前後離線量測（BGE，第一次檢索）：65 題手冊問題低信心 27 → 5 題，18 題手冊外問題誤判通過 2 → 2 題，重排失敗 0 次。驗證：`switch-reranker-to-vertex` 任務 3.1 完成，且本項的 BGE 數字寫進 `architecture.md` 的 Evaluation 段落。
+- [x] 3.2 文件更新改在 `switch-reranker-to-vertex` 的任務 3.2 一併進行（第 5 節「重排」說明每個條目以問題與問題＋答案評分、取較高分；第 7 節改寫「top-1 分數這麼低，代表沒有任何 FAQ 問題相似」的說法；第 8 節註明 `top1_score` 從這次修改起與先前紀錄不能直接比較；`docs/sli-slo.md` 基準段落補註已處理）。驗證：`switch-reranker-to-vertex` 任務 3.2 完成且涵蓋上述各點。

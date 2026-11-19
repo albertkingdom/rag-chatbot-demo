@@ -27,7 +27,7 @@ flowchart TB
     subgraph External["External Services"]
         OpenAI[OpenAI Embeddings]
         Pinecone[(Pinecone)]
-        Reranker[Pinecone Inference<br/>bge-reranker-v2-m3]
+        Reranker[Vertex AI Ranking<br/>semantic-ranker-default-005]
         OpenRouter[OpenRouter<br/>Gemini 2.5 Flash]
         LangSmith[LangSmith]
     end
@@ -78,8 +78,8 @@ flowchart TD
     OutGuard2 -- 通過 --> SaveC[寫入 Redis 對話 · MongoDB] --> CacheAns([回覆 source=cache])
 
     Cache -- miss --> Retrieve[Hybrid Retrieve<br/>BM25 top10 + Pinecone top10<br/>RRF k=60 → top5]
-    Retrieve --> Rerank[Rerank（Pinecone Inference）→ top3]
-    Rerank --> Grade{保留結果的<br/>rerank top-1 ≥ 0.3?}
+    Retrieve --> Rerank[Rerank（Vertex AI Ranking，問題與問題＋答案取較高分）→ top3]
+    Rerank --> Grade{保留結果的<br/>rerank top-1 ≥ 0.4?}
     Grade -- 否, 未達重試上限且改寫查詢未重複 --> Retry[LLM 改寫查詢] --> Retrieve
     Grade -- 是 --> Gen[Gemini 生成<br/>context + 最近 3 輪]
     Grade -- 否, 無法再重試 --> LowGen[Gemini 生成<br/>低信心說明 · context 與來源皆為空] --> Prefix[答案開頭加固定說明]
@@ -98,7 +98,7 @@ flowchart TD
 以 regex 掃描 prompt injection（`INPUT_INJECTION_PATTERNS`，中英文）。規則用「動詞加目標」的句型，例如「ignore previous instructions」「reveal the system prompt」「reveal your API key」「繞過安全規則」，不用單字：`password`、`token`、`secret`、`api key`、`bypass` 單獨出現不會被擋，所以「How do I reset my password?」「What is a token?」可以通過。命中即回覆統一安全訊息，並以 `response_source="guardrail"` 寫入 MongoDB，不呼叫任何 LLM。
 
 ### 1. 混合路由與查詢改寫（`query_router.py`）
-- **Stage 1 規則層（零延遲）**：先比對知識庫關鍵字 → `rag`。知識庫是 CarbonM 系統操作 Q&A，所以關鍵字包含碳盤查術語（碳、排放、燃料、冷媒、scope 1/2/3…）與系統功能（密碼、登入、帳號、邊界、審核、清冊、報告書…）；關鍵字最初依照先前的知識庫挑選；換成範例手冊後補上只在 CarbonM 情境出現的複合詞（盤查年度、盤查報告、範疇二、範疇三、第三方查證、係數庫），規則層可直接判定範例手冊 60 題中的 43 題（加上評估集共 52/72）。「係數」「盤查」「範疇」「廠區」「填報」「報表」「兩步驟驗證」等單詞不加入：子字串比對優先於 LLM，會讓「相關係數」「倉庫庫存盤查」「Google 表單填報截止」「iPhone 兩步驟驗證」這類問題直接走 rag。這些問題交給 LLM 層判斷，29 個一般問題反例列在 `scripts/eval_sample_manual.py` 的 `ROUTING_NEGATIVES`，規則層測試與評估腳本共用。代價是一般問題若含這些詞（例如「忘記 Gmail 密碼」）也會走 rag，此時 prompt 允許 context 不相關時改用一般知識回答。真實環境實測（2026-10-14）中，「忘記 Gmail 密碼」的 top-1 重排分數為 0.645，高於門檻，所以**不會**被視為低信心，而是以知識庫的重設密碼流程回答並附上來源；只有分數低於門檻的誤路由問題才會被視為低信心：開頭加上固定說明、不送來源、也不寫入語意快取（見第 7 節）。再比對一般問答模式（招呼、感謝、簡單算式、翻譯、寫程式、笑話）→ `direct`；其餘為 `uncertain`。領域關鍵字優先，避免同時符合兩者的查詢被誤判為 direct。
+- **Stage 1 規則層（零延遲）**：先比對知識庫關鍵字 → `rag`。知識庫是 CarbonM 系統操作 Q&A，所以關鍵字包含碳盤查術語（碳、排放、燃料、冷媒、scope 1/2/3…）與系統功能（密碼、登入、帳號、邊界、審核、清冊、報告書…）；關鍵字最初依照先前的知識庫挑選；換成範例手冊後補上只在 CarbonM 情境出現的複合詞（盤查年度、盤查報告、範疇二、範疇三、第三方查證、係數庫），規則層可直接判定範例手冊 60 題中的 43 題（加上評估集共 52/72）。「係數」「盤查」「範疇」「廠區」「填報」「報表」「兩步驟驗證」等單詞不加入：子字串比對優先於 LLM，會讓「相關係數」「倉庫庫存盤查」「Google 表單填報截止」「iPhone 兩步驟驗證」這類問題直接走 rag。這些問題交給 LLM 層判斷，29 個一般問題反例列在 `scripts/eval_sample_manual.py` 的 `ROUTING_NEGATIVES`，規則層測試與評估腳本共用。代價是一般問題若含這些詞（例如「忘記 Gmail 密碼」）也會走 rag，此時 prompt 允許 context 不相關時改用一般知識回答。真實環境實測中，「忘記 Gmail 密碼」的 top-1 重排分數高於門檻（2026-10-14 BGE 為 0.645；2026-11-19 改用 Vertex 並取較高分後為 0.549，門檻 0.4），所以**不會**被視為低信心，而是以知識庫的重設密碼流程回答並附上來源；只有分數低於門檻的誤路由問題才會被視為低信心：開頭加上固定說明、不送來源、也不寫入語意快取（見第 7 節）。再比對一般問答模式（招呼、感謝、簡單算式、翻譯、寫程式、笑話）→ `direct`；其餘為 `uncertain`。領域關鍵字優先，避免同時符合兩者的查詢被誤判為 direct。
 - **規則命中且有對話歷史**：只呼叫 LLM 判斷是否為追問並改寫（`_rewrite_only`，結構化輸出 `RewriteResult`：`is_follow_up`、`rewritten_query`），把追問（如「4.2 呢？」）改寫成獨立問題。
 - **只有追問才採用改寫**：`is_follow_up` 為 true 才用模型的改寫結果；判斷為不是追問、沒有判斷結果或改寫為空時，由程式直接使用原話（`_choose_query`），不採用模型輸出的文字。原因：只靠提示詞要求「完整問題原樣回傳」不可靠，2026-11-19 以實際對話歷史重現時，「忘記密碼怎麼辦？」被改寫成「忘記CarbonM的密碼怎麼辦？」，語意快取比對不到，檢索 top-1 分數也從 1.0 降到 0.454。沒有對話歷史時，LLM 路由的改寫結果一律換回原話。
 - **Stage 2 LLM 層**：`uncertain` 的查詢交由 Gemini 2.5 Flash，以 Pydantic 結構化輸出（`RouterResult`）一次回傳 `route`、`rewritten_query`、`reasoning`、`is_follow_up`（必填，有預設值的欄位模型可能省略）。 prompt 列出知識庫涵蓋的功能類別（帳號與安全、角色與權限、廠區與盤查邊界、排放源與排放係數、數據填報匯入與審核、報表清冊與儀表板、第三方查證），並規定：碳盤查與排放的概念，或在系統中的操作且沒有指明其他產品 → `rag`；指明其他產品（Gmail、iPhone、Excel、Google 表單）、一般 IT／資安概念、其他領域的同名詞（統計的相關係數、倉庫的庫存盤查）、無關操作、常識與閒聊 → `direct`。2026-10-21 實測：範例手冊與評估集中交給 LLM 的 20 題全部判為 `rag`（先前「如何修改個人資料？」「如何開啟兩步驟驗證？」會被判為 `direct`），28 個交給 LLM 的反例全部判為 `direct`，連續兩次結果相同。
@@ -126,16 +126,18 @@ flowchart TD
 - **RRF 融合**：以 Reciprocal Rank Fusion（`RRF_K=60`）合併兩路排名，取前 `FUSION_TOP_M`（5）筆（由 10 減半以縮短重排時間）。
 - BM25 與向量結果、融合分數、fallback 原因記錄於 `fusion_metadata`，供 LangSmith 追蹤。
 
-### 5. 重排（`rerank_stage.py`、`rag_pipeline.py`）
-`BAAI/bge-reranker-v2-m3` 由 Pinecone Inference 托管，web 程序不載入模型權重。`src/hosted_reranker.py` 的 client 以 `requests` 直接呼叫 Pinecone rerank REST API（`truncate=END`，每次最多 100 筆），依回傳的 index 把分數放回輸入順序，再由 `rerank_stage.py` 取 Top 3（`RERANK_TOP_K`）。分數範圍 0 到 1，與原本本機模型套 sigmoid 後的尺度相同，所以 `GRADE_SCORE_THRESHOLD` 沿用（一致性數據見 Evaluation）。
+### 5. 重排（`rerank_stage.py`、`rag_pipeline.py`、`vertex_reranker.py`）
+重排使用 Vertex AI Ranking API（`semantic-ranker-default-005`），web 程序不載入模型權重。`src/vertex_reranker.py` 的 client 以 Google 應用程式預設憑證（ADC）呼叫本專案（`GCP_PROJECT_ID`）的 `default_ranking_config:rank`：正式站是 Cloud Run 的執行期 service account（`roles/discoveryengine.user`），本機是掛進容器的 `gcloud auth application-default login` 憑證（只有使用者憑證會補上配額專案）。依回傳的 `id` 把分數放回輸入順序，沒有 `score` 欄位的 record 視為 0；每次最多 100 段。
 
-- **逾時**：`rag_pipeline.py` 以 `asyncio.to_thread` 呼叫並用 `RERANK_TIMEOUT_SECONDS`（5 秒）限制等待時間；client 端 HTTP 逾時再多 1 秒，請求只送一次、不重試。client 共用一個 `requests.Session`，連續重排時重用連線，不必每次重做 TCP 與 TLS 交握。
-- **失敗退回**：取得 client 失敗（例如沒有 `PINECONE_API_KEY`）、API 回錯誤或逾時，請求不會失敗：改用融合排序的前 3 筆、`rerank_scores` 為空，並帶 `rerank_error`（`timeout` 或 `error`）。`chat_service.py` 看到 `rerank_error` 就停止重試，這次檢索走低信心路徑（見第 7 節）：生成不帶 context、加上固定說明、不送來源、不寫快取；對話紀錄的 top-1 分數為 null。沒有候選時不呼叫重排服務。
-- **紀錄**：失敗只以 warning 記錄種類、例外類別與耗時，不記錄查詢、文件內容、例外訊息或 traceback。LangSmith 的 span 名稱是 "Rerank (Pinecone)"。
-- **費用**：約每千次請求 2 美元；每次 RAG 請求重排一次，重試時再一次。
+- **每個條目以兩段文字評分、取較高分**：檢索 chain 傳給 `rerank_candidates` 的 `_faq_passages` 為每個候選產生「問題」與「問題＋空格＋答案」兩段（答案缺少或空白時只用問題），兩段在同一次呼叫送出，條目分數取較高者，再取 Top 3（`RERANK_TOP_K`）。知識庫只對問題文字建索引，使用者常問答案裡的細節（長度規則、解鎖方式、有效期限），只比對問題文字時，正確條目雖在候選中卻分數極低。重排回傳的分數數量與段數不符時拋錯，交給退回處理。
+- **逾時**：`rag_pipeline.py` 以 `asyncio.to_thread` 呼叫並用 `RERANK_TIMEOUT_SECONDS`（5 秒）限制等待時間；client 端 HTTP 逾時再多 1 秒，請求只送一次、不重試：`AuthorizedSession` 以 `max_refresh_attempts=0` 建立，收到 401 不會更新 token 後重送（token 仍會在到期前主動更新）。client 共用一個 session，憑證在第一次呼叫時才取得（以 lock 保護）。
+- **失敗退回**：取得 client 失敗（例如沒有 `GCP_PROJECT_ID`）、取得憑證失敗、API 回錯誤（含 401、403）或逾時，請求不會失敗：改用融合排序的前 3 筆、`rerank_scores` 為空，並帶 `rerank_error`（`timeout` 或 `error`）。`chat_service.py` 看到 `rerank_error` 就停止重試，這次檢索走低信心路徑（見第 7 節）：生成不帶 context、加上固定說明、不送來源、不寫快取；對話紀錄的 top-1 分數為 null。沒有候選時不呼叫重排服務。
+- **紀錄**：失敗只以 warning 記錄種類、例外類別與耗時，不記錄查詢、文件內容、例外訊息或 traceback。
+- **費用**：依查詢計費，約每千次 1 美元（一次查詢最多 100 段）；每次 RAG 請求重排一次，重試時再一次。沒有每月硬性上限，超過免費額度只計費、不中斷，建議在 GCP Billing 設預算警示。
+- **為什麼從 Pinecone 換成 Vertex（2026-11-19）**：Pinecone Starter 的 bge-reranker-v2-m3 每月只有 500 次，本機開發、評估與正式站共用同一個專案與 key，用完後重排被暫停、正式站全部走低信心路徑。實測數據見 Evaluation。`src/hosted_reranker.py`（Pinecone client）保留給 `scripts/compare_rerankers.py` 使用，服務本身不再使用。
 
 ### 6. 自省式檢索（`retrieval_grader.py`）
-以 reranker top-1 分數判斷檢索品質，低於 `GRADE_SCORE_THRESHOLD`（0.3）時，由 LLM 參考低品質結果改寫查詢並重跑檢索與重排，最多 `RETRIEVAL_MAX_RETRIES`（1）次。直接沿用重排分數，不額外呼叫 LLM 評分。
+以 reranker top-1 分數判斷檢索品質，低於 `GRADE_SCORE_THRESHOLD`（0.4）時，由 LLM 參考低品質結果改寫查詢並重跑檢索與重排，最多 `RETRIEVAL_MAX_RETRIES`（1）次。直接沿用重排分數，不額外呼叫 LLM 評分。
 
 - **保留較佳結果**：重試結果只有在 top-1 分數嚴格較高時才取代原結果，分數相同或較差都保留較早的結果；沒有檢索結果視為最低分。是否通過評分，以最終保留的結果判斷。
 - **停止重複重試**：改寫後的查詢（去除前後空白）為空，或與任何已試過的查詢相同（包含改寫失敗時回傳原查詢），就不再檢索並結束重試。改寫用的那一次 LLM 呼叫仍然會發生，省下的是檢索與重排。
@@ -147,7 +149,7 @@ Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（�
 
 **低信心**：最終保留的檢索結果未通過評分（top-1 低於門檻，或完全沒有結果；等於門檻視為通過）時，視為低信心。此時仍會生成，但：
 
-- prompt 的 system 訊息加入低信心說明（`LOW_CONFIDENCE_NOTE`）：只有資料明確寫出答案時才可引用；關於 CarbonM 產品本身（功能、版本、價格、是否支援某項目等）而資料沒寫的問題，要說明無法確認，不推測也不斷言有或沒有；只有一般常識性的問題才以一般知識簡答；不得杜撰具體操作步驟、畫面或選單名稱。低信心時**不把檢索到的 context 交給模型**（context 以空字串傳入）：top-1 分數這麼低，代表沒有任何 FAQ 問題與使用者的問題相似，內容只會讓模型去描述無關的段落（真實環境曾出現「這段文字主要說明了如何進入…儀表板」）。模型只靠一般知識與提示詞回答。
+- prompt 的 system 訊息加入低信心說明（`LOW_CONFIDENCE_NOTE`）：只有資料明確寫出答案時才可引用；關於 CarbonM 產品本身（功能、版本、價格、是否支援某項目等）而資料沒寫的問題，要說明無法確認，不推測也不斷言有或沒有；只有一般常識性的問題才以一般知識簡答；不得杜撰具體操作步驟、畫面或選單名稱。低信心時**不把檢索到的 context 交給模型**（context 以空字串傳入）：top-1 分數（問題與問題＋答案兩段中較高者）低於門檻，代表沒有任何 FAQ 條目的問題或答案與使用者的問題相關，內容只會讓模型去描述無關的段落（真實環境曾出現「這段文字主要說明了如何進入…儀表板」）。模型只靠一般知識與提示詞回答。
 - 生成完成後、輸出防護之前，伺服器在答案開頭固定加上 `LOW_CONFIDENCE_PREFIX` 與一個空行，所以標示不依賴模型是否遵守；串流文字、Redis 對話與 MongoDB 紀錄是同一份文字。
 - 加標示前，先以 `strip_low_confidence_notice`（`rag_pipeline.py`）移除模型輸出中完全相同的固定說明（連同其後的空白），再由伺服器加上一次，所以說明恰好出現一次。模型會從對話歷史抄寫上一輪低信心回答的說明（2026-11-18 本機實測曾出現兩次），prompt 的「不需要重複說明」不足以避免。direct、高信心 rag 與語意快取命中的回答也會移除，避免一般回答被誤標；移除後為空的低信心回答不加說明。另外，`format_history` 把對話歷史組進生成 prompt 時，會先移除助理回答中的固定說明（Redis 與 MongoDB 儲存的內容不變），讓模型看不到可模仿的範例；輸出端的去重只處理一字不漏的抄寫，這一步降低模型改寫後再寫一次的機會。
 - 回答為空時不加固定說明。
@@ -180,6 +182,8 @@ Gemini 2.5 Flash（OpenRouter，temperature 0）。Prompt 包含今天日期（�
 
 rag 路徑的 MongoDB 紀錄（包含被輸出防護攔截的）在 `metadata.retrieval` 記錄：`top1_score`（保留結果的 top-1 分數，無結果為 null）、`attempt_scores`（每次實際檢索的 top-1 分數，原查詢在前）、`retry_count`、`kept_attempt`（0 為原查詢）、`low_confidence`、`threshold`（評分當下的門檻）與 `retry_skipped`（是否因改寫查詢為空或重複而提早結束重試）。快取命中與 direct 路徑沒有檢索，不帶此欄位。
 
+`top1_score` 與 `threshold` 的尺度隨重排方式改變：2026-11-19 起改用 Vertex AI Ranking 並取「問題／問題＋答案」較高分、門檻 0.4，與先前的 Pinecone BGE（只比對問題、門檻 0.3）紀錄不能直接比較；Grafana 的低信心比例也以切換時間為分界。
+
 Redis 短期對話以 `CHAT_HISTORY_TTL_SECONDS` 控制（預設閒置 30 分鐘過期），保留 `CHAT_HISTORY_MAX_TURNS` 輪。
 
 ## Sequence Diagram（RAG 路徑）
@@ -195,7 +199,7 @@ sequenceDiagram
     participant R as Redis
     participant B as BM25
     participant P as Pinecone
-    participant RR as Pinecone Inference rerank
+    participant RR as Vertex AI Ranking
     participant M as MongoDB
 
     U->>F: POST /api/v1/chat/stream
@@ -223,7 +227,7 @@ sequenceDiagram
             F->>P: vector top 10 (after BM25)
             F->>F: RRF fuse → top 5
             F->>RR: rerank → top 3
-            opt top-1 score < 0.3 (max 1 retry; keep the better attempt, stop on a repeated query)
+            opt top-1 score < 0.4 (max 1 retry; keep the better attempt, stop on a repeated query)
                 F->>G: rewrite for retry
                 F->>B: re-retrieve
                 F->>P: re-retrieve
@@ -337,9 +341,9 @@ flowchart LR
 | Fusion | `FUSION_TOP_M` | 5 | `config.py` |
 | Reranking | `RERANK_TOP_K` | 3 | `rerank_stage.py` |
 | Reranking | `RERANK_TIMEOUT_SECONDS` | 5（須為大於 0 的有限數字，無效值記警告並回到 5） | `config.py`（env 可覆寫；docker-compose.yml 與 Terraform 尚未傳遞這個變數，正式環境要調整得先補上） |
-| Reranking | Model / per-request limit | `bge-reranker-v2-m3` on Pinecone Inference / 100 documents | `hosted_reranker.py` |
+| Reranking | Model / per-request limit | `semantic-ranker-default-005` on Vertex AI Ranking / 100 passages（每個候選兩段） | `vertex_reranker.py`（專案由 `GCP_PROJECT_ID` 決定） |
 | BM25 Reload | `BM25_RELOAD_INTERVAL_SECONDS` | 30 | `config.py`（env 可覆寫） |
-| Retrieval Grader | `GRADE_SCORE_THRESHOLD` | 0.3 | `config.py`（env 可覆寫） |
+| Retrieval Grader | `GRADE_SCORE_THRESHOLD` | 0.4（依 2026-11-19 Vertex 實測訂定，樣本小） | `config.py`（env 可覆寫） |
 | Retrieval Grader | `RETRIEVAL_MAX_RETRIES` | 1 | `config.py`（env 可覆寫） |
 | Semantic Cache | `CACHE_SIMILARITY_THRESHOLD` / `CACHE_TTL_SECONDS` | 0.95（嚴格大於）/ 24 hours | `config.py` |
 | Semantic Cache | `CACHE_MAX_ENTRIES` | 50（索引上限，同時是查詢比對的範圍；須為不小於 1 的整數，未設定或無效時為 50，無效值會記錄警告） | `config.py`（env 可覆寫；正式環境的 docker-compose.yml 與 Terraform 尚未傳遞這個變數，目前無法在正式環境調整） |
@@ -360,7 +364,9 @@ flowchart LR
 - **切換到 Pinecone 前的一致性檢查（2026-11-12）**：在 demo index 上以 `compare_rerankers.py --providers bge-local,pinecone-bge` 比較。manual 12 題、60 段：最大分數差 0.0014、平均 0.0001，top-3 順序全部相同，兩者 hit@1 11/12、hit@3 12/12。synthetic 2 題、16 段：最大差 0.0005。延遲（Mac 上的 Docker，不代表 Cloud Run）：本機 p50 151 ms、最大 257 ms；Pinecone p50 456 ms、最大 1883 ms。Pinecone 的單次延遲較高，換取的是映像檔不帶 torch 與 2GB 權重、冷啟動不必載入模型。切換後同一天以 `scripts/eval_sample_manual.py --audit-index carbon-assistant-sample-index` 在 demo index 重跑 RAGAS：faithfulness 1.0、answer_relevancy 0.943、context_precision 0.958、context_recall 1.0，與 2026-10-21 的報告差距都在 0.05 內，沒有任何一題重排失敗，正式 index 的向量 ID 前後一致；差距屬雜訊，所以沒有更新 `tests/rag_eval_report.json`。
 - ragas（0.2.x 到 0.4.3）在 import 時需要 langchain-community 0.4 已移除的 Vertex AI 類別，而 langchain-community 不能降回 0.3。`tests/ragas_compat.py` 在 import ragas 前補上不會被使用的替代類別，`tests/test_ragas_compat.py` 確保 ragas 能 import。
 - 題庫 12 題，`ground_truth` 逐字取自 `examples/carbonm_sample_manual.xlsx`，五類主題（帳號、盤查邊界、排放源、數據審核、報表）各至少 2 題；`tests/test_sample_manual.py` 檢查每題答案都在範例手冊中。
-- `tests/rag_eval_report.json` 於 2026-10-21 以 `scripts/eval_sample_manual.py --audit-index carbon-assistant-qa-index` 在 demo index 上產生：faithfulness 1.0、answer_relevancy 0.95、context_precision 0.94、context_recall 1.0，全部高於 0.7 門檻，12 題的標準答案來源都出現在融合候選中，正式 index 的向量 ID 前後一致。同一天較早的執行（手冊尚未改寫兩個與原手冊相同的問句時）為 1.0、0.93、0.86、0.92，當時「有好幾個廠區，要怎麼調整今年要納入盤查的範圍？」找不到來源；手冊問句改為「多廠區要怎麼切換盤查邊界？」後與口語問法有共同字詞而命中。知識庫只對問題文字建索引，口語問法與手冊問句用詞差異大時仍可能漏檢。評分帶有 LLM 隨機性，比較前後版本時應多跑幾次取平均。
+- `tests/rag_eval_report.json` 於 2026-11-19 以 `scripts/eval_sample_manual.py --audit-index carbon-assistant-sample-index` 在 demo index 上產生（重排改用 Vertex AI Ranking、問題／問題＋答案取較高分、門檻 0.4）：faithfulness 0.979、answer_relevancy 0.955、context_precision 1.0、context_recall 1.0，全部高於 0.7 門檻，12 題的標準答案來源都出現在融合候選中，路由關卡通過（規則層判定 52/72），正式 index 的向量數前後一致（60）。與上一份報告（2026-10-21：1.0、0.946、0.944、1.0）相比，faithfulness 與 answer_relevancy 的差距在雜訊內，context_precision +0.056（只跑一次）。Pinecone 重排額度用完，無法在不含這次變更的版本重跑基準，所以差距是幾個變更的總和。
+- **重排改用 Vertex 前後的低信心量測（2026-11-19，demo index，第一次檢索、不含重試）**：在 web 容器內對 `scripts/load_baseline_questions.json` 的 65 題手冊問題執行 `get_retrieval_chain().ainvoke`，以 `get_top_score` 與門檻判斷；手冊外 18 題為 `offtopic` 鍵 12 題加上 6 題（忘記 Gmail 密碼、iPhone 兩步驟驗證、Excel 匯出 PDF、公司電費、碳權價格、台灣碳費）。BGE 只比對問題（門檻 0.3）：手冊內低信心 27、手冊外誤判 2；BGE 取較高分（0.3）：5、2；Vertex 取較高分（0.4）：**3、2**。誤判的兩題都是既有的關鍵字誤路由。Vertex 在 0.35 到 0.5 之間的低信心與誤判數相同，12 題評估題 hit@1 12/12、hit@3 12/12；本機每次呼叫 p50 168 ms、最長 272 ms（Pinecone BGE 2026-11-12 為 456 ms、1,883 ms）。
+- 2026-10-21 的前一份報告：`tests/rag_eval_report.json` 於 2026-10-21 以 `scripts/eval_sample_manual.py --audit-index carbon-assistant-qa-index` 在 demo index 上產生：faithfulness 1.0、answer_relevancy 0.95、context_precision 0.94、context_recall 1.0，全部高於 0.7 門檻，12 題的標準答案來源都出現在融合候選中，正式 index 的向量 ID 前後一致。同一天較早的執行（手冊尚未改寫兩個與原手冊相同的問句時）為 1.0、0.93、0.86、0.92，當時「有好幾個廠區，要怎麼調整今年要納入盤查的範圍？」找不到來源；手冊問句改為「多廠區要怎麼切換盤查邊界？」後與口語問法有共同字詞而命中。知識庫只對問題文字建索引，口語問法與手冊問句用詞差異大時仍可能漏檢。評分帶有 LLM 隨機性，比較前後版本時應多跑幾次取平均。
 
 ## Performance Optimizations
 
@@ -369,7 +375,7 @@ flowchart LR
 | Embedding 改批次（100 筆/次） | `build_vector_store.py` | API 呼叫數約減少 100 倍，同步時間明顯縮短（見下方估計） |
 | Rerank 改 `asyncio.to_thread` | `rag_pipeline.py` | 重排的 HTTP 呼叫不阻塞 event loop |
 | Fusion 候選 10 → 5 | `config.py` | 每次重排的文件數減半 |
-| 重排改用 Pinecone Inference | `hosted_reranker.py` | 映像檔不帶 torch、sentence-transformers 與模型權重，冷啟動不必載入模型 |
+| 重排改用托管服務（Pinecone Inference，2026-11-19 起 Vertex AI Ranking） | `vertex_reranker.py` | 映像檔不帶 torch、sentence-transformers 與模型權重，冷啟動不必載入模型；Vertex 本機實測 p50 168 ms（Pinecone BGE 為 456 ms） |
 | 規則路由 | `query_router.py` | 明確查詢不需呼叫 LLM |
 | 語意快取 | `cache_service.py` | 相似問題跳過整條 RAG |
 | 答案分段 yield | `chat_service.py` | 以固定大小分段串流 NDJSON `delta` |
@@ -397,11 +403,11 @@ flowchart LR
 | 輸入端字串規則有誤擋也有漏擋 | `guardrails.py`：`INPUT_INJECTION_PATTERNS` | 相對舊版單字比對，「Send me the API key」「Copy the access token」「繞過內容審核」等改寫後的索取或繞過句型不再被擋（為了不誤擋「What is a token?」「How do I reset my password?」）；描述第三方的句子如「棋手忽略先前的規則」「Why do CSS declarations override earlier rules」會被擋。依上方的防護定位接受此取捨 |
 | 上傳的手冊內容可能帶有間接 injection | `manual_service.py`、`rag_pipeline.py` | 所有登入者都能上傳手冊，內容會進入生成 prompt；模型沒有工具，影響限於回答內容 |
 | 用雙空格或「 - 」分隔的卡號不會被偵測 | `guardrails.py`：`credit_card` | 規則只允許數字間一個空白或連字號，「4111  1111  1111  1111」會通過；放寬時需保留 Luhn、年份串排除與分組切分 |
-| 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的檢索分數 0.645，高於門檻，仍以重設密碼流程回答並附來源 |
+| 關鍵字誤路由的問題不會被低信心機制攔下 | `query_router.py` 規則層 | 「忘記 Gmail 密碼」的 top-1 分數高於門檻（2026-10-14 BGE 為 0.645；2026-11-19 Vertex 取較高分為 0.549，門檻 0.4），仍以重設密碼流程回答並附來源 |
 | 快取查詢與寫入以同步 Redis 呼叫在 async 路徑執行 | `chat_service.py` 呼叫 `cache_service.py` | 查詢期間阻塞同一個事件迴圈；快取查詢範圍擴大後，每次讀回的資料量更大 |
 | 同一 index 更新手冊後仍可能寫入舊快取 | `build_vector_store.py` 同步後清快取、`hybrid_retriever.py` 每 30 秒檢查 BM25 pointer | 清除之後、web 載入新 BM25 之前（最長約 90 秒，含 GCS FUSE stat cache），或同步前已開始的請求，仍可能寫入依舊資料產生的答案並保留 24 小時；可用資料版本作為命名空間的一部分解決 |
 | 命中計數以 get、ttl、setex 三步更新，不是原子操作 | `cache_service.py`：`_increment_hit_count` | 與同一 key 的重新寫入或淘汰交錯時，可能以舊內容覆蓋新值，或在淘汰後留下一筆沒有索引的資料 key（最長 24 小時後過期）；不會造成錯誤命中，窗口極小 |
-| 評分門檻 0.3 缺乏標註資料驗證 | `config.py`：`GRADE_SCORE_THRESHOLD` | 實測樣本中知識庫內問題 0.89–1.0、知識庫外約 0.0001，區分明顯，但樣本很小；接近門檻的問題行為未知 |
+| 評分門檻 0.4 依小樣本訂定 | `config.py`：`GRADE_SCORE_THRESHOLD` | 2026-11-19 以 Vertex 實測：65 題手冊問題（由範例手冊產生）在 0.35 到 0.5 之間都只有 3 題低信心，6 題會走 rag 的手冊外問題誤判 2 題。這個區間「穩定」只代表樣本中沒有分數落在其中；手冊外樣本只有 6 題，上線後以 Grafana 的低信心比例追蹤，必要時重新校準 |
 | 約三成知識庫問題仍需 LLM 路由 | `query_router.py`：`RAG_KEYWORDS` | 範例手冊 60 題有 17 題由 LLM 判斷，每題多約 1–2.6 秒；評估腳本的路由關卡確保它們判為 `rag`，但 LLM 判斷可能隨模型或 prompt 改變而退化，修改後需重跑評估腳本 |
 | 正式 index 名稱寫在兩處 | `terraform/main.tf`（`local.pinecone_index_name`）、`scripts/eval_sample_manual.py`（`PRODUCTION_INDEXES`） | 之後再改正式 index 時，評估腳本的拒絕清單要一起更新；執行時仍應以 `--audit-index` 明確指定要保護的 index |
 | 評估題庫只有 12 題 | `tests/rag_eval_data.json` | 題數仍少，LLM 評分的隨機性足以影響版本比較；也沒有涵蓋路由、重試與低信心路徑 |
@@ -412,6 +418,4 @@ flowchart LR
 
 | 問題 | 位置 | 影響 |
 |------|------|------|
-| 手冊有寫的問題被判為低信心 | `retrieval_grader.py`、`hybrid_retriever.py`；題目來自 `scripts/load_baseline_questions.json` | 「密碼長度與字元組成」「帳號被鎖住期間的解鎖方式」由範例手冊產生，檢索仍判為低信心，回答變成一般性說明。4 次檢索有 2 次低信心、共重試 2 次，需確認是檢索沒取到還是評分門檻過嚴 |
-| 本機與正式站共用 Pinecone 重排的每月額度 | Pinecone 專案設定；`hosted_reranker.py` | Starter 方案的 bge-reranker-v2-m3 每月 500 次，整個組織只有一個專案、一把 API key，本機開發、評估、壓測與正式站共用。2026-11-19 的量測用到 527 次後重排被暫停，正式站的 rag 請求全部退回融合排序並走低信心路徑，直到額度重置。可讓本機與正式站使用不同的專案或帳號，或升級方案 |
 | LLM 路由會把 CarbonM 的追問判為 direct | `query_router.py`：`_llm_route` | 2026-11-19 以實際對話歷史重測：「那要多久？」被正確判為追問並改寫成「帳號被鎖住要多久才能解鎖？」，但路由判為 direct，不查知識庫。路由決定與改寫結果不一致；master 的舊版路由同樣判為 direct（改寫結果更差），不是改寫修正造成的。可考慮對追問以改寫後的問題重新跑一次規則層 |
