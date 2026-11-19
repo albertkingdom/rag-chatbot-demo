@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.query_router import (
+    RewriteResult,
     RouterResult,
     _rule_route,
     route_query,
@@ -143,6 +144,7 @@ class TestLLMRouting:
                 route="direct",
                 rewritten_query="永續發展跟企業有什麼關係",
                 reasoning="一般性問題，非碳管理系統操作",
+                is_follow_up=False,
             )
         )
         llm = MagicMock()
@@ -163,6 +165,7 @@ class TestLLMRouting:
                 route="rag",
                 rewritten_query="企業導入 ESG 有哪些碳管理面向？",
                 reasoning="涉及企業與碳管理/ESG 的關聯",
+                is_follow_up=False,
             )
         )
         llm = MagicMock()
@@ -210,18 +213,23 @@ class TestLLMRouting:
 class TestQueryRewriting:
     @pytest.mark.asyncio
     async def test_rag_rule_route_with_history_rewrites_query(self, monkeypatch):
-        llm = MagicMock()
-        llm.ainvoke = AsyncMock(
-            return_value=MagicMock(content="CarbonM 係數庫的排放係數適用哪一個年度？")
+        structured_llm = MagicMock()
+        structured_llm.ainvoke = AsyncMock(
+            return_value=RewriteResult(
+                is_follow_up=True, rewritten_query="CarbonM 係數庫的排放係數適用哪一個年度？"
+            )
         )
+        llm = MagicMock()
+        llm.with_structured_output = MagicMock(return_value=structured_llm)
         monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
 
         result = await route_query("那適用年度呢？碳排放係數要用哪一年的？", HISTORY)
 
-        llm.ainvoke.assert_awaited_once()
+        llm.with_structured_output.assert_called_once_with(RewriteResult)
+        structured_llm.ainvoke.assert_awaited_once()
         assert result.route == "rag"
         assert result.rewritten_query == "CarbonM 係數庫的排放係數適用哪一個年度？"
-        prompt = llm.ainvoke.call_args[0][0]
+        prompt = structured_llm.ainvoke.call_args[0][0]
         assert "排放係數從哪裡來？" in prompt
         assert "排放係數可以在「係數庫」查看，並標示來源與適用年度。" in prompt
 
@@ -250,17 +258,22 @@ class TestQueryRewriting:
 
     @pytest.mark.asyncio
     async def test_rule_route_with_history_only_calls_rewrite_not_routing(self, monkeypatch):
-        """Rule route hit + history should call the LLM only for rewriting
-        (plain .ainvoke), never touching .with_structured_output (routing)."""
+        """Rule route hit + history should call the LLM only for the follow-up
+        judgement and rewrite (RewriteResult), never for routing (RouterResult)."""
+        structured_llm = MagicMock()
+        structured_llm.ainvoke = AsyncMock(
+            return_value=RewriteResult(is_follow_up=True, rewritten_query="rewritten standalone query")
+        )
         llm = MagicMock()
-        llm.ainvoke = AsyncMock(return_value=MagicMock(content="rewritten standalone query"))
-        llm.with_structured_output = MagicMock(side_effect=AssertionError("should not route via LLM"))
+        llm.ainvoke = AsyncMock(side_effect=AssertionError("should not use free-text rewriting"))
+        llm.with_structured_output = MagicMock(return_value=structured_llm)
         monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
 
         result = await route_query("碳排放係數的適用年度是哪一年？", HISTORY)
 
-        llm.ainvoke.assert_awaited_once()
-        llm.with_structured_output.assert_not_called()
+        llm.with_structured_output.assert_called_once_with(RewriteResult)
+        assert RouterResult not in [c.args[0] for c in llm.with_structured_output.call_args_list]
+        structured_llm.ainvoke.assert_awaited_once()
         assert result.route == "rag"
         assert result.rewritten_query == "rewritten standalone query"
 
@@ -285,6 +298,7 @@ class TestQueryRewriting:
                 route="rag",
                 rewritten_query="CarbonM 的排放係數來源是什麼？",
                 reasoning="追問排放係數的來源，改寫為獨立問題",
+                is_follow_up=True,
             )
         )
         llm = MagicMock()
@@ -380,7 +394,7 @@ class TestLlmRoutingPrompt:
     async def test_prompt_lists_features_and_routing_rules(self, monkeypatch):
         structured_llm = MagicMock()
         structured_llm.ainvoke = AsyncMock(
-            return_value=RouterResult(route="rag", rewritten_query="q", reasoning="r")
+            return_value=RouterResult(route="rag", rewritten_query="q", reasoning="r", is_follow_up=False)
         )
         llm = MagicMock()
         llm.with_structured_output = MagicMock(return_value=structured_llm)
@@ -393,3 +407,95 @@ class TestLlmRoutingPrompt:
             assert feature in prompt, feature
         assert "沒有指明其他產品" in prompt
         assert "資安概念" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Spec: follow-up-rewriting — "Self-contained questions keep their original
+# wording". Structured results are SimpleNamespace objects so these tests do
+# not depend on the schema classes; plain ainvoke returns the over-edited text
+# the model produced on 2026-11-18, so the old free-text path fails too.
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace as _NS
+
+OVER_EDITED = "忘記CarbonM的密碼怎麼辦？"
+
+
+def _llm_returning(structured_value):
+    structured = MagicMock()
+    structured.ainvoke = AsyncMock(return_value=structured_value)
+    llm = MagicMock()
+    llm.with_structured_output = MagicMock(return_value=structured)
+    llm.ainvoke = AsyncMock(return_value=MagicMock(content=OVER_EDITED))
+    return llm
+
+
+class TestFollowUpRewriting:
+    @pytest.mark.asyncio
+    async def test_rule_routed_complete_question_keeps_original_wording(self, monkeypatch):
+        llm = _llm_returning(_NS(is_follow_up=False, rewritten_query=OVER_EDITED))
+        monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
+        result = await route_query("忘記密碼怎麼辦？", HISTORY)
+        assert result.route == "rag"
+        assert result.rewritten_query == "忘記密碼怎麼辦？"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "structured_value",
+        [None, _NS(rewritten_query=OVER_EDITED)],
+        ids=["returns-nothing", "omits-the-judgement"],
+    )
+    async def test_rule_routed_question_without_a_judgement_keeps_original(self, monkeypatch, structured_value):
+        llm = _llm_returning(structured_value)
+        monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
+        result = await route_query("忘記密碼怎麼辦？", HISTORY)
+        assert result.rewritten_query == "忘記密碼怎麼辦？"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "model_text, expected",
+        [("  CarbonM 係數庫的排放係數適用哪一個年度？  ", "CarbonM 係數庫的排放係數適用哪一個年度？"),
+         ("", "碳排放係數的適用年度是哪一年？")],
+        ids=["stripped", "empty-falls-back"],
+    )
+    async def test_rule_routed_follow_up_uses_the_rewrite(self, monkeypatch, model_text, expected):
+        llm = _llm_returning(_NS(is_follow_up=True, rewritten_query=model_text))
+        llm.ainvoke = AsyncMock(return_value=MagicMock(content=model_text))
+        monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
+        result = await route_query("碳排放係數的適用年度是哪一年？", HISTORY)
+        assert result.rewritten_query == expected
+
+    @pytest.mark.asyncio
+    async def test_llm_routed_complete_question_keeps_original_wording(self, monkeypatch):
+        llm = _llm_returning(_NS(route="rag", rewritten_query="CarbonM 如何修改個人資料？",
+                                 reasoning="r", is_follow_up=False))
+        monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
+        result = await route_query("如何修改個人資料？", HISTORY)
+        assert result.route == "rag"
+        assert result.rewritten_query == "如何修改個人資料？"
+
+    @pytest.mark.asyncio
+    async def test_llm_routed_question_without_history_keeps_original_wording(self, monkeypatch):
+        llm = _llm_returning(_NS(route="rag", rewritten_query="CarbonM 如何修改個人資料？",
+                                 reasoning="r", is_follow_up=True))
+        monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
+        result = await route_query("如何修改個人資料？", [])
+        assert result.route == "rag"
+        assert result.rewritten_query == "如何修改個人資料？"
+
+    @pytest.mark.asyncio
+    async def test_llm_routed_follow_up_uses_the_rewrite(self, monkeypatch):
+        llm = _llm_returning(_NS(route="rag", rewritten_query="CarbonM 係數庫的排放係數適用哪一個年度？",
+                                 reasoning="r", is_follow_up=True))
+        monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
+        result = await route_query("那適用年度呢？", HISTORY)
+        assert result.rewritten_query == "CarbonM 係數庫的排放係數適用哪一個年度？"
+
+    @pytest.mark.asyncio
+    async def test_llm_routed_question_returning_nothing_falls_back_to_direct(self, monkeypatch):
+        # Protects existing behaviour; passes before and after the fix.
+        llm = _llm_returning(None)
+        monkeypatch.setattr(query_router_module, "get_llm", lambda: llm)
+        result = await route_query("如何修改個人資料？", HISTORY)
+        assert result.route == "direct"
+        assert result.rewritten_query == "如何修改個人資料？"

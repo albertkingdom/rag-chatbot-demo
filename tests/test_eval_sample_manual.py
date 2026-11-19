@@ -168,10 +168,12 @@ def _router(results):
 
 
 def _ok(route):
-    return RouterResult(route=route, rewritten_query="q", reasoning="ok")
+    return RouterResult(route=route, rewritten_query="q", reasoning="ok", is_follow_up=False)
 
 
-ERROR = RouterResult(route="direct", rewritten_query="q", reasoning="LLM 路由發生錯誤，回退為 direct：timeout")
+ERROR = RouterResult(
+    route="direct", rewritten_query="q", reasoning="LLM 路由發生錯誤，回退為 direct：timeout", is_follow_up=False,
+)
 
 
 def _gate(monkeypatch, results, rag, direct):
