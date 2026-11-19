@@ -334,3 +334,52 @@ tests:
         exp_samples:
           - labels: '{}'
             value: 0.375
+
+  # ---- latency SLIs (threshold 10 s) -----------------------------------------
+
+  # Per minute 100 successful rag requests, 90 of them within 10 s; direct
+  # traffic, all slow, must not change the rag ratio.
+  - name: latency ratios count rag requests within the 10 s bucket
+    interval: 1m
+    input_series:
+      - series: 'chat_first_answer_text_seconds_bucket{response_source="rag",le="10.0"}'
+        values: '0+90x60'
+      - series: 'chat_first_answer_text_seconds_count{response_source="rag"}'
+        values: '0+100x60'
+      - series: 'chat_response_duration_seconds_bucket{response_source="rag",le="10.0"}'
+        values: '0+80x60'
+      - series: 'chat_response_duration_seconds_count{response_source="rag"}'
+        values: '0+100x60'
+      - series: 'chat_response_duration_seconds_bucket{response_source="direct",le="10.0"}'
+        values: '0+0x60'
+      - series: 'chat_response_duration_seconds_count{response_source="direct"}'
+        values: '0+50x60'
+    promql_expr_test:
+      - expr: round(slo:rag_first_answer_text_good:ratio_rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 0.9
+      - expr: round(slo:rag_response_duration_good:ratio_rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 0.8
+
+  - name: latency ratios give no sample without rag traffic
+    interval: 1m
+    input_series:
+      - series: 'chat_first_answer_text_seconds_bucket{response_source="rag",le="10.0"}'
+        values: '0+0x60'
+      - series: 'chat_first_answer_text_seconds_count{response_source="rag"}'
+        values: '0+0x60'
+      - series: 'chat_response_duration_seconds_bucket{response_source="rag",le="10.0"}'
+        values: '0+0x60'
+      - series: 'chat_response_duration_seconds_count{response_source="rag"}'
+        values: '0+0x60'
+    promql_expr_test:
+      - expr: slo:rag_first_answer_text_good:ratio_rate5m
+        eval_time: 30m
+      - expr: slo:rag_response_duration_good:ratio_rate5m
+        eval_time: 30m
+

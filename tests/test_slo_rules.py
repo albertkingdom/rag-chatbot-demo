@@ -165,3 +165,42 @@ def test_ci_runs_promtool_check_config_and_test_rules_in_that_image():
         for c in commands
     )
     assert all('-v "$PWD/monitoring/prometheus:/etc/prometheus' in c for c in commands)
+
+
+# --- latency rules (task 5.4) -------------------------------------------------
+
+LATENCY_RULES = {
+    "slo:rag_first_answer_text_good:ratio_rate5m": "chat_first_answer_text_seconds",
+    "slo:rag_response_duration_good:ratio_rate5m": "chat_response_duration_seconds",
+}
+
+
+def test_dashboard_latency_rules_are_defined_on_the_rag_path():
+    for name, metric in LATENCY_RULES.items():
+        assert name in DASHBOARD_TEXT
+        expr = squash(recording_rules()[name]["expr"])
+        assert f'{metric}_bucket{{response_source="rag",' in expr
+        assert f'{metric}_count{{response_source="rag"}}' in expr
+        assert "> 0" in expr  # no traffic gives no sample, not NaN
+
+
+def test_slo_latency_thresholds_are_histogram_bucket_boundaries():
+    from src.observability import LATENCY_BUCKETS
+
+    thresholds = [
+        float(value)
+        for rule in all_rules()
+        for value in re.findall(r'le="([^"]+)"', rule.get("expr", ""))
+    ]
+    assert thresholds, "the latency rules must reference an le bucket"
+    assert all(t in [float(b) for b in LATENCY_BUCKETS] for t in thresholds)
+
+
+def test_latency_rules_have_promtool_cases():
+    exprs = " ".join(
+        case.get("expr", "")
+        for test in RULE_TESTS["tests"]
+        for case in test.get("promql_expr_test", [])
+    )
+    for name in LATENCY_RULES:
+        assert name in exprs
