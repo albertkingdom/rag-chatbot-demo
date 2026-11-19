@@ -31,7 +31,7 @@ from .observability import record_retrieval
 from .query_router import route_query
 from . import retrieval_grader
 from .rag_pipeline import _today_str, format_history
-from .rag_pipeline import LOW_CONFIDENCE_NOTE, LOW_CONFIDENCE_PREFIX
+from .rag_pipeline import LOW_CONFIDENCE_NOTE, LOW_CONFIDENCE_PREFIX, strip_low_confidence_notice
 from .rag_pipeline import get_generation_chain, get_retrieval_chain
 from .retrieval_grader import get_top_score, grade_documents, rewrite_for_retry
 from .services import get_embeddings, get_redis_conn
@@ -226,6 +226,7 @@ async def chat_event_stream(
                 }
             ):
                 full_response += chunk
+            full_response = strip_low_confidence_notice(full_response)
 
             pii_hit, pii_type = detect_pii(full_response)
             injection_hit, injection_pattern = detect_prompt_injection(full_response, direction="output")
@@ -285,7 +286,7 @@ async def chat_event_stream(
                 )
 
         if cached_response:
-            cached_answer = cached_response["answer"]
+            cached_answer = strip_low_confidence_notice(cached_response["answer"])
             cached_sources = cached_response.get("sources", [])
             pii_hit, pii_type = detect_pii(cached_answer)
             injection_hit, injection_pattern = detect_prompt_injection(cached_answer, direction="output")
@@ -357,6 +358,9 @@ async def chat_event_stream(
             }
         ):
             full_response += chunk
+        # Remove any copy of the notice before labelling, so a low-confidence
+        # answer carries it exactly once and no other answer carries it.
+        full_response = strip_low_confidence_notice(full_response)
 
         if outcome.low_confidence and full_response.strip():
             # Added after generation and before the output guardrail, so the

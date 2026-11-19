@@ -632,3 +632,122 @@ class TestRetrievalMetrics:
 
         assert events[-1].type == "done"
         assert next(e for e in events if e.type == "metadata").response_source == "rag"
+
+
+# ---------------------------------------------------------------------------
+# Spec: low-confidence-handling — "The low-confidence notice is not duplicated".
+# The model can copy the fixed notice from an earlier low-confidence answer in
+# the conversation history; the server must still deliver it at most once.
+# ---------------------------------------------------------------------------
+
+NOTICE = LOW_CONFIDENCE_PREFIX
+
+
+def model_says(providers, text):
+    async def output(_payload):
+        yield text
+    providers.generation.astream = output
+
+
+class TestLowConfidenceNoticeIsNotDuplicated:
+    @pytest.mark.parametrize(
+        "model_output, expected",
+        [
+            (f"{NOTICE}\n\nBody", f"{NOTICE}\n\nBody"),
+            ("Body", f"{NOTICE}\n\nBody"),
+            (f"{NOTICE}\n\n{NOTICE}\n\nBody", f"{NOTICE}\n\nBody"),
+            (f"Body\n\n{NOTICE}", f"{NOTICE}\n\nBody"),
+        ],
+        ids=["copied-at-start", "not-copied", "copied-twice", "copied-at-end"],
+    )
+    def test_low_confidence_answer_has_the_notice_exactly_once(self, graded, model_output, expected):
+        graded.retrieval.ainvoke.side_effect = [bundle(0.20), bundle(0.10)]
+        model_says(graded, model_output)
+        events = asyncio.run(collect())
+        assert delta_text(events) == expected
+
+    def test_low_confidence_output_that_is_only_the_notice_gets_no_notice(self, graded):
+        graded.retrieval.ainvoke.side_effect = [bundle(0.20), bundle(0.10)]
+        model_says(graded, NOTICE)
+        events = asyncio.run(collect())
+        assert delta_text(events) == ""
+
+    @pytest.mark.parametrize(
+        "model_output, expected",
+        [
+            (f"{NOTICE}\n\nBody", "Body"),
+            (f"Part 1\n\n{NOTICE}\n\nPart 2", "Part 1\n\nPart 2"),
+            ("  Body  ", "  Body  "),
+        ],
+        ids=["copied-at-start", "copied-in-the-middle", "no-notice-unchanged"],
+    )
+    def test_high_confidence_answer_never_carries_the_notice(self, graded, model_output, expected):
+        graded.retrieval.ainvoke.side_effect = [bundle(0.90)]
+        model_says(graded, model_output)
+        events = asyncio.run(collect())
+        assert delta_text(events) == expected
+        graded.cache.set_cached_response.assert_called_once()
+        assert graded.cache.set_cached_response.call_args.args[2] == expected
+
+    def test_direct_answer_never_carries_the_notice(self, providers):
+        providers.router.return_value.route = "direct"
+        model_says(providers, f"{NOTICE}\n\nBody")
+        events = asyncio.run(collect())
+        assert delta_text(events) == "Body"
+
+    def test_cached_answer_with_a_copied_notice_is_served_without_it(self, providers):
+        providers.cache.get_cached_response.return_value = {
+            "answer": f"{NOTICE}\n\nBody", "sources": ["手冊"], "similarity": 0.99,
+        }
+        events = asyncio.run(collect())
+        assert delta_text(events) == "Body"
+        providers.history.append_turn.assert_called_once_with("server-session", "question", "Body")
+        assert providers.database.async_save_conversation.call_args.kwargs["assistant_response"] == "Body"
+
+    def test_notice_copied_from_history_is_delivered_and_stored_once(self, graded):
+        graded.history.get_history.return_value = [
+            {"role": "user", "content": "帳號被鎖住期間，除了等待還有什麼辦法解鎖？"},
+            {"role": "assistant", "content": f"{NOTICE}\n\n沒有其他辦法。"},
+        ]
+        graded.retrieval.ainvoke.side_effect = [bundle(0.20), bundle(0.10)]
+        model_says(graded, f"{NOTICE}\n\n一般而言密碼至少 8 個字元。")
+        events = asyncio.run(collect())
+        expected = f"{NOTICE}\n\n一般而言密碼至少 8 個字元。"
+        assert delta_text(events) == expected
+        graded.history.append_turn.assert_called_once_with("server-session", "question", expected)
+        assert graded.database.async_save_conversation.call_args.kwargs["assistant_response"] == expected
+
+
+class TestModelDoesNotSeeTheNoticeInHistory:
+    """Spec: low-confidence-handling — "The model does not see the notice in
+    the conversation history". The prompt history drops the notice from
+    assistant turns; the stored history is left as it is."""
+
+    @staticmethod
+    def stored_history(answer):
+        return [
+            {"role": "user", "content": "帳號被鎖住期間，除了等待還有什麼辦法解鎖？"},
+            {"role": "assistant", "content": answer},
+        ]
+
+    @pytest.mark.parametrize("route", ["rag", "direct"])
+    def test_prompt_history_has_no_notice_and_stored_history_is_untouched(self, providers, route):
+        stored = self.stored_history(f"{NOTICE}\n\n沒有其他辦法。")
+        snapshot = [dict(turn) for turn in stored]
+        providers.history.get_history.return_value = stored
+        if route == "direct":
+            providers.router.return_value.route = "direct"
+        asyncio.run(collect())
+        prompt_history = providers.generation.payloads[-1]["history"]
+        assert "帳號被鎖住期間，除了等待還有什麼辦法解鎖？" in prompt_history
+        assert "沒有其他辦法。" in prompt_history
+        assert NOTICE not in prompt_history
+        assert stored == snapshot
+
+    def test_assistant_turn_that_is_only_the_notice_keeps_its_place(self, providers):
+        providers.history.get_history.return_value = self.stored_history(NOTICE)
+        asyncio.run(collect())
+        prompt_history = providers.generation.payloads[-1]["history"]
+        assert "User: 帳號被鎖住期間，除了等待還有什麼辦法解鎖？" in prompt_history
+        assert prompt_history.rstrip().endswith("Assistant:")
+        assert NOTICE not in prompt_history
