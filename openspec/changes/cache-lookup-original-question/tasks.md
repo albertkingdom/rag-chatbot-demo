@@ -10,5 +10,5 @@
 
 ## 3. 實測與文件
 
-- [ ] 3.1 實測（會呼叫付費 API，**先取得使用者同意**）：在本機 web 容器以 2026-11-18 session `DEy0YY` 的對話歷史呼叫 `route_query`，確認「忘記密碼怎麼辦？」的改寫問題等於原話、追問「那要多久？」被改寫成包含主題的問題；對話歷史先存成檔案再使用（Redis 中的歷史可能已過 TTL，MongoDB 紀錄仍在）；端到端確認：同一 session 先問「忘記密碼怎麼辦？」，聊一題後再問一次，第二次 `response_source` 為 cache；並以 `scripts/eval_sample_manual.py` 在 demo index 跑路由關卡（範例手冊與評估集全部為 rag、`ROUTING_NEGATIVES` 都不是 rag）。依 eval-rag 不跑 RAGAS：評估流程不帶對話歷史，改寫結果不受影響。驗證：記錄三項結果；路由關卡全部通過。
+- [x] 3.1 實測（會呼叫付費 API，**先取得使用者同意**）：在本機 web 容器以 2026-11-18 session `DEy0YY` 的對話歷史呼叫 `route_query`，確認「忘記密碼怎麼辦？」的改寫問題等於原話、追問「那要多久？」被改寫成包含主題的問題；對話歷史先存成檔案再使用（Redis 中的歷史可能已過 TTL，MongoDB 紀錄仍在）；端到端確認：同一 session 先問「忘記密碼怎麼辦？」，聊一題後再問一次，第二次 `response_source` 為 cache；並以 `scripts/eval_sample_manual.py` 在 demo index 跑路由關卡（範例手冊與評估集全部為 rag、`ROUTING_NEGATIVES` 都不是 rag）。依 eval-rag 不跑 RAGAS：評估流程不帶對話歷史，改寫結果不受影響。驗證：記錄三項結果；路由關卡全部通過。
 - [x] 3.2 更新 `architecture.md` 的「混合路由與查詢改寫」段落，說明改寫只在判斷為追問時採用、否則使用原話；並移除已知問題表中「相同問題第二次詢問沒有命中語意快取」一列。驗證：內容審查，`python -m pytest tests -q` 全部通過。
