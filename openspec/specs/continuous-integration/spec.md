@@ -13,7 +13,7 @@ The repository SHALL have a GitHub Actions workflow that runs on every pull requ
 #### Scenario: Pull request triggers CI
 
 - **WHEN** a pull request is opened or updated
-- **THEN** the backend, frontend and Terraform jobs run and report a status on the pull request
+- **THEN** the backend, frontend, Terraform and Prometheus rules jobs run and report a status on the pull request
 
 ---
 ### Requirement: Backend tests
@@ -44,3 +44,18 @@ The Terraform job SHALL fail when `terraform fmt -check -recursive` reports unfo
 
 - **WHEN** a `.tf` file is not formatted
 - **THEN** the Terraform job fails
+
+---
+### Requirement: Prometheus rules validation
+
+The Prometheus rules job SHALL run `promtool check config` on the Prometheus configuration and `promtool test rules` on the SLO rule tests, using the same pinned Prometheus image version as the local compose stack, and SHALL fail when either command fails.
+
+#### Scenario: Image versions stay aligned
+
+- **WHEN** the Prometheus image tag in the CI workflow differs from the tag in the local compose file
+- **THEN** the automated check fails
+
+#### Scenario: Failing rule test fails the job
+
+- **WHEN** a promtool rule test assertion does not hold
+- **THEN** the Prometheus rules job fails
