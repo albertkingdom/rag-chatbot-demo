@@ -25,10 +25,37 @@ from .services import get_llm
 logger = logging.getLogger("query_router")
 
 
+_FOLLOW_UP_DESCRIPTION = (
+    "True only if the query cannot be understood without the conversation history "
+    "(for example it uses 那/它/這個 or leaves out the subject). A complete question "
+    "is not a follow-up, even if adding context would make it more specific."
+)
+
+
 class RouterResult(BaseModel):
     route: Literal["rag", "direct"] = Field(description="Chosen route: 'rag' or 'direct'")
     rewritten_query: str = Field(description="Rewritten standalone query, or original if no rewrite needed")
     reasoning: str = Field(description="Brief routing rationale, for logging/debug")
+    # Required (no default): a defaulted field is optional in the schema, and
+    # a model that omits it would silently turn every follow-up into "not one".
+    is_follow_up: bool = Field(description=_FOLLOW_UP_DESCRIPTION)
+
+
+class RewriteResult(BaseModel):
+    is_follow_up: bool = Field(description=_FOLLOW_UP_DESCRIPTION)
+    rewritten_query: str = Field(
+        description="The follow-up rewritten as a standalone question; for a complete question, the question unchanged"
+    )
+
+
+def _choose_query(message: str, is_follow_up, rewritten) -> str:
+    """Spec follow-up-rewriting: only a follow-up uses the model's rewrite;
+    anything else (not a follow-up, no judgement, empty rewrite) keeps the
+    user's original wording."""
+    if is_follow_up is not True:
+        return message
+    text = (rewritten or "").strip()
+    return text or message
 
 
 # ---------------------------------------------------------------------------
@@ -137,17 +164,18 @@ def _format_history_block(history: list, max_turns: int = 3) -> str:
 
 
 @traceable(name="Query Rewriting")
-async def _rewrite_only(message: str, history: list) -> str:
+async def _rewrite_only(message: str, history: list) -> tuple[str, bool]:
     """Rewrites a follow-up question into a standalone query, without
     touching routing. Used when the rule stage already decided the route but
     there is conversation history to fold in.
     """
     history_block = _format_history_block(history)
     if not history_block:
-        return message
+        return message, False
 
-    prompt = f"""Given the conversation history and the follow-up question, rewrite the question into a standalone question that can be understood without the conversation context.
-If the question is already complete and self-contained, return it as-is.
+    prompt = f"""Given the conversation history and the user's question, decide whether the question is a follow-up that cannot be understood without the conversation history.
+If it is a follow-up, rewrite it into a standalone question.
+If it is already complete and self-contained, it is not a follow-up: return it unchanged and do not add product names or details.
 
 Conversation history:
 {history_block}
@@ -157,14 +185,18 @@ Follow-up question: {message}
 Rewritten standalone question:"""
 
     try:
-        llm = get_llm()
-        response = await llm.ainvoke(prompt)
-        rewritten = response.content.strip()
-        logger.info("[Query Router] Rewrite-only. Original: %s | Rewritten: %s", message, rewritten)
-        return rewritten or message
+        structured_llm = get_llm().with_structured_output(RewriteResult)
+        result = await structured_llm.ainvoke(prompt)
+        is_follow_up = getattr(result, "is_follow_up", None)
+        chosen = _choose_query(message, is_follow_up, getattr(result, "rewritten_query", None))
+        logger.info(
+            "[Query Router] Rewrite-only. follow_up=%s Original: %s | Used: %s",
+            is_follow_up, message, chosen,
+        )
+        return chosen, is_follow_up is True
     except Exception as e:
         logger.warning("[Query Router] Rewrite-only ERROR: %s", e)
-        return message
+        return message, False
 
 
 # ---------------------------------------------------------------------------
@@ -192,14 +224,19 @@ Decide "rag" when the query:
 
 Decide "direct" when the query names another product or service (for example Gmail, iPhone, Excel, Google 表單), asks about a general IT or 資安概念 (for example the difference between two-step verification and multi-factor authentication), is a how-to unrelated to the features above, general knowledge, or chit-chat.
 
-If there is conversation history and the query is a follow-up, rewrite it into a standalone query; otherwise return it unchanged.
+Set is_follow_up to true only when there is conversation history and the query cannot be understood without it (for example it uses 那/它/這個 or leaves out the subject); then rewrite it into a standalone query. A complete question is not a follow-up: return it unchanged and do not add product names or details.
 {history_section}
 Query: {message}"""
 
     try:
         structured_llm = get_llm().with_structured_output(RouterResult)
         result: RouterResult = await structured_llm.ainvoke(prompt)
-        logger.info("[Query Router] LLM route=%s rewritten=%s", result.route, result.rewritten_query)
+        is_follow_up = bool(history_block) and getattr(result, "is_follow_up", None) is True
+        chosen = _choose_query(message, is_follow_up, result.rewritten_query)
+        result = RouterResult(
+            route=result.route, rewritten_query=chosen, reasoning=result.reasoning, is_follow_up=is_follow_up,
+        )
+        logger.info("[Query Router] LLM route=%s follow_up=%s rewritten=%s", result.route, is_follow_up, chosen)
         return result
     except Exception as e:
         logger.warning("[Query Router] LLM routing ERROR: %s", e)
@@ -207,6 +244,7 @@ Query: {message}"""
             route="direct",
             rewritten_query=message,
             reasoning=f"LLM 路由發生錯誤，回退為 direct：{e}",
+            is_follow_up=False,
         )
 
 
@@ -226,11 +264,15 @@ async def route_query(message: str, history: Optional[list] = None) -> RouterRes
     stage = _rule_route(message)
 
     if stage == "rag":
-        rewritten = await _rewrite_only(message, history)
-        return RouterResult(route="rag", rewritten_query=rewritten, reasoning="規則路由：命中碳管理關鍵字")
+        rewritten, is_follow_up = await _rewrite_only(message, history)
+        return RouterResult(
+            route="rag", rewritten_query=rewritten, reasoning="規則路由：命中碳管理關鍵字", is_follow_up=is_follow_up,
+        )
 
     if stage == "direct":
-        rewritten = await _rewrite_only(message, history)
-        return RouterResult(route="direct", rewritten_query=rewritten, reasoning="規則路由：命中一般問答模式")
+        rewritten, is_follow_up = await _rewrite_only(message, history)
+        return RouterResult(
+            route="direct", rewritten_query=rewritten, reasoning="規則路由：命中一般問答模式", is_follow_up=is_follow_up,
+        )
 
     return await _llm_route(message, history)
