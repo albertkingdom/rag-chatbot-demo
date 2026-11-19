@@ -28,7 +28,7 @@
 - [x] 5.2 新增 `scripts/load_baseline_questions.json`：至少 60 題可由 `examples/carbonm_sample_manual.xlsx` 回答的不重複問題，加上至少 10 題閒聊或離題問題，題目不與 `tests/rag_eval_data.json` 重複。驗證：`tests/test_load_baseline.py` 斷言題數下限與無重複。
 - [x] 5.3 量測基準並確認門檻（流程要求，見 design「延遲 bucket 先放寬，SLO 門檻等量完基準再訂」）：**先向使用者說明會呼叫付費 API 並取得同意**；確認 `.env` 的 `PINECONE_INDEX_NAME` 為 demo index；清空本機 Redis 後啟動 compose，執行壓測直到 `response_source="rag"` 的成功樣本至少 50 個；以 `histogram_quantile` 在壓測時間區間內算出 rag 路徑首段回答與完整回應的 P50／P95，連同日期、環境（Docker on Mac）、index、樣本數寫入 `docs/sli-slo.md`；再依基準向使用者提出延遲門檻（必須是 bucket 邊界），取得確認後寫入 `docs/sli-slo.md` 第二節。驗證：基準段落包含上述五項資訊，數值可在 Prometheus UI 以同一查詢重現；使用者在對話中明確確認門檻。
 - [x] 5.4 在 `monitoring/prometheus/rules/slo.yml` 加入 rag 路徑首段回答與完整回應的延遲 SLI recording rules（使用 5.3 確認的門檻），並在 `slo_test.yml` 加入對應案例；新增 pytest 解析 `slo.yml`，斷言規則引用的每個 `le` 值都屬於 `src/observability.py` 的延遲 buckets，滿足 SLO latency thresholds are histogram bucket boundaries。驗證：`promtool test rules` 通過；pytest 通過；暫時把規則改成 `le="11"` 時 pytest 失敗，確認後還原。
-- [ ] 5.5 故障注入示範：**執行前取得使用者同意**；只改設定（例如以無效的 `OPENROUTER_API_KEY` 重啟 web），以壓測腳本跑少量請求產生 error，確認 Prometheus UI 的可用性告警進入 pending 或 firing，示範完還原設定。驗證：記錄告警狀態，並把步驟寫進 `docs/sli-slo.md`。
+- [x] 5.5 故障注入示範：**執行前取得使用者同意**；只改設定（例如以無效的 `OPENROUTER_API_KEY` 重啟 web），以壓測腳本跑少量請求產生 error，確認 Prometheus UI 的可用性告警進入 pending 或 firing，示範完還原設定。驗證：記錄告警狀態，並把步驟寫進 `docs/sli-slo.md`。
 
 ## 6. 文件
 

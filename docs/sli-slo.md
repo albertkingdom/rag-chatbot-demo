@@ -126,6 +126,27 @@ docker compose up --build
 - 改了後端程式碼要加 `--build` 重建映像，否則 web 跑的是舊程式碼，`/metrics` 會落到前端頁面而抓取失敗。
 - 刻意不使用 `prometheus-fastapi-instrumentator`：它是 ASGI middleware，總耗時含串流，但量不到首段回答的時間；串流中途失敗時狀態碼已經是 200，它判斷不出可用性。
 
+### 故障注入示範（2026-11-19）
+
+只改設定、不改程式，讓 LLM 呼叫失敗，確認可用性告警會觸發：
+
+1. 準備一組沒問過的新問題。問過的問題已在語意快取裡，命中時不呼叫 LLM，不會出錯。
+2. 以無效的 OpenRouter key 重建 web（shell 環境變數優先於 `.env`）：
+
+   ```bash
+   OPENROUTER_API_KEY=invalid-key-for-fault-demo docker compose up -d --no-deps web
+   ```
+
+3. 送出 15 題：`python scripts/load_baseline.py --questions <新題目檔>`。
+4. 在 <http://localhost:9090/alerts> 觀察告警。
+5. 還原：`docker compose up -d --no-deps web`（重新讀取 `.env`），再送幾題確認恢復成功。
+
+觀察結果：
+
+- 15 題全部是 `unknown/error`：生成階段才失敗，`metadata` 事件還沒送出，印證可用性必須跨所有來源計算。
+- 第一題送出（11:54:05）後，`ChatAvailabilitySlowBurn` 在 11:54:31、`ChatAvailabilityFastBurn` 在 11:54:46 進入 firing，壓測還沒跑完就觸發；規則沒有設 `for:`，所以不經過 pending。當時錯誤率：5 分鐘 100%，30 分鐘、1 小時、6 小時都是 14.4%（15 次錯誤對 89 次成功），超過快速燒門檻 7.2% 與慢速燒門檻 3%。
+- 還原後請求恢復成功。告警在短視窗的錯誤率降到門檻以下後解除：快速燒在 12:00:09 解除，約為最後一次錯誤（11:54:53）後 5 分鐘，5 分鐘視窗已不含錯誤；慢速燒要等 30 分鐘視窗不含錯誤，預期約 12:25 解除。
+
 ## 四、面試常見問題與回答重點
 
 ### 基本概念
