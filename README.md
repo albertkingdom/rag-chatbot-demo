@@ -61,7 +61,7 @@ flowchart LR
    AUTH_ENABLED=true                               # 本機開發/測試可設為 false
    ```
 
-   重排呼叫 Vertex AI Ranking，需先執行 `gcloud auth application-default login`；docker compose 會把 `~/.config/gcloud/application_default_credentials.json` 唯讀掛進 web 容器（路徑可用 `GOOGLE_ADC_FILE` 覆寫），專案要啟用 Discovery Engine API。憑證檔不存在時 web 容器不會啟動（避免 Docker 在主機建立同名目錄）；憑證失效或沒有權限時，重排失敗並退回融合排序，服務仍可運作。
+   重排呼叫 Vertex AI Ranking，需先執行 `gcloud auth application-default login`，並以 `gcloud auth application-default set-quota-project <GCP_PROJECT_ID>` 讓 ADC 的配額專案與 `GCP_PROJECT_ID` 一致（login 會把當下的 gcloud 預設專案寫成配額專案，不一致時可能回 403、重排退回融合排序）；docker compose 會把 `~/.config/gcloud/application_default_credentials.json` 唯讀掛進 web 容器（路徑可用 `GOOGLE_ADC_FILE` 覆寫），專案要啟用 Discovery Engine API。憑證檔不存在時 web 容器不會啟動（避免 Docker 在主機建立同名目錄）；憑證失效或沒有權限時，重排失敗並退回融合排序，服務仍可運作。
 
    驗證預設啟用。若 `APP_API_KEY` 未設定或為空字串，應用程式會回報設定錯誤並停止啟動。本機開發可明確設定 `AUTH_ENABLED=false`。
 
@@ -103,6 +103,14 @@ Compose 服務包含 `web`（FastAPI，提供 `/api/v1/*` 與 React 靜態成品
 ## 部署
 
 `release/**` 分支 push 後，GitHub Actions 建置 image，並以 Terraform 更新 Cloud Run web Service 與 sync Job。正式環境使用 `JOB_RUNNER=gcp`，web 與 sync job 共用 GCS 掛載的 `DATA_SOURCE_DIR` / `BM25_INDEX_DIR`；`GCP_PROJECT_ID`、`GCP_REGION`、`SYNC_JOB_NAME` 指定背景 job。正式部署必須設定共用登入 key；HttpOnly session cookie 在 HTTPS 下使用 Secure，變更 API 使用同源 Origin/Referer 驗證。
+
+重排使用 Vertex AI Ranking，需要專案啟用 Discovery Engine API，並給 Cloud Run 執行期 service account `roles/discoveryengine.user`。CI 只以 `-target` 更新 Cloud Run，這兩項不會被套用，**第一次部署前要由人以 owner 權限在本機執行**：
+
+```bash
+cd terraform && terraform apply -target=google_project_service.discoveryengine -target=google_project_iam_member.runtime_discoveryengine_user
+```
+
+套用後以 `gcloud projects get-iam-policy <project>` 確認。沒有套用就部署，重排會收到 403，所有 RAG 回答退回融合排序並走低信心路徑。
 
 發布流程與每版紀錄見 [docs/deployment/releases.md](docs/deployment/releases.md)。其他環境變數與預設值見 `.env.example`。
 
