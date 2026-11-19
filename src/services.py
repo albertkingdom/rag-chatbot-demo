@@ -26,7 +26,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 
 from .bm25_index import BM25Index
-from .hosted_reranker import PineconeReranker
+from .vertex_reranker import VertexReranker
 from .config import PINECONE_INDEX_NAME, REDIS_URL, RERANK_TIMEOUT_SECONDS
 from .hybrid_retriever import HybridRetriever
 
@@ -121,17 +121,17 @@ def get_vectorstore():
 
 
 def _build_reranker():
-    api_key = os.environ.get("PINECONE_API_KEY")
-    if not api_key:
-        raise ValueError("PINECONE_API_KEY not configured")
-    return PineconeReranker(api_key=api_key, timeout=RERANK_TIMEOUT_SECONDS)
+    project_id = os.environ.get("GCP_PROJECT_ID")
+    if not project_id:
+        raise ValueError("GCP_PROJECT_ID not configured (Vertex AI Ranking needs the Google Cloud project)")
+    return VertexReranker(project_id=project_id, timeout=RERANK_TIMEOUT_SECONDS)
 
 
 _reranker = LazySingleton(_build_reranker)
 
 
 def get_reranker_model():
-    """取得托管重排 client（Pinecone Inference；thread-safe, 只初始化一次）。"""
+    """取得托管重排 client（Vertex AI Ranking；thread-safe, 只初始化一次）。"""
     return _reranker.get()
 
 
