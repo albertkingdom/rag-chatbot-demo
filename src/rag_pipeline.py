@@ -257,5 +257,9 @@ def format_history(history: list, max_turns: int = 3) -> str:
     lines = ["\n\n        Previous conversation:"]
     for user_msg, bot_msg in recent:
         lines.append(f"        User: {user_msg}")
-        lines.append(f"        Assistant: {bot_msg}")
+        # The stored turn keeps the low-confidence notice; the model must not
+        # see it, or it imitates the notice in its own answer (spec:
+        # low-confidence-handling, "The model does not see the notice in the
+        # conversation history").
+        lines.append(f"        Assistant: {strip_low_confidence_notice(bot_msg)}")
     return "\n".join(lines)

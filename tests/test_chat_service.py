@@ -716,3 +716,38 @@ class TestLowConfidenceNoticeIsNotDuplicated:
         assert delta_text(events) == expected
         graded.history.append_turn.assert_called_once_with("server-session", "question", expected)
         assert graded.database.async_save_conversation.call_args.kwargs["assistant_response"] == expected
+
+
+class TestModelDoesNotSeeTheNoticeInHistory:
+    """Spec: low-confidence-handling — "The model does not see the notice in
+    the conversation history". The prompt history drops the notice from
+    assistant turns; the stored history is left as it is."""
+
+    @staticmethod
+    def stored_history(answer):
+        return [
+            {"role": "user", "content": "帳號被鎖住期間，除了等待還有什麼辦法解鎖？"},
+            {"role": "assistant", "content": answer},
+        ]
+
+    @pytest.mark.parametrize("route", ["rag", "direct"])
+    def test_prompt_history_has_no_notice_and_stored_history_is_untouched(self, providers, route):
+        stored = self.stored_history(f"{NOTICE}\n\n沒有其他辦法。")
+        snapshot = [dict(turn) for turn in stored]
+        providers.history.get_history.return_value = stored
+        if route == "direct":
+            providers.router.return_value.route = "direct"
+        asyncio.run(collect())
+        prompt_history = providers.generation.payloads[-1]["history"]
+        assert "帳號被鎖住期間，除了等待還有什麼辦法解鎖？" in prompt_history
+        assert "沒有其他辦法。" in prompt_history
+        assert NOTICE not in prompt_history
+        assert stored == snapshot
+
+    def test_assistant_turn_that_is_only_the_notice_keeps_its_place(self, providers):
+        providers.history.get_history.return_value = self.stored_history(NOTICE)
+        asyncio.run(collect())
+        prompt_history = providers.generation.payloads[-1]["history"]
+        assert "User: 帳號被鎖住期間，除了等待還有什麼辦法解鎖？" in prompt_history
+        assert prompt_history.rstrip().endswith("Assistant:")
+        assert NOTICE not in prompt_history
