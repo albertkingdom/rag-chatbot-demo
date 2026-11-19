@@ -41,6 +41,23 @@ LOW_CONFIDENCE_PREFIX = (
     "以下為一般性參考說明，實際操作請以官方操作手冊或系統畫面為準。"
 )
 
+
+def strip_low_confidence_notice(text: str) -> str:
+    """Remove copies of LOW_CONFIDENCE_PREFIX from an answer.
+
+    The model can copy the notice from an earlier low-confidence answer in the
+    conversation history, and a cached answer can carry such a copy. Each
+    occurrence is removed together with the whitespace right after it, then
+    the result is trimmed, so the server can prepend the notice exactly once
+    (spec: low-confidence-handling, "The low-confidence notice is not
+    duplicated"). Text without the notice is returned unchanged.
+    """
+    if LOW_CONFIDENCE_PREFIX not in text:
+        return text
+    pieces = text.split(LOW_CONFIDENCE_PREFIX)
+    kept = [pieces[0]] + [piece.lstrip() for piece in pieces[1:]]
+    return "".join(kept).strip()
+
 # LOW_CONFIDENCE_NOTE is appended to the system message (via the
 # `confidence_note` prompt variable) only for low-confidence retrievals.
 # It starts with a newline on purpose: the template appends the variable
