@@ -65,3 +65,36 @@ class TestEmptyCandidates:
 
         assert result == {"docs": [], "rerank_scores": []}
         scorer.assert_not_called()
+
+
+class TestMultiplePassages:
+    """Spec: rerank-stage — a candidate scored on several passages takes the
+    highest of them; the scorer is called once."""
+
+    def test_highest_passage_score_wins(self):
+        docs = [_make_doc("A", "A"), _make_doc("B", "B"), _make_doc("C", "C")]
+        table = {"A1": 0.006, "A2": 0.421, "B1": 0.591, "B2": 0.200, "C1": 0.000, "C2": 0.079}
+        scorer = MagicMock(side_effect=lambda pairs: [table[p] for _, p in pairs])
+        result = rerank_candidates("q", docs, scorer, lambda d: [d.page_content + "1", d.page_content + "2"])
+        assert [d.metadata["doc_id"] for d in result["docs"]] == ["B", "A", "C"]
+        scorer.assert_called_once()
+        assert len(scorer.call_args[0][0]) == 6
+        assert [s["score"] for s in result["rerank_scores"]] == ["0.5910", "0.4210", "0.0790"]
+
+    def test_empty_passage_list_falls_back_to_page_content(self):
+        docs = [_make_doc("A", "Doc A")]
+        scorer = MagicMock(return_value=[0.5])
+        rerank_candidates("q", docs, scorer, lambda d: [])
+        assert scorer.call_args[0][0] == [("q", "Doc A")]
+
+    def test_wrong_number_of_scores_raises(self):
+        docs = [_make_doc("A", "A"), _make_doc("B", "B"), _make_doc("C", "C")]
+        scorer = MagicMock(return_value=[0.1, 0.2, 0.3])
+        with pytest.raises(ValueError):
+            rerank_candidates("q", docs, scorer, lambda d: [d.page_content, d.page_content + "!"])
+
+
+def test_two_passages_per_candidate_fit_one_hosted_request():
+    from src.config import FUSION_TOP_M
+    from src.hosted_reranker import MAX_DOCUMENTS
+    assert 2 * FUSION_TOP_M <= MAX_DOCUMENTS
