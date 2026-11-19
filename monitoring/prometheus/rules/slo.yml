@@ -55,7 +55,9 @@ groups:
       # threshold: the long one shows the burn is sustained, the short one that
       # it is still happening.
       #
-      # Fast burn: 14.4x over 1h and 5m (2% of the budget in an hour).
+      # Fast burn: 14.4x over 1h and 5m. The multipliers come from the Google SRE
+      # Workbook, which derives them for a 30-day window (2% of the budget in an
+      # hour); with this 28-day window 14.4x spends about 2.1% per hour.
       - alert: ChatAvailabilityFastBurn
         expr: |
           slo:chat_availability:error_ratio_rate1h > (14.4 * (1 - slo:chat_availability:target))
@@ -67,7 +69,8 @@ groups:
         annotations:
           summary: 聊天可用性錯誤預算快速燃燒：近 1 小時與近 5 分鐘的錯誤率都超過預算的 14.4 倍，需要立即處理。
 
-      # Slow burn: 6x over 6h and 30m (5% of the budget in six hours).
+      # Slow burn: 6x over 6h and 30m (about 5.4% of the 28-day budget in six
+      # hours; 5% for the workbook's 30-day window).
       - alert: ChatAvailabilitySlowBurn
         expr: |
           slo:chat_availability:error_ratio_rate6h > (6 * (1 - slo:chat_availability:target))

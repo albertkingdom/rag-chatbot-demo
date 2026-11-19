@@ -105,8 +105,10 @@ histogram_quantile(0.95, sum by (le) (increase(chat_response_duration_seconds_bu
 
 | 告警 | 條件 | 嚴重度 |
 |---|---|---|
-| `ChatAvailabilityFastBurn` | 1 小時與 5 分鐘的錯誤率都超過預算的 14.4 倍（約 1 小時燒掉 28 天預算的 2%） | critical |
-| `ChatAvailabilitySlowBurn` | 6 小時與 30 分鐘的錯誤率都超過預算的 6 倍（約 6 小時燒掉 5%） | warning |
+| `ChatAvailabilityFastBurn` | 1 小時與 5 分鐘的錯誤率都超過預算的 14.4 倍（約 1 小時燒掉 28 天預算的 2.1%） | critical |
+| `ChatAvailabilitySlowBurn` | 6 小時與 30 分鐘的錯誤率都超過預算的 6 倍（約 6 小時燒掉 5.4%） | warning |
+
+14.4 倍與 6 倍沿用 Google SRE Workbook 的建議值。書中以 30 天視窗推算，分別對應「1 小時燒掉 2%」與「6 小時燒掉 5%」；本專案用 28 天（剛好 4 週，每個視窗包含相同數量的星期幾），換算後是 2.1% 與 5.4%。倍數本來就是經驗值，這點差距不影響告警行為。
 
 長視窗確認問題持續存在，短視窗讓問題恢復後告警能很快解除。沒有流量的視窗不產生數值，所以不會誤觸發。本機沒有接 Alertmanager，告警只在 Prometheus 的 Alerts 頁面顯示狀態。
 
