@@ -20,6 +20,7 @@
 - **背景知識庫同步**：上傳 PDF / XLSX / CSV，由背景任務增量同步向量庫與 BM25 索引，介面可查詢工作狀態。
 - **範例知識庫**：附自製的虛構操作手冊，可直接上傳建立知識庫；同步與 RAGAS 評估使用獨立的 demo index。
 - **可觀測性與評估**：LangSmith 追蹤各階段、MongoDB 保存對話紀錄、RAGAS 離線評估（faithfulness 1.0、answer relevancy 0.95、context precision 0.94、context recall 1.0；題庫 12 題，僅供參考）。
+- **本機 SLO 監控**：Prometheus＋Grafana 量測可用性、首段回答與完整回應延遲、低信心比例與重排降級率，可用性 burn rate 告警以 promtool 測試（只在本機 docker-compose，設計見 [docs/sli-slo.md](docs/sli-slo.md)）。
 - **手機優先 React 介面**：登入、串流聊天、來源展開、文件上傳與深色模式。
 
 ## 系統架構
@@ -71,10 +72,11 @@ flowchart LR
    - 主應用程式：<http://localhost:8000>，輸入 `APP_API_KEY` 登入。
    - RedisInsight：<http://localhost:8001>（檢視 prompt cache）。
    - Mongo Express：<http://localhost:8081>（檢視對話紀錄）。
+   - Prometheus：<http://localhost:9090>；Grafana：<http://localhost:3000>（預設 `admin`／`admin`，Dashboards → RAG SLO）。
 
 4. 建立知識庫：在「文件管理」上傳 `examples/carbonm_sample_manual.xlsx`（自行撰寫的虛構範例手冊，60 題），等同步工作顯示成功後即可提問；也可以上傳自己的 PDF / XLSX / CSV 手冊。首次同步會自動建立 Pinecone index `rag-demo-qa-index`（可用 `PINECONE_INDEX_NAME` 改名）。同步會刪除 index 中不在已上傳手冊裡的向量，請勿指向其他環境使用的 index。舊版本機環境的遷移方式見 [architecture.md](architecture.md#pinecone-index-與範例手冊)。
 
-Compose 服務包含 `web`（FastAPI，提供 `/api/v1/*` 與 React 靜態成品）、`worker`（RQ 背景任務）、`redis`、`mongodb` 與上述兩個管理介面。前端獨立開發、測試與驗收腳本見 [docs/development.md](docs/development.md)。
+Compose 服務包含 `web`（FastAPI，提供 `/api/v1/*` 與 React 靜態成品）、`worker`（RQ 背景任務）、`redis`、`mongodb`、上述兩個管理介面，以及本機監控用的 `prometheus`、`grafana`。前端獨立開發、測試與驗收腳本見 [docs/development.md](docs/development.md)。
 
 ## API
 

@@ -32,4 +32,4 @@
 
 ## 6. 文件
 
-- [ ] 6.1 更新 `docs/sli-slo.md`：移除「尚未導入」的狀態說明；「首字延遲（TTFT）」改為首段回答延遲並說明輸出 guardrail 需要整段暫存；第四節改寫成實際做法（不使用 instrumentator、量測點在路由層包裝器）；註明可用性 SLI 跨所有來源計算、不含串流開始前就被拒絕的請求、cancelled 不列入分母、收到 `done` 後才斷線的請求會記為 success；註明空回答只計入完整回應延遲、`guardrail` 來源混合了輸入與輸出防護擋下的請求；附 Prometheus／Grafana 的啟動與查看方式。更新 `architecture.md`：新增指標與量測位置的段落，並在 Key Parameters 表加入 `METRICS_ENABLED`。README 功能列表加一條監控項目。驗證：內容審查，確認文件與 `src/observability.py` 的指標名稱、buckets 一致，且 `python -m pytest tests -q` 全部通過。
+- [x] 6.1 更新 `docs/sli-slo.md`：移除「尚未導入」的狀態說明；「首字延遲（TTFT）」改為首段回答延遲並說明輸出 guardrail 需要整段暫存；第四節改寫成實際做法（不使用 instrumentator、量測點在路由層包裝器）；註明可用性 SLI 跨所有來源計算、不含串流開始前就被拒絕的請求、cancelled 不列入分母、收到 `done` 後才斷線的請求會記為 success；註明空回答只計入完整回應延遲、`guardrail` 來源混合了輸入與輸出防護擋下的請求；附 Prometheus／Grafana 的啟動與查看方式。更新 `architecture.md`：新增指標與量測位置的段落，並在 Key Parameters 表加入 `METRICS_ENABLED`。README 功能列表加一條監控項目。驗證：內容審查，確認文件與 `src/observability.py` 的指標名稱、buckets 一致，且 `python -m pytest tests -q` 全部通過。
