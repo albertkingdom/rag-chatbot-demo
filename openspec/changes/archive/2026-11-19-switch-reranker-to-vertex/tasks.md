@@ -17,4 +17,4 @@
 
 ## 4. 歸檔順序
 
-- [ ] 4.1 先歸檔 `rerank-with-answer-text`（它的 3.x 依賴本 change 的 3.1、3.2 完成），再歸檔本 change，兩者在同一個 PR。驗證：`spectra archive` 依序成功，`openspec/specs/rerank-stage/spec.md` 同時含兩個 change 的修改。
+- [x] 4.1 先歸檔 `rerank-with-answer-text`（它的 3.x 依賴本 change 的 3.1、3.2 完成），再歸檔本 change，兩者在同一個 PR。驗證：`spectra archive` 依序成功，`openspec/specs/rerank-stage/spec.md` 同時含兩個 change 的修改。
