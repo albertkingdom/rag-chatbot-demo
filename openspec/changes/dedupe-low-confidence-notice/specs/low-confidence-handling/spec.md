@@ -84,3 +84,24 @@ Before the fixed low-confidence notice is prepended and before the output guardr
 | rag, high confidence | "  Body  " (no notice) | "  Body  " (unchanged) |
 
 NOTICE is the fixed low-confidence notice text.
+
+### Requirement: The model does not see the notice in the conversation history
+
+When the conversation history is formatted into the generation prompt on the rag path or the direct path, the system SHALL remove every occurrence of the fixed low-confidence notice from assistant turns, using the same removal rule as "The low-confidence notice is not duplicated". User turns SHALL be passed unchanged. An assistant turn that is empty after the removal SHALL keep its place in the history with empty assistant text. The stored conversation history and the saved conversation records SHALL keep their existing content, including the notice.
+
+#### Scenario: History with a low-confidence answer
+
+- **GIVEN** the stored history contains a user turn and an assistant turn that starts with the fixed notice followed by "沒有其他辦法。"
+- **WHEN** the next question is answered on the rag path or the direct path
+- **THEN** the history text in the generation input contains the user turn and the assistant text "沒有其他辦法。", and does not contain the fixed notice
+
+#### Scenario: Assistant turn that is only the notice
+
+- **WHEN** an assistant turn in the history consists only of the fixed notice
+- **THEN** the history text in the generation input keeps that turn with its user text and empty assistant text
+
+#### Scenario: Stored history keeps the notice
+
+- **WHEN** the history contains an assistant turn with the fixed notice and is formatted for the generation prompt
+- **THEN** the turns stored in the conversation history are not modified
+

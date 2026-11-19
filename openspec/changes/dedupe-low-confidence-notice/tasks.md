@@ -10,3 +10,9 @@
 ## 3. 文件與整體驗證
 
 - [x] 3.1 更新 `architecture.md` 第 7 節「低信心」：說明生成後會先移除模型抄寫的固定提示，再由伺服器加上一次，以及 direct、高信心與快取命中的回答也會移除。驗證：內容審查，並執行 `python -m pytest tests -q` 全部通過。
+
+## 4. 從源頭避免抄寫
+
+- [x] 4.1 在 `tests/test_chat_service.py` 新增測試，滿足 The model does not see the notice in the conversation history：讓 `get_history` 回傳一筆使用者訊息與一筆以固定提示開頭的助理回答，分別走 rag 與 direct 路徑，斷言生成輸入（假生成 chain 記錄的 payload）的 `history` 含使用者訊息與助理回答本文、不含固定提示，且 `get_history` 回傳的 list 沒有被修改；另加一個助理回答只有固定提示的案例，斷言該輪仍在、助理文字為空。驗證：修改程式前執行，確認因 `history` 含固定提示而斷言失敗，記下失敗訊息。
+- [x] 4.2 在 `src/rag_pipeline.py` 的 `format_history` 中，對每個助理回答套用 `strip_low_confidence_notice` 後再組成文字，使用者訊息不變。驗證：4.1 的測試與 `tests/test_chat_service.py` 全部通過；改壞驗證：暫時拿掉這個呼叫，確認 4.1 失敗後還原；`architecture.md` 第 7 節補一句說明；`python -m pytest tests -q` 全部通過。
+

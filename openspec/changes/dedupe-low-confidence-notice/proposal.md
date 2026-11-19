@@ -14,10 +14,12 @@
 
 移除邏輯集中在 `src/rag_pipeline.py` 的一個函式（與 `LOW_CONFIDENCE_PREFIX` 放在一起），chat service 的兩條路徑都呼叫它。
 
+另外從源頭減少抄寫：把對話歷史組進生成 prompt 時（`format_history`），先移除助理回答中的固定提示，模型就看不到可以模仿的範例；Redis 與 MongoDB 儲存的內容不變。輸出端的去重只能處理一字不漏的抄寫，模型改寫過的提示要靠這一步降低發生機率。
+
 ## Non-Goals
 
 - 不改變對話歷史與 MongoDB 紀錄的內容規則：低信心回答仍以含提示的文字寫入歷史與紀錄，與串流給使用者的文字相同。
-- 不改寫送進 prompt 的對話歷史（例如移除歷史中的提示）。只在輸出端去重就能保證結果，且不必讓「歷史」與「紀錄」出現兩種版本。
+- 不修改路由器改寫問題時使用的對話歷史（`query_router.py`）：它產生的是檢索用的問題，不是回答，提示不會被抄進回答。
 - 不處理措辭相近但不完全相同的提示（模型改寫過的版本）；只移除完全相同的固定文字。
 - 不修改 `LOW_CONFIDENCE_NOTE` 的內容。
 - 快取答案去重後若變成空字串，維持現有的快取命中處理，不改成視為未命中；高信心答案只有提示的情況極少，不值得多一條分支。
@@ -29,11 +31,12 @@
 - 高信心 rag 回答、direct 回答與快取命中的回答中，固定提示被移除，回答不含提示。
 - 模型輸出只有固定提示時，低信心回答不加提示（與空生成相同）。
 - 沒有抄寫提示的回答內容完全不變。
+- 生成 prompt 中的對話歷史不含固定提示，儲存的對話歷史與紀錄仍含提示。
 - `python -m pytest tests -q` 全部通過，新增的測試在修正前因此問題失敗。
 
 ## Impact
 
-- Affected specs: low-confidence-handling（修改「Low-confidence answers are labelled and carry no sources」補上空生成例外與去重順序；新增「The low-confidence notice is not duplicated」）
+- Affected specs: low-confidence-handling（修改「Low-confidence answers are labelled and carry no sources」補上空生成例外與去重順序；新增「The low-confidence notice is not duplicated」與「The model does not see the notice in the conversation history」）
 - Affected code:
   - Modified: src/rag_pipeline.py, src/chat_service.py, tests/test_chat_service.py, architecture.md
   - New: (none)
