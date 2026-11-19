@@ -142,3 +142,10 @@ BM25_RELOAD_INTERVAL_SECONDS = float(os.environ.get("BM25_RELOAD_INTERVAL_SECOND
 CHAT_HISTORY_TTL_SECONDS = int(os.environ.get("CHAT_HISTORY_TTL_SECONDS", "1800"))
 # Max number of most-recent conversation turns retained per session.
 CHAT_HISTORY_MAX_TURNS = int(os.environ.get("CHAT_HISTORY_MAX_TURNS", "3"))
+
+# Serve Prometheus metrics at GET /metrics. Off by default: the route is not
+# under /api, so the auth middleware does not protect it, and only the local
+# docker-compose stack (which scrapes it over the compose network) turns it
+# on. True only for "true" or "1", case-insensitive; anything else, including
+# unset, is false.
+METRICS_ENABLED = (os.environ.get("METRICS_ENABLED") or "").lower() in {"true", "1"}

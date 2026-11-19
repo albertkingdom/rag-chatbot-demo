@@ -1,0 +1,101 @@
+# SLO recording and alerting rules (spec: slo-burn-rate-rules).
+#
+# Availability SLI = successes / (successes + errors) over chat_requests_total,
+# summed across every response_source (including "unknown": a failed stream
+# usually ends before its metadata event, so its errors carry no source).
+# "cancelled" requests are in neither the numerator nor the denominator.
+#
+# With no traffic in a window the denominator is 0. The recording rules filter
+# it out with `> 0`, so the rule produces no sample at all (never NaN) and no
+# alert can fire. A window with traffic but no error (or no success) series
+# counts the missing side as 0.
+#
+# Latency SLIs (group slo_rag_latency) count successful rag requests within
+# 10 s, a threshold set from the 2026-11-19 local baseline (docs/sli-slo.md).
+# The threshold must be a bucket boundary of the histogram (a pytest checks it).
+# Tested by slo_test.yml (promtool test rules).
+groups:
+  - name: slo_chat_availability
+    rules:
+      # SLO target: 99.5% availability, i.e. an error budget of 0.005. The one
+      # place the number lives; the alerts and the dashboard read it from here.
+      - record: slo:chat_availability:target
+        expr: vector(0.995)
+
+      - record: slo:chat_availability:ratio_rate5m
+        expr: |
+          (sum(rate(chat_requests_total{outcome="success"}[5m])) or vector(0))
+          /
+          (sum(rate(chat_requests_total{outcome=~"success|error"}[5m])) > 0)
+
+      # Error ratio per window, for the burn-rate alerts below.
+      - record: slo:chat_availability:error_ratio_rate5m
+        expr: |
+          (sum(rate(chat_requests_total{outcome="error"}[5m])) or vector(0))
+          /
+          (sum(rate(chat_requests_total{outcome=~"success|error"}[5m])) > 0)
+      - record: slo:chat_availability:error_ratio_rate30m
+        expr: |
+          (sum(rate(chat_requests_total{outcome="error"}[30m])) or vector(0))
+          /
+          (sum(rate(chat_requests_total{outcome=~"success|error"}[30m])) > 0)
+      - record: slo:chat_availability:error_ratio_rate1h
+        expr: |
+          (sum(rate(chat_requests_total{outcome="error"}[1h])) or vector(0))
+          /
+          (sum(rate(chat_requests_total{outcome=~"success|error"}[1h])) > 0)
+      - record: slo:chat_availability:error_ratio_rate6h
+        expr: |
+          (sum(rate(chat_requests_total{outcome="error"}[6h])) or vector(0))
+          /
+          (sum(rate(chat_requests_total{outcome=~"success|error"}[6h])) > 0)
+
+      # Multiwindow burn-rate alerts. A burn rate of N spends the 28-day error
+      # budget N times faster than the SLO allows. Both windows must exceed the
+      # threshold: the long one shows the burn is sustained, the short one that
+      # it is still happening.
+      #
+      # Fast burn: 14.4x over 1h and 5m. The multipliers come from the Google SRE
+      # Workbook, which derives them for a 30-day window (2% of the budget in an
+      # hour); with this 28-day window 14.4x spends about 2.1% per hour.
+      - alert: ChatAvailabilityFastBurn
+        expr: |
+          slo:chat_availability:error_ratio_rate1h > (14.4 * (1 - slo:chat_availability:target))
+          and
+          slo:chat_availability:error_ratio_rate5m > (14.4 * (1 - slo:chat_availability:target))
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: 聊天可用性錯誤預算快速燃燒：近 1 小時與近 5 分鐘的錯誤率都超過預算的 14.4 倍，需要立即處理。
+
+      # Slow burn: 6x over 6h and 30m (about 5.4% of the 28-day budget in six
+      # hours; 5% for the workbook's 30-day window).
+      - alert: ChatAvailabilitySlowBurn
+        expr: |
+          slo:chat_availability:error_ratio_rate6h > (6 * (1 - slo:chat_availability:target))
+          and
+          slo:chat_availability:error_ratio_rate30m > (6 * (1 - slo:chat_availability:target))
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: 聊天可用性錯誤預算持續燃燒：近 6 小時與近 30 分鐘的錯誤率都超過預算的 6 倍，請排入處理。
+
+  - name: slo_rag_latency
+    rules:
+      # Share of successful rag requests whose first answer text was sent within
+      # 10 s (target: 95%). le="10.0" is the threshold; it must stay a bucket
+      # boundary of chat_first_answer_text_seconds so the ratio is an exact count.
+      - record: slo:rag_first_answer_text_good:ratio_rate5m
+        expr: |
+          sum(rate(chat_first_answer_text_seconds_bucket{response_source="rag",le="10.0"}[5m]))
+          /
+          (sum(rate(chat_first_answer_text_seconds_count{response_source="rag"}[5m])) > 0)
+
+      # Same for the full response (done event within 10 s).
+      - record: slo:rag_response_duration_good:ratio_rate5m
+        expr: |
+          sum(rate(chat_response_duration_seconds_bucket{response_source="rag",le="10.0"}[5m]))
+          /
+          (sum(rate(chat_response_duration_seconds_count{response_source="rag"}[5m])) > 0)

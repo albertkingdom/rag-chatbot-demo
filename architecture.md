@@ -56,7 +56,7 @@ flowchart TB
     CRJob --> BM25
 ```
 
-部署：本機以 Docker Compose 啟動 `web`、`worker`、`redis`、`mongodb`、`mongo-express`、`redis-insight`；正式環境為單一 Cloud Run service（React SPA 與 API 同源），背景同步改由 Cloud Run Job 執行，`DATA_SOURCE_DIR` / `BM25_INDEX_DIR` 以 GCS 掛載共用，基礎設施由 `terraform/` 管理。
+部署：本機以 Docker Compose 啟動 `web`、`worker`、`redis`、`mongodb`、`mongo-express`、`redis-insight`、`prometheus`、`grafana`（監控只在本機，見[監控指標](#監控指標srcobservabilitypy)）；正式環境為單一 Cloud Run service（React SPA 與 API 同源），背景同步改由 Cloud Run Job 執行，`DATA_SOURCE_DIR` / `BM25_INDEX_DIR` 以 GCS 掛載共用，基礎設施由 `terraform/` 管理。
 
 ## Chat 請求流程（`src/chat_service.py`）
 
@@ -291,6 +291,39 @@ flowchart TB
 - **既有本機環境遷移**：預設 index 改變後，舊的本機 Compose 會改用空的 demo index，但 `manual_data`、`bm25_data` volume 與 Redis 語意快取仍保留舊資料。要沿用舊資料，在 `.env` 設定原本的 `PINECONE_INDEX_NAME`；要改用範例手冊，因介面沒有刪除手冊的功能，需以 `docker compose down -v` 清空本機資料（含已上傳手冊、BM25 索引、Redis 快取與 MongoDB 紀錄）後重新啟動，再上傳範例手冊並等待同步。
 - **正式站切換與回復**：步驟見 [docs/deployment/releases.md](docs/deployment/releases.md#切換正式站知識庫)。web Service 與 sync Job 必須一起改 index 與資料目錄；切換和回復期間不可上傳手冊，因為 web 觸發的 Job 使用 Job 自己的設定。
 
+## 監控指標（`src/observability.py`）
+
+本機 docker-compose 以 Prometheus＋Grafana 量測 SLI；Cloud Run 正式環境不輸出指標（流量稀少、scale-to-zero 與 Prometheus 的 pull 模式衝突）。SLI／SLO 的定義與理由見 [docs/sli-slo.md](docs/sli-slo.md)。
+
+```mermaid
+flowchart LR
+    Route["routes.py ndjson_stream<br/>observe_chat_stream"] --> Reg[(prometheus_client<br/>預設 registry)]
+    Grade["chat_service.py<br/>_retrieve_best"] --> Reg
+    Rerank["rag_pipeline.py<br/>_rerank_or_fallback"] --> Reg
+    Reg --> Metrics["GET /metrics<br/>METRICS_ENABLED=true 才註冊"]
+    Metrics -- 每 15 秒抓取 --> Prom[(Prometheus<br/>slo.yml 規則與告警)]
+    Prom --> Grafana[Grafana<br/>RAG SLO dashboard]
+```
+
+| 指標 | 型別 | Labels | 記錄位置與時機 |
+|---|---|---|---|
+| `chat_requests_total` | Counter | `response_source`、`outcome`（success／error／cancelled） | 路由層包裝器 `observe_chat_stream`，每個開始串流的請求在 `finally` 恰好記一次 |
+| `chat_first_answer_text_seconds` | Histogram | `response_source` | 同上；只在 success 且至少有一個 `delta` 時記錄，計時到第一個 `delta` |
+| `chat_response_duration_seconds` | Histogram | `response_source` | 同上；只在 success 時記錄，計時到 `done` |
+| `rag_retrieval_total` | Counter | `low_confidence` | `chat_service.py` 的 `_retrieve_best` 決定檢索結果時，每個 rag 請求一次 |
+| `rag_retrieval_retries_total` | Counter | — | 同上，加上該請求的重試次數 |
+| `rag_rerank_duration_seconds` | Histogram | `outcome`（ok／timeout／error） | `rag_pipeline.py` 的 `_rerank_or_fallback` 成功與失敗出口；沒有候選、沒有呼叫重排時不記錄 |
+
+- **結果判定**：收到 `done` 為 success（含 guardrail 擋下的回應），收到 `error` 或內層丟出 `Exception` 為 error，其餘（client 斷線、`CancelledError`）為 cancelled。`response_source` 取自 `metadata` 事件，它在回答之後才送出，所以出錯的請求幾乎都是 `unknown`；可用性因此跨所有來源計算。
+- **Buckets**：兩個請求延遲 histogram 共用 0.5、1、2、3、5、8、10、12、15、20、30、60 秒；重排為 0.1、0.25、0.5、1、2、3、5、8 秒。SLO 門檻必須是 bucket 邊界。
+- **計時起點**：包裝器開始迭代事件時的單調時鐘，不沿用 chat service 的 `elapsed_ms`（它的起點晚於讀取對話歷史）。
+- **啟動時預先建立值為 0 的時間序列**：所有 label 組合在 import 時建立，否則 Prometheus 會漏算一條新時間序列的第一筆。
+- **不影響回應**：每次寫入指標都包在 `_safely` 內，失敗只寫 log；包裝器原樣轉送事件，內層例外記錄後原樣拋出。
+- **Labels 只用固定集合**：不在 `RESPONSE_SOURCES` 裡的來源記為 `unknown`；session、問題內容不會成為 label。
+- **`/metrics` 預設關閉**：它不在 `/api` 底下，驗證中介層不保護它；只有 `METRICS_ENABLED` 為 `true` 或 `1` 時，`create_app` 才在 SPA catch-all 之前註冊。只有 compose 的 `web` 服務開啟，Terraform 不設定（有 pytest 檢查）。
+- **規則與 dashboard**：`monitoring/prometheus/rules/slo.yml`（可用性目標 99.5%、四個視窗的錯誤率、快速燒／慢速燒告警，以 `slo_test.yml` 用 promtool 測試，CI 的 Prometheus rules job 也會執行）；Grafana 的資料來源與 dashboard 由 `monitoring/grafana/` 以檔案 provisioning 載入。延遲 SLO 規則等基準量測後才加入。
+- **壓測腳本**：`scripts/load_baseline.py` 以 `X-API-Key` 依序送出 `scripts/load_baseline_questions.json` 的不重複題目，拒絕在正式 index 上執行，結束時印出各來源與結果的請求數。
+
 ## Key Parameters
 
 | Component | Parameter | Value | 定義位置 |
@@ -314,6 +347,7 @@ flowchart TB
 | Vector Upsert | Batch Size | 100 vectors | `build_vector_store.py` |
 | LLM | Model / temperature | `google/gemini-2.5-flash` / 0 | `services.py` |
 | Access | `RATE_LIMIT_RPM` | 60 | `access_control.py`（env 可覆寫） |
+| Monitoring | `METRICS_ENABLED` | false（`true` 或 `1` 時才註冊 `GET /metrics`，不分大小寫） | `config.py`（env 可覆寫；只有 docker-compose 的 web 設為 true，Terraform 不設定） |
 
 ## Evaluation
 
@@ -369,3 +403,13 @@ flowchart TB
 | 約三成知識庫問題仍需 LLM 路由 | `query_router.py`：`RAG_KEYWORDS` | 範例手冊 60 題有 17 題由 LLM 判斷，每題多約 1–2.6 秒；評估腳本的路由關卡確保它們判為 `rag`，但 LLM 判斷可能隨模型或 prompt 改變而退化，修改後需重跑評估腳本 |
 | 正式 index 名稱寫在兩處 | `terraform/main.tf`（`local.pinecone_index_name`）、`scripts/eval_sample_manual.py`（`PRODUCTION_INDEXES`） | 之後再改正式 index 時，評估腳本的拒絕清單要一起更新；執行時仍應以 `--audit-index` 明確指定要保護的 index |
 | 評估題庫只有 12 題 | `tests/rag_eval_data.json` | 題數仍少，LLM 評分的隨機性足以影響版本比較；也沒有涵蓋路由、重試與低信心路徑 |
+
+### 2026-11-18 本機監控實測發現的問題（尚未處理）
+
+來源：本機 docker-compose（demo index）以前端實際提問，對照 Prometheus 指標。以下問題都還沒有建立變更提案。
+
+| 問題 | 位置 | 影響 |
+|------|------|------|
+| 低信心提示在回答開頭重複兩次 | `chat_service.py`：`LOW_CONFIDENCE_PREFIX`、生成 prompt 的 `confidence_note` | 「CarbonM 的密碼長度與字元組成有什麼規定？」的回答開頭連續出現兩次「知識庫中查無與此問題直接相關的資料…」。程式在生成後加上固定前綴，模型又依 `confidence_note` 自行寫了一次 |
+| 手冊有寫的問題被判為低信心 | `retrieval_grader.py`、`hybrid_retriever.py`；題目來自 `scripts/load_baseline_questions.json` | 「密碼長度與字元組成」「帳號被鎖住期間的解鎖方式」由範例手冊產生，檢索仍判為低信心，回答變成一般性說明。4 次檢索有 2 次低信心、共重試 2 次，需確認是檢索沒取到還是評分門檻過嚴 |
+| 相同問題第二次詢問沒有命中語意快取 | `cache_service.py`、`chat_service.py` 的快取查詢 | 同一 session 第二次問「忘記密碼怎麼辦？」仍走 rag（5.4 秒、附來源），`response_source` 不是 `cache`。需確認是快取未寫入、查詢條件（例如對話歷史或命名空間）不同，還是 web 容器重建後快取被清空 |

@@ -31,6 +31,7 @@ from ..manual_service import (
     get_sync_status,
     save_manual,
 )
+from ..observability import observe_chat_stream
 
 router = APIRouter(prefix="/api/v1", responses={code: {"model": ApiErrorResponse} for code in (401, 403, 404, 409, 413, 422, 429, 503)})
 
@@ -203,11 +204,15 @@ async def stream_chat(payload: ChatRequest, request: Request) -> StreamingRespon
     async def ndjson_stream():
         try:
             from ..chat_service import chat_event_stream
+            # The observer is the inner context, so a disconnect closes it
+            # first and its `finally` still records the request's outcome
+            # before the chat service generator is closed.
             async with aclosing(chat_event_stream(payload.message, history_key=sid, session_id=sid)) as events:
-                async for event in events:
-                    if await request.is_disconnected():
-                        break
-                    yield event.model_dump_json(by_alias=True) + "\n"
+                async with aclosing(observe_chat_stream(events)) as observed:
+                    async for event in observed:
+                        if await request.is_disconnected():
+                            break
+                        yield event.model_dump_json(by_alias=True) + "\n"
         except Exception:
             yield ErrorEvent().model_dump_json(by_alias=True) + "\n"
         finally:

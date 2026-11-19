@@ -1,16 +1,21 @@
 """Hermetic contract tests for the React frontend API."""
 
+import asyncio
 import json
 import sys
 import types
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 from src.access_control import AuthConfig, SESSION_COOKIE
 from src.api.routes import router
 from src.chat_events import DeltaEvent, DoneEvent, MetadataEvent, StatusEvent
+from src.api import routes
 
 
 def _app(*, enabled: bool = False, redis=None) -> FastAPI:
@@ -26,6 +31,32 @@ def _app(*, enabled: bool = False, redis=None) -> FastAPI:
     )
     application.include_router(router)
     return application
+
+
+def _request_counts():
+    """Every chat_requests_total sample as {(source, outcome): value}."""
+    return {
+        (sample.labels["response_source"], sample.labels["outcome"]): sample.value
+        for family in REGISTRY.collect()
+        for sample in family.samples
+        if sample.name == "chat_requests_total"
+    }
+
+
+def _count_changes(before, after):
+    return {key: after[key] - before.get(key, 0.0) for key in after if after[key] != before.get(key, 0.0)}
+
+
+@pytest.fixture
+def fake_chat_service(monkeypatch):
+    """Install a stand-in for src.chat_service whose event stream the test supplies."""
+
+    def install(stream):
+        module = types.ModuleType("src.chat_service")
+        module.chat_event_stream = stream
+        monkeypatch.setitem(sys.modules, "src.chat_service", module)
+
+    return install
 
 
 class TestLoginAndSession:
@@ -109,6 +140,96 @@ class TestChatStream:
             "responseSource": "rag",
             "cacheHit": False,
         }
+
+    def test_stream_lines_are_unchanged_by_metrics_and_the_request_is_counted_once(self, fake_chat_service):
+        events = [
+            StatusEvent(stage="retrieving", message="搜尋中"),
+            DeltaEvent(text="回答"),
+            MetadataEvent(elapsed_ms=42, response_source="rag", cache_hit=False),
+            DoneEvent(),
+        ]
+
+        async def fake_stream(*args, **kwargs):
+            for event in events:
+                yield event
+
+        fake_chat_service(fake_stream)
+        before = _request_counts()
+
+        response = TestClient(_app()).post("/api/v1/chat/stream", json={"message": "測試問題"})
+
+        assert response.status_code == 200
+        assert response.text == "".join(event.model_dump_json(by_alias=True) + "\n" for event in events)
+        assert _count_changes(before, _request_counts()) == {("rag", "success"): 1.0}
+
+    def test_failing_chat_service_sends_error_event_and_is_counted_as_error(self, fake_chat_service):
+        async def failing_stream(*args, **kwargs):
+            yield StatusEvent(stage="retrieving", message="搜尋中")
+            raise RuntimeError("provider down")
+
+        fake_chat_service(failing_stream)
+        before = _request_counts()
+
+        response = TestClient(_app()).post("/api/v1/chat/stream", json={"message": "測試問題"})
+
+        assert [json.loads(line)["type"] for line in response.text.splitlines()] == ["status", "error"]
+        assert _count_changes(before, _request_counts()) == {("unknown", "error"): 1.0}
+
+    def test_client_disconnect_is_counted_as_cancelled_and_closes_the_chat_stream(self, fake_chat_service):
+        closed = []
+
+        async def endless_stream(*args, **kwargs):
+            try:
+                yield StatusEvent(stage="retrieving", message="搜尋中")
+                yield DeltaEvent(text="回答")
+                yield DoneEvent()
+            finally:
+                closed.append(True)
+
+        fake_chat_service(endless_stream)
+        polls = iter([False, True])
+
+        async def is_disconnected():
+            return next(polls)
+
+        request = SimpleNamespace(
+            headers={},
+            cookies={},
+            app=SimpleNamespace(state=SimpleNamespace(auth_config=SimpleNamespace(enabled=False))),
+            is_disconnected=is_disconnected,
+        )
+        before = _request_counts()
+
+        async def consume():
+            response = await routes.stream_chat(routes.ChatRequest(message="測試問題"), request)
+            return [line async for line in response.body_iterator]
+
+        lines = asyncio.run(consume())
+
+        assert [json.loads(line)["type"] for line in lines] == ["status"]
+        assert closed == [True]
+        assert _count_changes(before, _request_counts()) == {("unknown", "cancelled"): 1.0}
+
+    def test_request_rejected_before_the_stream_starts_is_not_counted(self, fake_chat_service):
+        async def never_started(*args, **kwargs):
+            raise AssertionError("the chat service must not run for a rejected request")
+            yield  # pragma: no cover
+
+        fake_chat_service(never_started)
+        application = _app(enabled=True)
+        application.state.active_chat_sessions = {"session-1"}
+        client = TestClient(application)
+        client.cookies.set(SESSION_COOKIE, "session-1")
+        before = _request_counts()
+
+        response = client.post(
+            "/api/v1/chat/stream",
+            json={"message": "測試問題"},
+            headers={"Origin": "http://testserver"},
+        )
+
+        assert response.status_code == 409
+        assert _request_counts() == before
 
     def test_message_is_trimmed_and_limited_server_side(self):
         client = TestClient(_app())

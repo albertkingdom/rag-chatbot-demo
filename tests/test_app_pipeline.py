@@ -298,3 +298,125 @@ async def test_failure_log_carries_no_content(patched_chain, monkeypatch, caplog
     assert "error" in message and "BoomError" in message and "ms" in message
     for leaked in ("needle query text", "secret detail", "Q A", "ans A"):
         assert leaked not in message
+
+
+# --- Rerank duration metric (spec: service-level-metrics) ---------------------
+#
+# Histograms live on the default registry and are never reset, so each test
+# compares the per-outcome observation counts before and after.
+
+from prometheus_client import REGISTRY  # noqa: E402
+
+
+def rerank_counts():
+    return {
+        outcome: REGISTRY.get_sample_value("rag_rerank_duration_seconds_count", {"outcome": outcome}) or 0.0
+        for outcome in ("ok", "timeout", "error")
+    }
+
+
+def rerank_sum(outcome):
+    return REGISTRY.get_sample_value("rag_rerank_duration_seconds_sum", {"outcome": outcome}) or 0.0
+
+
+def count_changes(before):
+    after = rerank_counts()
+    return {outcome: after[outcome] - before[outcome] for outcome in after if after[outcome] != before[outcome]}
+
+
+@pytest.mark.asyncio
+async def test_successful_rerank_is_observed_as_ok(patched_chain):
+    before = rerank_counts()
+
+    result = await patched_chain.ainvoke("test query")
+
+    assert result["rerank_scores"] and "rerank_error" not in result
+    assert count_changes(before) == {"ok": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_scorer_error_is_observed_as_error_and_still_falls_back(patched_chain, fused, monkeypatch):
+    monkeypatch.setattr(rag_module, "get_reranker_model", lambda: _failing_reranker(BoomError("secret detail")))
+    before = rerank_counts()
+
+    result = await patched_chain.ainvoke("test query")
+
+    assert (result["docs"], result["rerank_scores"], result["rerank_error"]) == (fused[:3], [], "error")
+    assert count_changes(before) == {"error": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_scorer_timeout_is_observed_as_timeout_with_the_elapsed_time(patched_chain, fused, monkeypatch):
+    release = threading.Event()
+
+    def slow(pairs):
+        release.wait(5)
+        return [0.9] * len(pairs)
+
+    reranker = MagicMock()
+    reranker.score = MagicMock(side_effect=slow)
+    monkeypatch.setattr(rag_module, "get_reranker_model", lambda: reranker)
+    monkeypatch.setattr(rag_module, "RERANK_TIMEOUT_SECONDS", 0.05)
+    before, sum_before = rerank_counts(), rerank_sum("timeout")
+    try:
+        result = await patched_chain.ainvoke("test query")
+    finally:
+        release.set()
+
+    assert (result["docs"], result["rerank_scores"], result["rerank_error"]) == (fused[:3], [], "timeout")
+    assert count_changes(before) == {"timeout": 1.0}
+    assert rerank_sum("timeout") - sum_before >= 0.04  # observed the wait, not zero
+
+
+@pytest.mark.asyncio
+async def test_http_timeout_is_observed_as_timeout(patched_chain, monkeypatch):
+    import requests
+
+    monkeypatch.setattr(rag_module, "get_reranker_model", lambda: _failing_reranker(requests.Timeout("read timed out")))
+    before = rerank_counts()
+
+    result = await patched_chain.ainvoke("test query")
+
+    assert result["rerank_error"] == "timeout"
+    assert count_changes(before) == {"timeout": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_client_construction_failure_is_observed_as_error(patched_chain, fused, monkeypatch):
+    def broken():
+        raise ValueError("PINECONE_API_KEY not configured")
+
+    monkeypatch.setattr(rag_module, "get_reranker_model", broken)
+    before = rerank_counts()
+
+    result = await patched_chain.ainvoke("test query")
+
+    assert (result["docs"], result["rerank_scores"], result["rerank_error"]) == (fused[:3], [], "error")
+    assert count_changes(before) == {"error": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_no_candidates_records_no_rerank_observation(patched_chain, monkeypatch):
+    retriever = rag_module.get_hybrid_retriever()
+    retriever.retrieve.return_value = {"candidates": [], "fusion_metadata": {"fallback": "none"}}
+    before = rerank_counts()
+
+    result = await patched_chain.ainvoke("test query")
+
+    assert result["docs"] == []
+    assert count_changes(before) == {}
+
+
+@pytest.mark.asyncio
+async def test_metric_failure_does_not_change_the_rerank_result(patched_chain, monkeypatch):
+    from src import observability
+
+    class Exploding:
+        def labels(self, *args, **kwargs):
+            raise RuntimeError("metric backend down")
+
+    monkeypatch.setattr(observability, "RAG_RERANK_DURATION", Exploding())
+
+    result = await patched_chain.ainvoke("test query")
+
+    assert result["rerank_scores"] and "rerank_error" not in result
