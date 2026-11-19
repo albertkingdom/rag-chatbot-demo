@@ -1,0 +1,13 @@
+## 1. 重現問題的測試
+
+- [x] 1.1 **重現證據以檢索 chain 的測試為準**（新參數尚不存在時，stage 層測試只會出現 TypeError，不算因 bug 失敗）。在 `tests/test_app_pipeline.py` 新增檢索 chain 測試，滿足 FAQ entries are reranked on question and answer：假 scorer 依文字給分（只有問題的那段給低分、問題＋答案那段給高分），斷言送出的配對含「問題＋空格＋答案」、沒有答案或答案為空白的候選只送問題、回傳 `rerank_scores` 的 top 分數取較高者；修正前會以斷言失敗。另在 `tests/test_rerank_stage.py` 新增新行為測試（不當重現證據），滿足 Rerank stage transforms top-M candidates into top-3 的「多段文字取最高分」範例：傳入給每個候選兩段文字的函式，假 scorer 依文字回傳範例表的分數，斷言回傳順序為 [B, A, C]、scorer 只被呼叫一次且收到 6 組配對；未傳函式、或函式給某候選空列表時只用 `page_content`；scorer 回傳分數數量與配對數不符時拋錯。並新增測試斷言 `2 * FUSION_TOP_M <= MAX_DOCUMENTS`，滿足 Rerank stage is resourced for bounded inference latency。驗證：修改程式前執行檢索 chain 測試，確認因只送出 `page_content` 而斷言失敗，記下失敗訊息。
+
+## 2. 修正
+
+- [x] 2.1 在 `src/rerank_stage.py` 的 `rerank_candidates` 新增可選參數（每個候選要評分的文字列表），一次呼叫 scorer、每個候選取最高分；`rerank_scores` 的 `content` 仍為 `page_content` 前 100 字。分數數量與配對數不符時拋錯（交給既有的 fallback）。在 `src/rag_pipeline.py` 定義產生「問題、問題＋空格＋答案」的函式（答案缺少、空字串或全空白時只回傳問題）並傳給 `rerank_candidates`。`tests/test_app_pipeline.py` 的 `patched_chain` fixture 原本固定回傳 4 個分數，改成依文字回傳分數，避免配對數變多後分數錯配。驗證：1.1 的測試與 `tests/test_rerank_stage.py`、`tests/test_app_pipeline.py` 其餘測試通過；`python -m pytest tests -q` 全部通過。
+- [x] 2.2 改壞驗證：暫時讓檢索 chain 不傳入新函式（回到只用問題文字），確認 1.1 的檢索 chain 測試失敗後還原。驗證：記錄失敗的測試名稱與修正後的測試數量，寫進 fix commit 內文。
+
+## 3. 評估與文件
+
+- [ ] 3.1 評估（會呼叫付費 API，**先取得使用者同意**），先以本分支重建本機 web 映像：(a) **主要指標**：在 web 容器內，對 `scripts/load_baseline_questions.json` 的 `manual` 鍵 65 題逐題執行 `await get_retrieval_chain().ainvoke(question)`，以 `retrieval_grader.get_top_score(result["rerank_scores"])` 取 top-1 分數，分數為 None 或低於 `config.GRADE_SCORE_THRESHOLD` 即計為低信心（只算第一次檢索，不含重試）。修正前的數字以 master（不含本次修改）的映像實際重跑同一段程式取得，不沿用調查時的 27；修正後以本分支映像重跑。同一段程式也對 proposal 列出的 18 題手冊以外問題（`offtopic` 鍵 12 題加上 6 題）計算「誤判通過」（top-1 分數達門檻）的題數，修正前後比較；指令寫進 `architecture.md` 的 Evaluation 段落以便重現；(b) 清空本機 Redis 語意快取後，以 `scripts/load_baseline.py` 跑同 65 題，用 Prometheus 的 `rag_retrieval_total{low_confidence}` 增量與 2026-11-19 基準（26／65，含路由與重試）比較，並記錄 `rag_rerank_duration_seconds{outcome="ok"}` 的 P50／P95（不含失敗的呼叫），確認遠低於 5 秒逾時；(c) 依 eval-rag skill 在 demo index 跑 RAGAS：`scripts/eval_sample_manual.py --audit-index carbon-assistant-sample-index`，與 `tests/rag_eval_report.json` 比較四項指標（註明 RAGAS 不走低信心路徑，只能確認高信心回答品質沒有變差）。驗證：(a)(b) 低信心明顯下降；重排 P95 遠低於逾時；(c) 四項指標都不低於 0.7、差距在雜訊範圍內；結果寫進 `architecture.md` 的 Evaluation 段落，依 eval-rag 決定是否更新報告檔。
+- [ ] 3.2 更新 `architecture.md` 第 5 節「重排」：說明每個條目以問題與問題＋答案評分、取較高分，以及一次呼叫送出兩倍文字；改寫第 7 節「top-1 分數這麼低，代表沒有任何 FAQ 問題相似」的說法（現在分數也包含答案）；第 8 節註明 `top1_score` 從這次修改起與先前紀錄不能直接比較；移除已知問題表中「手冊有寫的問題被判為低信心」一列；`docs/sli-slo.md` 基準段落引用這個已知問題處，補註已由本次修正處理並附修正後的數字。驗證：內容審查，`python -m pytest tests -q` 全部通過。
