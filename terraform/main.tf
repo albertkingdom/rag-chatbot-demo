@@ -131,11 +131,14 @@ resource "google_project_service" "discoveryengine" {
   disable_on_destroy = false
 }
 
-# Call the ranking API (roles/discoveryengine.user includes
-# discoveryengine.rankingConfigs.rank).
-resource "google_project_iam_member" "runtime_discoveryengine_user" {
+# Call the ranking API. discoveryengine.rankingConfigs.rank is in
+# roles/discoveryengine.viewer, not in roles/discoveryengine.user (checked with
+# gcloud iam roles describe on 2026-11-20); with the user role every rank call
+# from Cloud Run got HTTP 403. The project has no other Discovery Engine data
+# for the viewer role to read.
+resource "google_project_iam_member" "runtime_discoveryengine_viewer" {
   project = var.project_id
-  role    = "roles/discoveryengine.user"
+  role    = "roles/discoveryengine.viewer"
   member  = "serviceAccount:${google_service_account.runtime.email}"
 }
 

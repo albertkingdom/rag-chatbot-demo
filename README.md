@@ -104,10 +104,10 @@ Compose 服務包含 `web`（FastAPI，提供 `/api/v1/*` 與 React 靜態成品
 
 `release/**` 分支 push 後，GitHub Actions 建置 image，並以 Terraform 更新 Cloud Run web Service 與 sync Job。正式環境使用 `JOB_RUNNER=gcp`，web 與 sync job 共用 GCS 掛載的 `DATA_SOURCE_DIR` / `BM25_INDEX_DIR`；`GCP_PROJECT_ID`、`GCP_REGION`、`SYNC_JOB_NAME` 指定背景 job。正式部署必須設定共用登入 key；HttpOnly session cookie 在 HTTPS 下使用 Secure，變更 API 使用同源 Origin/Referer 驗證。
 
-重排使用 Vertex AI Ranking，需要專案啟用 Discovery Engine API，並給 Cloud Run 執行期 service account `roles/discoveryengine.user`。CI 只以 `-target` 更新 Cloud Run，這兩項不會被套用，**第一次部署前要由人以 owner 權限在本機執行**：
+重排使用 Vertex AI Ranking，需要專案啟用 Discovery Engine API，並給 Cloud Run 執行期 service account `roles/discoveryengine.viewer`（重排權限 `discoveryengine.rankingConfigs.rank` 在這個角色，`roles/discoveryengine.user` 沒有）。CI 只以 `-target` 更新 Cloud Run，這兩項不會被套用，**第一次部署前要由人以 owner 權限在本機執行**：
 
 ```bash
-cd terraform && terraform apply -target=google_project_service.discoveryengine -target=google_project_iam_member.runtime_discoveryengine_user
+cd terraform && terraform apply -target=google_project_service.discoveryengine -target=google_project_iam_member.runtime_discoveryengine_viewer
 ```
 
 套用後以 `gcloud projects get-iam-policy <project>` 確認。沒有套用就部署，重排會收到 403，所有 RAG 回答退回融合排序並走低信心路徑。

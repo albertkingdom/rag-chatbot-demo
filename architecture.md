@@ -127,7 +127,7 @@ flowchart TD
 - BM25 與向量結果、融合分數、fallback 原因記錄於 `fusion_metadata`，供 LangSmith 追蹤。
 
 ### 5. 重排（`rerank_stage.py`、`rag_pipeline.py`、`vertex_reranker.py`）
-重排使用 Vertex AI Ranking API（`semantic-ranker-default-005`），web 程序不載入模型權重。`src/vertex_reranker.py` 的 client 以 Google 應用程式預設憑證（ADC）呼叫本專案（`GCP_PROJECT_ID`）的 `default_ranking_config:rank`：正式站是 Cloud Run 的執行期 service account（`roles/discoveryengine.user`），本機是掛進容器的 `gcloud auth application-default login` 憑證（只有使用者憑證會補上配額專案）。依回傳的 `id` 把分數放回輸入順序，沒有 `score` 欄位的 record 視為 0；每次最多 100 段。
+重排使用 Vertex AI Ranking API（`semantic-ranker-default-005`），web 程序不載入模型權重。`src/vertex_reranker.py` 的 client 以 Google 應用程式預設憑證（ADC）呼叫本專案（`GCP_PROJECT_ID`）的 `default_ranking_config:rank`：正式站是 Cloud Run 的執行期 service account（`roles/discoveryengine.viewer`，含 `discoveryengine.rankingConfigs.rank`），本機是掛進容器的 `gcloud auth application-default login` 憑證（只有使用者憑證會補上配額專案）。依回傳的 `id` 把分數放回輸入順序，沒有 `score` 欄位的 record 視為 0；每次最多 100 段。
 
 - **每個條目以兩段文字評分、取較高分**：檢索 chain 傳給 `rerank_candidates` 的 `_faq_passages` 為每個候選產生「問題」與「問題＋空格＋答案」兩段（答案缺少或空白時只用問題），兩段在同一次呼叫送出，條目分數取較高者，再取 Top 3（`RERANK_TOP_K`）。知識庫只對問題文字建索引，使用者常問答案裡的細節（長度規則、解鎖方式、有效期限），只比對問題文字時，正確條目雖在候選中卻分數極低。重排回傳的分數數量與段數不符時拋錯，交給退回處理。
 - **逾時**：`rag_pipeline.py` 以 `asyncio.to_thread` 呼叫並用 `RERANK_TIMEOUT_SECONDS`（5 秒）限制等待時間；client 端 HTTP 逾時再多 1 秒，請求只送一次、不重試：`AuthorizedSession` 以 `max_refresh_attempts=0` 建立，收到 401 不會更新 token 後重送（token 仍會在到期前主動更新）。client 共用一個 session，憑證在第一次呼叫時才取得（以 lock 保護）。
