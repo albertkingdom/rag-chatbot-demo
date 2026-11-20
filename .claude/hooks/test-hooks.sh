@@ -206,6 +206,7 @@ out=$(reminder "$tmp/repo/$REMIND_FILE"); [ -n "$out" ]; check 0 "first edit of 
 out=$(reminder "$tmp/repo/$REMIND_FILE"); [ -z "$out" ]; check 0 "second edit is silent" "$?"
 out=$(reminder "$tmp/repo/README.md"); [ -z "$out" ]; check 0 "other files are silent" "$?"
 out=$(reminder "$tmp/repo/src/hosted_reranker.py"); [ -n "$out" ]; check 0 "the hosted rerank client is a documented file" "$?"
+out=$(reminder "$tmp/repo/src/vertex_reranker.py"); [ -n "$out" ]; check 0 "the Vertex rerank client is a documented file" "$?"
 
 echo
 echo "passed: $pass, failed: $fail"
