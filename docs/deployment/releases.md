@@ -70,6 +70,25 @@
 3. 以 preview 驗收這個新 revision，再把流量切過去。不要長期停在舊 revision：舊 revision 的快取沒有命名空間，Job 同步後清不到。
 4. 完成前不上傳手冊。
 
+## v1.3.0（2026-11-20）
+
+- 分支／commit：`release/v1.3.0`，`01205fc090765dd87482946b2d912d84997d9e3c`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/44750402192) 成功。
+- Image digest：`sha256:95224271799ad6c33fb66a2c0573bf873d710db59fa94a3883387d4ce063abc3`。
+- Revision：`carbon-assistant-web-00024-27v`，100% 流量（2026-11-20 切換）。回復目標：`carbon-assistant-web-00023-tw4`（v1.2.0）。它用 Pinecone 重排，Pinecone Starter 每月額度用完前切回去，所有 RAG 回答都會退回低信心；Artifact Registry 只保留最近 5 個版本（#38），回復前先確認它的 image 還在。
+- 內容：
+  - #37 重排改用 Vertex AI Ranking（`semantic-ranker-default-005`），每個候選同時用「問題」與「問題＋答案」評分、取較高分；`GRADE_SCORE_THRESHOLD` 0.3 → 0.4。手冊有答案卻被判低信心的問題從 65 題中 27 題降到 3 題（demo index）。
+  - #36 有對話歷史時，完整的問題保持原文，只有追問才改寫；同一題問兩次可以命中語意快取。
+  - #35 低信心提示只出現一次（先前同一 session 第二次低信心時會重複）。
+  - #34 本機 Prometheus＋Grafana 監控與 SLO 告警；正式站不受影響，只新增 `/metrics` 端點。
+  - #38 Artifact Registry 清理規則（保留最近 5 個版本，其餘滿 7 天刪除），發布前已在本機以 Terraform 套用。
+- 發布前以 owner 權限在本機套用（CI 只套用 Cloud Run）：啟用 Discovery Engine API、給執行期 service account 重排權限、Artifact Registry 清理規則。
+- 驗收：
+  - Terraform plan：0 add、2 change、0 destroy，web 與 sync Job 只換 image。
+  - preview（`v130`）：`/health`、`/`、`/login`、`/admin` 200，hashed JS 可載入，未登入 API 與不存在的 `/api/*` 回 401；新 revision 無 ERROR log。
+  - 登入後第一次問「忘記密碼怎麼辦？」走低信心路徑。log 為 `Rerank failed (error, RerankError) after 97 ms`，Cloud Monitoring 顯示 `RankService.Rank` 回 403：`roles/discoveryengine.user` 不含 `discoveryengine.rankingConfigs.rank`。改授 `roles/discoveryengine.viewer`（#39，IAM 已在本機套用）後同一 revision 的重排回 200，log 沒有 `Rerank failed`。
+  - 切換流量後正式 URL 的 `/health`、`/login` 200，未登入 API 401，無 ERROR log；preview tag 已移除。
+- 未驗證：正式站「文件管理」上傳流程；切換後正式 URL 登入後的問答。
+
 ## v1.2.0（2026-11-13）
 
 - 分支／commit：`release/v1.2.0`，`e41b8b0bebc13976cda1a0bcc6b11ae0efbf5b1d`；[deploy run](https://github.com/albertkingdom/rag-chatbot-demo/actions/runs/43448077542) 成功。
