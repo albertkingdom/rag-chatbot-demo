@@ -183,7 +183,7 @@ class TestRewriteForRetry:
 
 class TestConfigDefaults:
     def test_grade_score_threshold_default(self):
-        assert GRADE_SCORE_THRESHOLD == 0.3
+        assert GRADE_SCORE_THRESHOLD == 0.4
 
     def test_retrieval_max_retries_default(self):
         assert RETRIEVAL_MAX_RETRIES == 1

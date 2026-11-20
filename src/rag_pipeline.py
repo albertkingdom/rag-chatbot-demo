@@ -106,6 +106,16 @@ logger = logging.getLogger("rag_pipeline")
 _TIMEOUT_ERRORS = (TimeoutError, requests.Timeout)
 
 
+def _faq_passages(doc) -> list[str]:
+    """Passages a FAQ entry is reranked on: its question, and its question
+    followed by its answer, so a detail that only the answer mentions can
+    still score (spec: rerank-stage, "FAQ entries are reranked on question
+    and answer"). A missing or blank answer leaves the question alone."""
+    question = doc.page_content
+    answer = (doc.metadata.get("answer") or "").strip()
+    return [question, f"{question} {answer}"] if answer else [question]
+
+
 async def _rerank_or_fallback(query: str, candidates: list) -> tuple[dict, str | None]:
     """Rerank with the hosted reranker; on any failure keep the fused order.
 
@@ -119,7 +129,7 @@ async def _rerank_or_fallback(query: str, candidates: list) -> tuple[dict, str |
     try:
         scorer = get_reranker_model().score
         ranked = await asyncio.wait_for(
-            asyncio.to_thread(rerank_candidates, query, candidates, scorer),
+            asyncio.to_thread(rerank_candidates, query, candidates, scorer, _faq_passages),
             timeout=RERANK_TIMEOUT_SECONDS,
         )
     except Exception as e:

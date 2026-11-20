@@ -8,7 +8,7 @@ TBD - created by archiving change 'decouple-rerank-from-retriever'. Update Purpo
 
 ### Requirement: Rerank stage transforms top-M candidates into top-3
 
-The system SHALL provide a rerank stage that receives a query string and a list of candidate `Document` objects (the top-M fused output of `HybridRetriever`), invokes a BGE Reranker `score` callable on `(query, page_content)` pairs, sorts the candidates by descending score, and returns exactly the Top 3 documents. The rerank stage SHALL NOT belong to `HybridRetriever` and SHALL NOT hold a reference to the BM25 index or the vector store.
+The system SHALL provide a rerank stage that receives a query string, a list of candidate `Document` objects (the top-M fused output of `HybridRetriever`) and optionally a function giving the passages to score for each candidate. When no such function is given, or the function gives no passage for a candidate, that candidate SHALL have exactly one passage, its `page_content`. The stage SHALL invoke the hosted reranker `score` callable exactly once, on the `(query, passage)` pairs of all candidates, SHALL raise an error when the scorer returns a different number of scores than the pairs it received, SHALL give each candidate the highest score among its passages, SHALL sort the candidates by descending score, and SHALL return exactly the Top 3 documents. The rerank stage SHALL NOT belong to `HybridRetriever` and SHALL NOT hold a reference to the BM25 index or the vector store.
 
 #### Scenario: Top-M candidates are reranked to top-3
 
@@ -21,27 +21,25 @@ The system SHALL provide a rerank stage that receives a query string and a list 
 - **WHEN** the rerank stage runs with query "test"
 - **THEN** the returned `docs` list is [B, D, C] and `rerank_scores` contains three entries with ranks 1, 2, 3
 
+#### Scenario: Candidate scored on several passages
 
-<!-- @trace
-source: decouple-rerank-from-retriever
-updated: 2026-06-27
-code:
-  - docs/diagrams/rag_pipeline.drawio
-  - src/hybrid_retriever.py
-  - .spectra/touched/decouple-rerank-from-retriever.json
-  - .spectra/touched/hybrid-search.json
-  - docs/diagrams/rag_pipeline.png
-  - .spectra/changes/decouple-rerank-from-retriever.started
-  - docs/diagrams/rag_pipeline.drawio.png
-  - src/app.py
-  - src/rerank_stage.py
-  - docs/diagrams/rag_pipeline.svg
-  - .spectra/changes/hybrid-search.started
-tests:
-  - tests/test_app_pipeline.py
-  - tests/test_hybrid_retriever.py
-  - tests/test_rerank_stage.py
--->
+- **WHEN** each candidate has two passages and the scorer is called once
+- **THEN** each candidate's score is the higher of its two passage scores
+
+##### Example: highest passage score wins
+
+| Candidate | Passage scores | Candidate score |
+| --- | --- | --- |
+| A | 0.006, 0.421 | 0.421 |
+| B | 0.591, 0.200 | 0.591 |
+| C | 0.000, 0.079 | 0.079 |
+
+- **THEN** the returned order is [B, A, C] and the scorer received 6 pairs in one call
+
+#### Scenario: Scorer returns the wrong number of scores
+
+- **WHEN** the scorer receives 6 pairs and returns 3 scores
+- **THEN** the rerank stage raises an error, and the retrieval chain handles it as a rerank failure
 
 ---
 ### Requirement: Rerank stage output contract
@@ -142,7 +140,7 @@ tests:
 ---
 ### Requirement: Rerank scorer is injected as a callable
 
-The rerank stage SHALL accept the reranker as a `scorer` parameter of type `Callable[[list[tuple[str, str]]], list[float]]`. The retrieval chain SHALL inject `get_reranker_model().score`, the bound `score` method of the hosted reranker client singleton, which sends the pairs to the Pinecone Inference rerank endpoint running the bge-reranker-v2-m3 model and returns one score per pair in the order of the input pairs. The rerank stage SHALL NOT instantiate the reranker client itself, ensuring the singleton is shared with other consumers. The hosted reranker client SHALL NOT load model weights into the service process, SHALL bound each HTTP request by a client-side timeout, and SHALL NOT retry a failed request.
+The rerank stage SHALL accept the reranker as a `scorer` parameter of type `Callable[[list[tuple[str, str]]], list[float]]`. The retrieval chain SHALL inject `get_reranker_model().score`, the bound `score` method of the hosted reranker client singleton, which sends the pairs to the Vertex AI Ranking API (`semantic-ranker-default-005`) of the configured Google Cloud project, authenticated with Google application default credentials, and returns one score per pair in the order of the input pairs; a record returned without a score SHALL count as 0. The rerank stage SHALL NOT instantiate the reranker client itself, ensuring the singleton is shared with other consumers. The hosted reranker client SHALL NOT load model weights into the service process, SHALL NOT contact the network until it is first asked to score, SHALL bound each HTTP request by a client-side timeout, and SHALL NOT retry a failed request.
 
 #### Scenario: Scorer is injected by the retrieval chain
 
@@ -154,6 +152,11 @@ The rerank stage SHALL accept the reranker as a `scorer` parameter of type `Call
 - **WHEN** the hosted reranker returns its results sorted by relevance, for example passage index 2 with score 0.9, then index 0 with score 0.5, then index 1 with score 0.1
 - **THEN** the scorer returns `[0.5, 0.1, 0.9]`, one score per input pair in the original pair order
 
+#### Scenario: Record returned without a score
+
+- **WHEN** the hosted reranker returns a record for passage index 1 without a score field
+- **THEN** the scorer returns 0 for that passage
+
 #### Scenario: Pairs with different queries are rejected
 
 - **WHEN** the scorer receives pairs whose query strings are not all identical
@@ -162,17 +165,17 @@ The rerank stage SHALL accept the reranker as a `scorer` parameter of type `Call
 #### Scenario: Failed request is not retried
 
 - **WHEN** the hosted reranker responds with an HTTP error status
-- **THEN** the scorer raises an error after exactly one request
+- **THEN** the scorer raises an error after exactly one request, and the error message contains the status code but no request or response content
 
 ---
 ### Requirement: Rerank stage is resourced for bounded inference latency
 
-The number of candidate `Document` objects passed into a single rerank call SHALL be bounded by the `FUSION_TOP_M` constant defined in `src/config.py`, and a single rerank call SHALL NOT send more passages than the hosted reranker accepts per request. Each rerank call SHALL be bounded by the rerank timeout defined in `src/config.py`; a call that has not returned within the timeout SHALL be treated as a rerank failure. The service runtime SHALL NOT require a BLAS/OpenMP thread setting for reranking, because inference runs in the hosted service rather than in the service process.
+The number of candidate `Document` objects passed into a single rerank call SHALL be bounded by the `FUSION_TOP_M` constant defined in `src/config.py`, and the total number of passages sent in a single rerank call, counting every passage of every candidate, SHALL NOT exceed what the hosted reranker accepts per request. Each rerank call SHALL be bounded by the rerank timeout defined in `src/config.py`; a call that has not returned within the timeout SHALL be treated as a rerank failure. The service runtime SHALL NOT require a BLAS/OpenMP thread setting for reranking, because inference runs in the hosted service rather than in the service process.
 
-#### Scenario: Candidate count stays within limits
+#### Scenario: Passage count stays within limits
 
-- **WHEN** the retriever returns `FUSION_TOP_M` candidates
-- **THEN** the rerank call sends exactly those candidates in one request, and that number does not exceed the hosted reranker's per-request passage limit
+- **WHEN** the retriever returns `FUSION_TOP_M` candidates and each has a question and an answer
+- **THEN** the rerank call sends their two passages each, `2 × FUSION_TOP_M` passages, in one request, and that number does not exceed the hosted reranker's per-request passage limit
 
 #### Scenario: Too many passages for one request
 
@@ -218,3 +221,19 @@ When obtaining the reranker client raises an error, the scorer raises an error, 
 
 - **WHEN** the scorer returns scores for every candidate within the timeout
 - **THEN** the retrieval chain result contains reranked `docs` and non-empty `rerank_scores` and no `rerank_error` value
+
+---
+### Requirement: FAQ entries are reranked on question and answer
+
+The retrieval chain SHALL rerank each candidate FAQ entry on two passages, its question text (the candidate's `page_content`) and its question text followed by one space and its answer (the `answer` metadata), and SHALL use the higher score for ordering, for the reported rerank scores and for retrieval grading. A candidate whose answer is missing, empty or whitespace only SHALL be scored on its question text only. The context and sources built from the reranked documents SHALL be unchanged in form.
+
+#### Scenario: Detail that appears only in the answer
+
+- **GIVEN** a candidate whose question is "密碼有什麼規則？" and whose answer states the password length and character rules
+- **WHEN** the user asks "CarbonM 的密碼長度與字元組成有什麼規定？"
+- **THEN** the candidate is scored on both its question and its question plus answer, and its score is the higher of the two
+
+#### Scenario: Candidate without an answer
+
+- **WHEN** a candidate has no answer metadata, or its answer is empty or whitespace only
+- **THEN** it is scored on its question text only

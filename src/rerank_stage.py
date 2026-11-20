@@ -6,7 +6,7 @@ stage is intentionally decoupled from the retriever so that retrieval
 and reranking can be observed and tested independently.
 """
 
-from typing import Callable
+from typing import Callable, Optional
 
 from langchain_core.documents import Document
 
@@ -17,15 +17,21 @@ def rerank_candidates(
     query: str,
     candidates: list[Document],
     scorer: Callable[[list[tuple[str, str]]], list[float]],
+    passages_for: Optional[Callable[[Document], list[str]]] = None,
 ) -> dict:
     """Rerank ``candidates`` for ``query`` and return the Top 3.
 
     Args:
         query: the rewritten user query.
         candidates: top-M fused ``Document`` objects from the retriever.
-        scorer: callable receiving ``[(query, page_content), ...]`` and
+        scorer: callable receiving ``[(query, passage), ...]`` and
             returning a list of float relevance scores (e.g. the bound
-            ``score`` method of the BGE Reranker singleton).
+            ``score`` method of the BGE Reranker singleton). It is called
+            exactly once, with the passages of every candidate.
+        passages_for: optional callable giving the passages to score for a
+            candidate. Without it, or when it gives none, the candidate is
+            scored on its ``page_content``. A candidate's score is the highest
+            score among its passages.
 
     Returns:
         ``{"docs": list[Document], "rerank_scores": list}``
@@ -39,10 +45,21 @@ def rerank_candidates(
     if not candidates:
         return {"docs": [], "rerank_scores": []}
 
-    pairs = [(query, d.page_content) for d in candidates]
+    passages_per_doc = [
+        (passages_for(d) if passages_for else None) or [d.page_content] for d in candidates
+    ]
+    pairs = [(query, passage) for passages in passages_per_doc for passage in passages]
     scores = list(scorer(pairs))
+    if len(scores) != len(pairs):
+        # A silent zip() truncation would pair scores with the wrong documents.
+        raise ValueError(f"scorer returned {len(scores)} scores for {len(pairs)} pairs")
 
-    reranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)[:RERANK_TOP_K]
+    doc_scores, position = [], 0
+    for passages in passages_per_doc:
+        doc_scores.append(max(scores[position:position + len(passages)]))
+        position += len(passages)
+
+    reranked = sorted(zip(candidates, doc_scores), key=lambda x: x[1], reverse=True)[:RERANK_TOP_K]
     top_docs = [doc for doc, _ in reranked]
 
     rerank_scores = [

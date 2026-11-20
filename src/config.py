@@ -123,7 +123,7 @@ def parse_rerank_timeout(raw: Optional[str]) -> float:
 RERANK_TIMEOUT_SECONDS = parse_rerank_timeout(os.environ.get("RERANK_TIMEOUT_SECONDS"))
 
 # Agentic RAG: retrieval grading & retry
-GRADE_SCORE_THRESHOLD = float(os.environ.get("GRADE_SCORE_THRESHOLD", "0.3"))
+GRADE_SCORE_THRESHOLD = float(os.environ.get("GRADE_SCORE_THRESHOLD", "0.4"))
 RETRIEVAL_MAX_RETRIES = int(os.environ.get("RETRIEVAL_MAX_RETRIES", "1"))
 
 # Hybrid Search Settings

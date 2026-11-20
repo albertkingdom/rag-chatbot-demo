@@ -11,7 +11,7 @@
 ## 特色
 
 - **混合路由**：規則層零延遲判斷明確查詢，僅不確定的查詢交給 LLM 決定走 RAG 或直接生成，並同時改寫追問。規則層可直接判定範例手冊 60 題中的 43 題，其餘由 LLM 路由，評估腳本會實際檢查全部判給知識庫。
-- **Hybrid Search**：BM25 關鍵字檢索 + Pinecone 向量檢索，以 RRF 融合後由 Pinecone Inference 托管的 BGE Reranker 精排；重排服務失敗時退回低信心回答。
+- **Hybrid Search**：BM25 關鍵字檢索 + Pinecone 向量檢索，以 RRF 融合後由 Vertex AI Ranking 精排（每個條目以問題與問題＋答案評分、取較高分）；重排服務失敗時退回低信心回答。
 - **自省式檢索**：重排分數不足時自動改寫查詢並重試（保留較佳結果）；仍不足時答案會標示「知識庫查無直接相關資料」、不顯示來源，也不寫入語意快取。
 - **語意快取**：Redis 攔截相似問題，降低延遲與 token 成本。
 - **雙端 Guardrail**：輸入端偵測 prompt injection，輸出端掃描 PII 與注入內容。
@@ -19,7 +19,7 @@
 - **Typed NDJSON 串流**：分開傳送狀態、回答、來源與耗時。
 - **背景知識庫同步**：上傳 PDF / XLSX / CSV，由背景任務增量同步向量庫與 BM25 索引，介面可查詢工作狀態。
 - **範例知識庫**：附自製的虛構操作手冊，可直接上傳建立知識庫；同步與 RAGAS 評估使用獨立的 demo index。
-- **可觀測性與評估**：LangSmith 追蹤各階段、MongoDB 保存對話紀錄、RAGAS 離線評估（faithfulness 1.0、answer relevancy 0.95、context precision 0.94、context recall 1.0；題庫 12 題，僅供參考）。
+- **可觀測性與評估**：LangSmith 追蹤各階段、MongoDB 保存對話紀錄、RAGAS 離線評估（faithfulness 0.98、answer relevancy 0.96、context precision 1.0、context recall 1.0；題庫 12 題，僅供參考）。
 - **本機 SLO 監控**：Prometheus＋Grafana 量測可用性、首段回答與完整回應延遲、低信心比例與重排降級率，可用性 burn rate 告警以 promtool 測試（只在本機 docker-compose，設計見 [docs/sli-slo.md](docs/sli-slo.md)）。
 - **手機優先 React 介面**：登入、串流聊天、來源展開、文件上傳與深色模式。
 
@@ -32,7 +32,7 @@ flowchart LR
     Web --> Mongo[(MongoDB<br/>對話紀錄)]
     Web --> Pinecone[(Pinecone)]
     Web --> LLM[Gemini 2.5 Flash<br/>via OpenRouter]
-    Web --> Rerank[Pinecone Inference<br/>BGE Reranker]
+    Web --> Rerank[Vertex AI Ranking]
     Web --> Emb[OpenAI Embeddings]
     Web --> Job[RQ worker / Cloud Run Job]
     Job --> Emb
@@ -47,18 +47,21 @@ flowchart LR
 
 ## 快速開始
 
-需要 Docker / Docker Compose，以及 OpenAI（embeddings）、Pinecone（向量庫）、OpenRouter（LLM）三組 API key（皆為付費服務）。
+需要 Docker / Docker Compose，以及 OpenAI（embeddings）、Pinecone（向量庫）、OpenRouter（LLM）三組 API key，和一個啟用 Discovery Engine API 的 Google Cloud 專案（重排用 Vertex AI Ranking），皆為付費服務。
 
 1. 在根目錄建立 `.env`（完整項目見 `.env.example`）：
 
    ```
    OPENAI_API_KEY="your_openai_api_key_here"
    PINECONE_API_KEY="your_pinecone_api_key_here"
+   GCP_PROJECT_ID="your_gcp_project_id"            # 重排用 Vertex AI Ranking 的專案
    OPENROUTER_API_KEY="your_openrouter_api_key_here"
 
    APP_API_KEY="a_long_random_string_you_choose"   # 共用登入金鑰，用於 /login 及 X-API-Key
    AUTH_ENABLED=true                               # 本機開發/測試可設為 false
    ```
+
+   重排呼叫 Vertex AI Ranking，需先執行 `gcloud auth application-default login`，並以 `gcloud auth application-default set-quota-project <GCP_PROJECT_ID>` 讓 ADC 的配額專案與 `GCP_PROJECT_ID` 一致（login 會把當下的 gcloud 預設專案寫成配額專案，不一致時可能回 403、重排退回融合排序）；docker compose 會把 `~/.config/gcloud/application_default_credentials.json` 唯讀掛進 web 容器（路徑可用 `GOOGLE_ADC_FILE` 覆寫），專案要啟用 Discovery Engine API。憑證檔不存在時 web 容器不會啟動（避免 Docker 在主機建立同名目錄）；憑證失效或沒有權限時，重排失敗並退回融合排序，服務仍可運作。
 
    驗證預設啟用。若 `APP_API_KEY` 未設定或為空字串，應用程式會回報設定錯誤並停止啟動。本機開發可明確設定 `AUTH_ENABLED=false`。
 
@@ -100,6 +103,14 @@ Compose 服務包含 `web`（FastAPI，提供 `/api/v1/*` 與 React 靜態成品
 ## 部署
 
 `release/**` 分支 push 後，GitHub Actions 建置 image，並以 Terraform 更新 Cloud Run web Service 與 sync Job。正式環境使用 `JOB_RUNNER=gcp`，web 與 sync job 共用 GCS 掛載的 `DATA_SOURCE_DIR` / `BM25_INDEX_DIR`；`GCP_PROJECT_ID`、`GCP_REGION`、`SYNC_JOB_NAME` 指定背景 job。正式部署必須設定共用登入 key；HttpOnly session cookie 在 HTTPS 下使用 Secure，變更 API 使用同源 Origin/Referer 驗證。
+
+重排使用 Vertex AI Ranking，需要專案啟用 Discovery Engine API，並給 Cloud Run 執行期 service account `roles/discoveryengine.user`。CI 只以 `-target` 更新 Cloud Run，這兩項不會被套用，**第一次部署前要由人以 owner 權限在本機執行**：
+
+```bash
+cd terraform && terraform apply -target=google_project_service.discoveryengine -target=google_project_iam_member.runtime_discoveryengine_user
+```
+
+套用後以 `gcloud projects get-iam-policy <project>` 確認。沒有套用就部署，重排會收到 403，所有 RAG 回答退回融合排序並走低信心路徑。
 
 發布流程與每版紀錄見 [docs/deployment/releases.md](docs/deployment/releases.md)。其他環境變數與預設值見 `.env.example`。
 

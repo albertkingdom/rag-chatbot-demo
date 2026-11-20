@@ -45,10 +45,10 @@ Each singleton provider in `src/services.py` SHALL be thread-safe under concurre
 - **WHEN** `get_embeddings()` is called and `OPENAI_API_KEY` is unset
 - **THEN** the provider raises `ValueError` mentioning `OPENAI_API_KEY` (behavior preserved from the original app.py)
 
-#### Scenario: reranker provider raises on missing key
+#### Scenario: reranker provider raises on missing project
 
-- **WHEN** `get_reranker_model()` is called and `PINECONE_API_KEY` is unset
-- **THEN** the provider raises `ValueError` mentioning `PINECONE_API_KEY` and does not construct a client
+- **WHEN** `get_reranker_model()` is called and `GCP_PROJECT_ID` is unset
+- **THEN** the provider raises `ValueError` mentioning `GCP_PROJECT_ID` and does not construct a client
 
 ---
 ### Requirement: No module-level side effects on import

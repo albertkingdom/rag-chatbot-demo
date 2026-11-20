@@ -47,8 +47,12 @@ def patched_chain(monkeypatch, docs_map):
         ]
     )
 
+    # Scores by passage text, so the fixture stays correct when a candidate is
+    # scored on more than one passage: the question alone carries the score,
+    # "question + answer" scores 0 and never changes the order.
+    question_scores = {"Q A": 0.95, "Q B": 0.60, "Q C": 0.80, "Q D": 0.70}
     reranker = MagicMock()
-    reranker.score = MagicMock(return_value=[0.60, 0.95, 0.70, 0.80])
+    reranker.score = MagicMock(side_effect=lambda pairs: [question_scores.get(p, 0.0) for _, p in pairs])
 
     # Build a mock hybrid retriever that returns a fixed fused candidate set,
     # preserving the original fixture's intent (independent of RRF internals).
@@ -420,3 +424,35 @@ async def test_metric_failure_does_not_change_the_rerank_result(patched_chain, m
     result = await patched_chain.ainvoke("test query")
 
     assert result["rerank_scores"] and "rerank_error" not in result
+
+
+# ---------------------------------------------------------------------------
+# Spec: rerank-stage — "FAQ entries are reranked on question and answer".
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_faq_entries_are_reranked_on_question_and_answer(patched_chain, docs_map, monkeypatch):
+    """A detail that only the answer mentions must be able to lift the score."""
+    docs_map["C"].metadata["answer"] = "   "  # whitespace-only answer: question only
+    received = []
+
+    def scorer(pairs):
+        received.extend(pairs)
+        return [0.90 if passage.startswith("Q A ans") else 0.01 for _, passage in pairs]
+
+    reranker = MagicMock()
+    reranker.score = MagicMock(side_effect=scorer)
+    monkeypatch.setattr(rag_module, "get_reranker_model", lambda: reranker)
+
+    result = await patched_chain.ainvoke("test query")
+
+    passages = [passage for _, passage in received]
+    assert "Q A ans A" in passages and "Q A" in passages
+    assert "Q B ans B" in passages and "Q D ans D" in passages
+    assert [p for p in passages if p.startswith("Q C")] == ["Q C"]
+    reranker.score.assert_called_once()
+    assert result["rerank_scores"][0]["score"] == "0.9000"
+    assert result["docs"][0].metadata["doc_id"] == "A"
+    assert "rerank_error" not in result
+

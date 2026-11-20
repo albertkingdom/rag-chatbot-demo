@@ -95,6 +95,24 @@ resource "google_project_iam_member" "runtime_run_developer" {
   member  = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+# Vertex AI Ranking (reranker). The API was first enabled by hand on
+# 2026-11-19; managing it here is idempotent. Keep it enabled on destroy, and
+# do not make the Cloud Run resources depend on it: CI applies only those with
+# -target, and a dependency would need serviceusage rights on the deployer.
+resource "google_project_service" "discoveryengine" {
+  project            = var.project_id
+  service            = "discoveryengine.googleapis.com"
+  disable_on_destroy = false
+}
+
+# Call the ranking API (roles/discoveryengine.user includes
+# discoveryengine.rankingConfigs.rank).
+resource "google_project_iam_member" "runtime_discoveryengine_user" {
+  project = var.project_id
+  role    = "roles/discoveryengine.user"
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+}
+
 # Read/write objects in the shared bucket (uploads + BM25 version/pointer files).
 resource "google_storage_bucket_iam_member" "runtime_bucket_objects" {
   bucket = google_storage_bucket.shared.name

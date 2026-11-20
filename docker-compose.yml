@@ -31,9 +31,21 @@ services:
       # Local stack only: Prometheus scrapes web:80/metrics over the compose
       # network. The Cloud Run deployment (terraform/) never sets this.
       - METRICS_ENABLED=true
+      # Reranking calls Vertex AI Ranking with your application default
+      # credentials (`gcloud auth application-default login`) in this project.
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcloud/application_default_credentials.json
     volumes:
       - manual_data:/app/uploaded_files
       - bm25_data:/app/bm25
+      # Long syntax with create_host_path: false, so a missing credentials file
+      # is an error instead of Docker creating a directory in its place.
+      - type: bind
+        source: ${GOOGLE_ADC_FILE:-${HOME}/.config/gcloud/application_default_credentials.json}
+        target: /app/gcloud/application_default_credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       - redis
       - mongodb

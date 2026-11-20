@@ -5,7 +5,7 @@ description: "在 demo index 上跑這個專案的 RAGAS 評估並和上一份�
 
 # RAGAS 評估與前後比較
 
-評估會呼叫付費服務（OpenRouter、OpenAI、Pinecone），而且**會把範例手冊同步到 demo index，同步會刪除 index 中不在本地手冊裡的向量**。所以跑之前要先確認目標，**經使用者同意才執行**。CI 不跑這個（`docs/development.md`）。
+評估會呼叫付費服務（OpenRouter、OpenAI、Pinecone、Vertex AI Ranking），而且**會把範例手冊同步到 demo index，同步會刪除 index 中不在本地手冊裡的向量**。所以跑之前要先確認目標，**經使用者同意才執行**。CI 不跑這個（`docs/development.md`）。
 
 ## 邊界
 

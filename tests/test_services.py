@@ -83,23 +83,26 @@ class TestThreadSafety:
         assert len(results) == 2
         assert results[0] is results[1] is sentinel_instance
 
-    def test_reranker_is_the_hosted_client(self, monkeypatch):
-        """get_reranker_model() builds the Pinecone client; no model weights."""
-        from src import config, hosted_reranker, services
+    def test_reranker_is_the_vertex_client(self, monkeypatch):
+        """get_reranker_model() builds the Vertex AI Ranking client; no model
+        weights and no network until the first score() call."""
+        from src import config, services, vertex_reranker
 
         monkeypatch.setattr(services._reranker, "_value", None)
-        monkeypatch.setenv("PINECONE_API_KEY", "pk-test")
+        monkeypatch.setenv("GCP_PROJECT_ID", "proj-test")
         client = services.get_reranker_model()
-        assert isinstance(client, hosted_reranker.PineconeReranker)
-        assert client._http_timeout == config.RERANK_TIMEOUT_SECONDS + hosted_reranker.HTTP_TIMEOUT_MARGIN_SECONDS
+        assert isinstance(client, vertex_reranker.VertexReranker)
+        assert client._project_id == "proj-test"
+        assert client._http_timeout == config.RERANK_TIMEOUT_SECONDS + vertex_reranker.HTTP_TIMEOUT_MARGIN_SECONDS
+        assert client._session is None
         monkeypatch.setattr(services._reranker, "_value", None)
 
-    def test_reranker_requires_pinecone_key(self, monkeypatch):
+    def test_reranker_requires_gcp_project(self, monkeypatch):
         from src import services
 
         monkeypatch.setattr(services._reranker, "_value", None)
-        monkeypatch.delenv("PINECONE_API_KEY", raising=False)
-        with pytest.raises(ValueError, match="PINECONE_API_KEY"):
+        monkeypatch.delenv("GCP_PROJECT_ID", raising=False)
+        with pytest.raises(ValueError, match="GCP_PROJECT_ID"):
             services.get_reranker_model()
         assert services._reranker._value is None
 
