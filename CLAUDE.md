@@ -90,6 +90,8 @@ propose 完成後（之後改了 proposal、design、tasks 或 delta spec 也一
 | `src/build_vector_store.py`、`manual_service.py` | 知識庫同步：上傳、增量同步 Pinecone 與 BM25 |
 | `src/config.py` | 可調參數（見 `architecture.md` 的 Key Parameters） |
 | `src/api/routes.py`、`src/chat_events.py` | HTTP 路由與有型別的 NDJSON 事件模型 |
+| `src/observability.py` | Prometheus 指標（請求結果、延遲、檢索、重排），由 `/metrics` 輸出 |
+| `monitoring/` | 本機 Prometheus 設定、SLO 規則與 promtool 測試、Grafana provisioning 與 dashboard |
 | `frontend/` | React + TypeScript + Vite 介面（pnpm） |
 | `tests/` | pytest 測試（`test_*.py`），以及會呼叫真實服務的評估腳本 |
 | `scripts/` | 評估、smoke test、依賴鎖定 |
@@ -102,11 +104,12 @@ propose 完成後（之後改了 proposal、design、tasks 或 delta spec 也一
 python -m pytest tests -q                                   # 後端測試（不需要 API key）
 cd frontend && pnpm lint && pnpm build && pnpm exec vitest run --maxWorkers=1
 cd terraform && terraform fmt -check -recursive && terraform init -backend=false -input=false && terraform validate
+docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" --entrypoint promtool prom/prometheus:v3.5.0 test rules /etc/prometheus/rules/slo_test.yml   # SLO 規則測試
 scripts/compile_requirements.sh                             # 改 requirements.in 之後執行；兩個檔案一起 commit
 docker compose up --build                                   # 本機啟動（.env 需要真實 API key）
 ```
 
-CI（`.github/workflows/ci.yml`）每個 PR 都會跑前三項，不跑 RAGAS，也不呼叫真實 LLM。評估（`tests/evaluate_rag.py`、`scripts/eval_sample_manual.py`）只在本機執行，而且**不得對正式 index 執行**。
+CI（`.github/workflows/ci.yml`）每個 PR 都會跑前三項與 SLO 規則測試（另加 `promtool check config`），不跑 RAGAS，也不呼叫真實 LLM。評估（`tests/evaluate_rag.py`、`scripts/eval_sample_manual.py`）只在本機執行，而且**不得對正式 index 執行**。
 
 ## 規格
 

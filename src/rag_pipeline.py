@@ -222,7 +222,7 @@ def get_retrieval_chain():
 
         _retrieval_chain = (
             RunnableLambda(_retrieve, name="Hybrid Retrieve")
-            | RunnableLambda(_rerank, name="Rerank (Pinecone)")
+            | RunnableLambda(_rerank, name="Rerank (Vertex)")
         )
     return _retrieval_chain
 

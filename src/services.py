@@ -11,7 +11,7 @@ Public providers:
     get_vectorstore()       -> PineconeVectorStore
     get_bm25_index()        -> BM25Index
     get_hybrid_retriever()  -> HybridRetriever
-    get_reranker_model()    -> PineconeReranker (hosted bge-reranker-v2-m3)
+    get_reranker_model()    -> VertexReranker (Vertex AI Ranking)
 
 This module has NO import-time side effects (no network, no model loading,
 no Redis connection).

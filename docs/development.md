@@ -30,11 +30,12 @@ Dev override 只掛載 `src`，不覆蓋 image 內的 `frontend/dist`；Python �
 
 ## CI
 
-`.github/workflows/ci.yml` 在每個 pull request 與 push 到 master 時執行三個 job，只需要讀取權限、不使用任何 secret：
+`.github/workflows/ci.yml` 在每個 pull request 與 push 到 master 時執行四個 job，只需要讀取權限、不使用任何 secret：
 
 - **Backend tests**：Python 3.13，以 `pip install --require-hashes -r requirements.txt` 安裝（與 Dockerfile 相同的鎖定檔），執行 `python -m pytest tests`。測試不需要重排模型、jieba 大字典或網路；需要 `OPENROUTER_API_KEY` 的測試會 skip。
 - **Frontend checks**：Node 22、pnpm 11.19.0，`pnpm install --frozen-lockfile` 後執行 lint、`pnpm build`（含 typecheck）與 vitest。
 - **Terraform validation**：`terraform fmt -check -recursive`，以 `terraform init -backend=false` 後 `terraform validate`。
+- **Prometheus rules**：以 `docker-compose.yml` 使用的同一個 Prometheus 映像執行 `promtool check config`（同時檢查 `prometheus.yml` 列出的規則檔）與 `promtool test rules monitoring/prometheus/rules/slo_test.yml`（SLO 錄製規則與 burn rate 告警的單元測試）。映像版本寫在 workflow 的 `PROMETHEUS_IMAGE`，pytest 會檢查它與 compose 一致。
 
 CI 不建置 Docker 映像、不呼叫真實 LLM、不跑 RAGAS；這些仍以本機或 `scripts/eval_sample_manual.py` 執行。部署是另一個 workflow（`deploy.yml`，只在 `release/**` 觸發）。
 
