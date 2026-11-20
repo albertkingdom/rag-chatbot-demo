@@ -112,6 +112,8 @@ cd terraform && terraform apply -target=google_project_service.discoveryengine -
 
 套用後以 `gcloud projects get-iam-policy <project>` 確認。沒有套用就部署，重排會收到 403，所有 RAG 回答退回融合排序並走低信心路徑。
 
+Artifact Registry 的清理規則（保留最近 5 個版本，其餘滿 7 天刪除）也只能這樣套用：`terraform apply -target=google_artifact_registry_repository.images`。
+
 發布流程與每版紀錄見 [docs/deployment/releases.md](docs/deployment/releases.md)。其他環境變數與預設值見 `.env.example`。
 
 ## 授權

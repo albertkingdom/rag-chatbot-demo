@@ -49,6 +49,32 @@ resource "google_artifact_registry_repository" "images" {
   repository_id = "carbon-assistant"
   format        = "DOCKER"
   description   = "Docker images for the Carbon Assistant app"
+
+  # Every release pushes a new image and nothing removed old ones, so storage
+  # grew to about 62 GB by 2026-11. Keep the 5 most recent versions (an image
+  # index, its image and its attestation count as 3) for rollback and delete
+  # everything else once it is a week old; the week covers an image pushed by
+  # CI but not deployed yet. Keep rules win over the delete rule, and images
+  # referenced by a kept index are not deleted. Policies run in the background
+  # and take effect within about a day.
+  cleanup_policy_dry_run = false
+
+  cleanup_policies {
+    id     = "keep-most-recent"
+    action = "KEEP"
+    most_recent_versions {
+      keep_count = 5
+    }
+  }
+
+  cleanup_policies {
+    id     = "delete-older-than-7-days"
+    action = "DELETE"
+    condition {
+      tag_state  = "ANY"
+      older_than = "604800s"
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------
